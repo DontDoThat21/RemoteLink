@@ -1,0 +1,134 @@
+﻿using System.ComponentModel;
+using RemoteLink.Mobile.Services;
+
+namespace RemoteLink.Mobile;
+
+public partial class MainPage : ContentPage, INotifyPropertyChanged
+{
+    private readonly RemoteDesktopClient? _remoteDesktopClient;
+    private bool _isDiscovering;
+    private string _statusMessage = "Initializing...";
+    private readonly List<RemoteLink.Shared.Models.DeviceInfo> _availableHosts = new();
+
+    public bool IsDiscovering
+    {
+        get => _isDiscovering;
+        set
+        {
+            _isDiscovering = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string StatusMessage
+    {
+        get => _statusMessage;
+        set
+        {
+            _statusMessage = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public List<RemoteLink.Shared.Models.DeviceInfo> AvailableHosts => _availableHosts;
+
+    public MainPage(RemoteDesktopClient? remoteDesktopClient)
+    {
+        _remoteDesktopClient = remoteDesktopClient;
+        
+        Title = "RemoteLink Mobile";
+        BackgroundColor = Colors.White;
+        
+        // Create the main layout
+        var mainLayout = new StackLayout
+        {
+            Padding = new Thickness(20),
+            Spacing = 20,
+            VerticalOptions = LayoutOptions.Center
+        };
+
+        // Title
+        var titleLabel = new Label
+        {
+            Text = "RemoteLink Mobile Client",
+            FontSize = 24,
+            FontAttributes = FontAttributes.Bold,
+            HorizontalOptions = LayoutOptions.Center,
+            TextColor = Colors.Blue
+        };
+
+        // Status
+        var statusLabel = new Label
+        {
+            FontSize = 16,
+            HorizontalOptions = LayoutOptions.Center,
+            TextColor = Colors.Gray
+        };
+        statusLabel.SetBinding(Label.TextProperty, new Binding(nameof(StatusMessage), source: this));
+
+        // Activity indicator
+        var activityIndicator = new ActivityIndicator
+        {
+            HorizontalOptions = LayoutOptions.Center,
+            Color = Colors.Blue
+        };
+        activityIndicator.SetBinding(ActivityIndicator.IsRunningProperty, new Binding(nameof(IsDiscovering), source: this));
+
+        // Host list placeholder
+        var hostListLabel = new Label
+        {
+            Text = "Discovered hosts will appear here",
+            FontSize = 14,
+            HorizontalOptions = LayoutOptions.Center,
+            TextColor = Colors.Gray
+        };
+
+        mainLayout.Children.Add(titleLabel);
+        mainLayout.Children.Add(statusLabel);
+        mainLayout.Children.Add(activityIndicator);
+        mainLayout.Children.Add(hostListLabel);
+
+        Content = new ScrollView { Content = mainLayout };
+
+        // Start discovery if client is available
+        if (_remoteDesktopClient != null)
+        {
+            _ = StartDiscoveryAsync();
+        }
+        else
+        {
+            StatusMessage = "Service unavailable";
+        }
+    }
+
+    private async Task StartDiscoveryAsync()
+    {
+        try
+        {
+            StatusMessage = "Starting discovery service...";
+            IsDiscovering = true;
+            
+            await _remoteDesktopClient!.StartAsync();
+            
+            StatusMessage = "Searching for desktop hosts...";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error starting discovery: {ex.Message}";
+            IsDiscovering = false;
+        }
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        _remoteDesktopClient?.StopAsync();
+    }
+
+    public new event PropertyChangedEventHandler? PropertyChanged;
+
+    protected override void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}
