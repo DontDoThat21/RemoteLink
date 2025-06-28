@@ -1,0 +1,14 @@
+// Template MAUI App.cs - Uncomment when MAUI workload is installed
+
+/*
+namespace RemoteLink.Mobile;
+
+public partial class App : Application
+{
+    public App()
+    {
+        InitializeComponent();
+        MainPage = new MainPage(null!); // Will be resolved via DI
+    }
+}
+*/

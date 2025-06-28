@@ -1,4 +1,7 @@
-﻿using System.ComponentModel;
+// Template MAUI MainPage.cs - Uncomment when MAUI workload is installed
+
+/*
+using System.ComponentModel;
 using RemoteLink.Mobile.Services;
 
 namespace RemoteLink.Mobile;
@@ -132,3 +135,4 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+*/
