@@ -213,6 +213,36 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Inspired by open-source remote desktop solutions
 - Built with modern .NET technologies
 
+  Core Technology Stack
+Primary Framework & Runtime
+.NET 8.0 - Modern cross-platform framework
+C# - Primary programming language with nullable reference types enabled
+Architecture & Patterns
+Modular Architecture with three main components:
+RemoteLink.Shared - Common interfaces, models, and services
+RemoteLink.Desktop - Windows desktop host application
+RemoteLink.Mobile - Android mobile client application
+Dependencies & Libraries
+Microsoft.Extensions.Hosting (8.0.0) - Background service hosting
+Microsoft.Extensions.DependencyInjection (8.0.0) - Dependency injection container
+Microsoft.Extensions.Logging (8.0.0) - Structured logging
+Testing Framework
+xUnit (2.4.2) - Unit testing framework
+Microsoft.NET.Test.Sdk (17.6.0) - Test SDK
+Coverlet.collector (6.0.0) - Code coverage collection
+Network & Communication
+UDP-based network discovery (custom implementation)
+TCP sockets for real-time communication (planned)
+SignalR (planned for real-time communication)
+Platform Targets
+Desktop Host: Windows 10/11 with .NET 8.0 Runtime
+Mobile Client: Android 7.0+ (API level 24) - Currently console app, will become Android app
+Development Tools
+Visual Studio 2022 or Visual Studio Code
+Android SDK (for mobile development)
+Project Structure
+The solution follows a clean, modular architecture with shared libraries, platform-specific implementations, and comprehensive testing setup using the latest .NET 8.0 ecosystem.
+
 ---
 
 **RemoteLink** - Bringing your desktop to your mobile device, freely and securely.
