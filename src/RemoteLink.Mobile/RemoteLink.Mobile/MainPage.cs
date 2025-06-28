@@ -1,6 +1,3 @@
-// Template MAUI MainPage.cs - Uncomment when MAUI workload is installed
-
-/*
 using System.ComponentModel;
 using RemoteLink.Mobile.Services;
 
@@ -8,7 +5,6 @@ namespace RemoteLink.Mobile;
 
 public partial class MainPage : ContentPage, INotifyPropertyChanged
 {
-    private readonly RemoteDesktopClient? _remoteDesktopClient;
     private bool _isDiscovering;
     private string _statusMessage = "Initializing...";
     private readonly List<RemoteLink.Shared.Models.DeviceInfo> _availableHosts = new();
@@ -35,10 +31,8 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     public List<RemoteLink.Shared.Models.DeviceInfo> AvailableHosts => _availableHosts;
 
-    public MainPage(RemoteDesktopClient? remoteDesktopClient)
+    public MainPage()
     {
-        _remoteDesktopClient = remoteDesktopClient;
-        
         Title = "RemoteLink Mobile";
         BackgroundColor = Colors.White;
         
@@ -93,15 +87,8 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         Content = new ScrollView { Content = mainLayout };
 
-        // Start discovery if client is available
-        if (_remoteDesktopClient != null)
-        {
-            _ = StartDiscoveryAsync();
-        }
-        else
-        {
-            StatusMessage = "Service unavailable";
-        }
+        // Start discovery
+        _ = StartDiscoveryAsync();
     }
 
     private async Task StartDiscoveryAsync()
@@ -111,7 +98,23 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             StatusMessage = "Starting discovery service...";
             IsDiscovering = true;
             
-            await _remoteDesktopClient!.StartAsync();
+            // Create and configure the service directly since DI might not be available yet
+            var localDevice = new RemoteLink.Shared.Models.DeviceInfo
+            {
+                DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
+                DeviceName = Environment.MachineName + " Mobile",
+                Type = RemoteLink.Shared.Models.DeviceType.Mobile,
+                Port = 12347
+            };
+            var networkDiscovery = new RemoteLink.Shared.Services.UdpNetworkDiscovery(localDevice);
+            var remoteDesktopClient = new RemoteDesktopClient(null!, networkDiscovery);
+            
+            // Subscribe to events
+            remoteDesktopClient.DeviceDiscovered += OnDeviceDiscovered;
+            remoteDesktopClient.DeviceLost += OnDeviceLost;
+            remoteDesktopClient.ServiceStatusChanged += OnServiceStatusChanged;
+            
+            await remoteDesktopClient.StartAsync();
             
             StatusMessage = "Searching for desktop hosts...";
         }
@@ -122,10 +125,40 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         }
     }
 
-    protected override void OnDisappearing()
+    private void OnDeviceDiscovered(object? sender, RemoteLink.Shared.Models.DeviceInfo device)
     {
-        base.OnDisappearing();
-        _remoteDesktopClient?.StopAsync();
+        if (device.Type == RemoteLink.Shared.Models.DeviceType.Desktop)
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (!_availableHosts.Any(h => h.DeviceId == device.DeviceId))
+                {
+                    _availableHosts.Add(device);
+                    StatusMessage = $"Found {_availableHosts.Count} desktop host(s)";
+                }
+            });
+        }
+    }
+
+    private void OnDeviceLost(object? sender, RemoteLink.Shared.Models.DeviceInfo device)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            var existingHost = _availableHosts.FirstOrDefault(h => h.DeviceId == device.DeviceId);
+            if (existingHost != null)
+            {
+                _availableHosts.Remove(existingHost);
+                StatusMessage = $"Found {_availableHosts.Count} desktop host(s)";
+            }
+        });
+    }
+
+    private void OnServiceStatusChanged(object? sender, string status)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            // Could update a status indicator here
+        });
     }
 
     public new event PropertyChangedEventHandler? PropertyChanged;
@@ -135,4 +168,3 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
-*/
