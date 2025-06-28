@@ -1,18 +1,21 @@
-﻿using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 
 namespace RemoteLink.Mobile.Services;
 
 /// <summary>
-/// Main hosted service for the remote desktop mobile client
+/// Main service for the remote desktop mobile client
 /// </summary>
-public class RemoteDesktopClient : BackgroundService
+public class RemoteDesktopClient
 {
     private readonly ILogger<RemoteDesktopClient> _logger;
     private readonly INetworkDiscovery _networkDiscovery;
-    private readonly List<DeviceInfo> _availableHosts = new();
+    private bool _isStarted;
+
+    public event EventHandler<RemoteLink.Shared.Models.DeviceInfo>? DeviceDiscovered;
+    public event EventHandler<RemoteLink.Shared.Models.DeviceInfo>? DeviceLost;
+    public event EventHandler<string>? ServiceStatusChanged;
 
     public RemoteDesktopClient(
         ILogger<RemoteDesktopClient> logger,
@@ -26,9 +29,12 @@ public class RemoteDesktopClient : BackgroundService
         _networkDiscovery.DeviceLost += OnDeviceLost;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public async Task StartAsync()
     {
+        if (_isStarted) return;
+
         _logger.LogInformation("Remote Desktop Client service starting...");
+        ServiceStatusChanged?.Invoke(this, "Starting discovery service...");
 
         try
         {
@@ -36,87 +42,57 @@ public class RemoteDesktopClient : BackgroundService
             await _networkDiscovery.StartBroadcastingAsync();
             await _networkDiscovery.StartListeningAsync();
             
+            _isStarted = true;
             _logger.LogInformation("Remote Desktop Client service started successfully.");
-            _logger.LogInformation("Listening for desktop hosts on local network...");
-
-            // Simulate client UI interactions
-            await SimulateClientInteraction(stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected when cancellation is requested
+            ServiceStatusChanged?.Invoke(this, "Listening for desktop hosts...");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in Remote Desktop Client service");
+            _logger.LogError(ex, "Error starting Remote Desktop Client service");
+            ServiceStatusChanged?.Invoke(this, $"Error: {ex.Message}");
             throw;
         }
-        finally
+    }
+
+    public async Task StopAsync()
+    {
+        if (!_isStarted) return;
+
+        _logger.LogInformation("Remote Desktop Client service stopping...");
+        ServiceStatusChanged?.Invoke(this, "Stopping discovery service...");
+        
+        try
         {
-            _logger.LogInformation("Remote Desktop Client service stopping...");
-            
             // Cleanup
             await _networkDiscovery.StopBroadcastingAsync();
             await _networkDiscovery.StopListeningAsync();
             
+            _isStarted = false;
             _logger.LogInformation("Remote Desktop Client service stopped.");
+            ServiceStatusChanged?.Invoke(this, "Discovery service stopped.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping Remote Desktop Client service");
+            ServiceStatusChanged?.Invoke(this, $"Error stopping: {ex.Message}");
         }
     }
 
-    private async Task SimulateClientInteraction(CancellationToken stoppingToken)
+    private void OnDeviceDiscovered(object? sender, RemoteLink.Shared.Models.DeviceInfo device)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        if (device.Type == RemoteLink.Shared.Models.DeviceType.Desktop)
         {
-            // Display available hosts every 10 seconds
-            if (_availableHosts.Count > 0)
-            {
-                Console.WriteLine($"\n--- Available Desktop Hosts ({_availableHosts.Count}) ---");
-                for (int i = 0; i < _availableHosts.Count; i++)
-                {
-                    var host = _availableHosts[i];
-                    Console.WriteLine($"{i + 1}. {host.DeviceName} ({host.IPAddress}:{host.Port})");
-                }
-                Console.WriteLine("--- End of Host List ---\n");
-            }
-            else
-            {
-                Console.WriteLine("Searching for desktop hosts...");
-            }
-
-            await Task.Delay(10000, stoppingToken);
+            _logger.LogInformation($"Discovered desktop host: {device.DeviceName} at {device.IPAddress}:{device.Port}");
+            DeviceDiscovered?.Invoke(this, device);
         }
     }
 
-    private void OnDeviceDiscovered(object? sender, DeviceInfo device)
+    private void OnDeviceLost(object? sender, RemoteLink.Shared.Models.DeviceInfo device)
     {
-        if (device.Type == DeviceType.Desktop)
+        if (device.Type == RemoteLink.Shared.Models.DeviceType.Desktop)
         {
-            lock (_availableHosts)
-            {
-                if (!_availableHosts.Any(h => h.DeviceId == device.DeviceId))
-                {
-                    _availableHosts.Add(device);
-                    _logger.LogInformation($"Discovered desktop host: {device.DeviceName} at {device.IPAddress}:{device.Port}");
-                    Console.WriteLine($"🖥️  Found desktop host: {device.DeviceName} ({device.IPAddress})");
-                }
-            }
-        }
-    }
-
-    private void OnDeviceLost(object? sender, DeviceInfo device)
-    {
-        if (device.Type == DeviceType.Desktop)
-        {
-            lock (_availableHosts)
-            {
-                var existingHost = _availableHosts.FirstOrDefault(h => h.DeviceId == device.DeviceId);
-                if (existingHost != null)
-                {
-                    _availableHosts.Remove(existingHost);
-                    _logger.LogInformation($"Lost connection to desktop host: {device.DeviceName}");
-                    Console.WriteLine($"❌ Lost desktop host: {device.DeviceName}");
-                }
-            }
+            _logger.LogInformation($"Lost connection to desktop host: {device.DeviceName}");
+            DeviceLost?.Invoke(this, device);
         }
     }
 }
