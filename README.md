@@ -163,7 +163,7 @@ dotnet test tests/RemoteLink.Shared.Tests/
 
 ## 🤝 Contributing
 
-We welcome contributions to RemoteLink! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+Contributions are welcome to RemoteLink! Please see [Contributing Guidelines](CONTRIBUTING.md) for details.
 
 ### Development Workflow
 
@@ -210,7 +210,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Thanks to all contributors and testers
 - Inspired by open-source remote desktop solutions
 - Built with modern .NET technologies
 
