@@ -1,0 +1,72 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{8BF5F1F2-4F36-4F2B-819D-83F22A86DE89}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "RemoteLink.Shared", "RemoteLink.Shared", "{D4BC903E-BD85-4F37-893D-FE17A84DEDAF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteLink.Shared", "src\RemoteLink.Shared\RemoteLink.Shared\RemoteLink.Shared.csproj", "{73D4BB71-21FE-4172-B42A-FC4F43307B82}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "RemoteLink.Desktop", "RemoteLink.Desktop", "{E97B11B4-A756-4041-A5A4-6E06D08C34B9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteLink.Desktop", "src\RemoteLink.Desktop\RemoteLink.Desktop\RemoteLink.Desktop.csproj", "{8AFE875B-9813-41F1-8584-A3AA470C692F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "RemoteLink.Mobile", "RemoteLink.Mobile", "{632E0BD8-2CEB-4CCA-B450-FF94A1E4812D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteLink.Mobile", "src\RemoteLink.Mobile\RemoteLink.Mobile\RemoteLink.Mobile.csproj", "{825DAE18-AFEC-4F7C-8BAC-2A624ED69905}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{8A043C8E-A684-42E4-BC15-D73F1FE2FA2C}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "RemoteLink.Shared.Tests", "RemoteLink.Shared.Tests", "{9367A368-965B-4BE2-8F4F-711213BA8120}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteLink.Shared.Tests", "tests\RemoteLink.Shared.Tests\RemoteLink.Shared.Tests\RemoteLink.Shared.Tests.csproj", "{3B20873C-FA90-4726-BD65-B4488AD36000}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "RemoteLink.Desktop.Tests", "RemoteLink.Desktop.Tests", "{B87A9B0A-A082-409B-9E52-4EE04B6D2F8E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemoteLink.Desktop.Tests", "tests\RemoteLink.Desktop.Tests\RemoteLink.Desktop.Tests\RemoteLink.Desktop.Tests.csproj", "{A535BCE4-A13D-4595-AB27-F670CAA345A0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{73D4BB71-21FE-4172-B42A-FC4F43307B82}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{73D4BB71-21FE-4172-B42A-FC4F43307B82}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{73D4BB71-21FE-4172-B42A-FC4F43307B82}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{73D4BB71-21FE-4172-B42A-FC4F43307B82}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8AFE875B-9813-41F1-8584-A3AA470C692F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8AFE875B-9813-41F1-8584-A3AA470C692F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8AFE875B-9813-41F1-8584-A3AA470C692F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8AFE875B-9813-41F1-8584-A3AA470C692F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{825DAE18-AFEC-4F7C-8BAC-2A624ED69905}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{825DAE18-AFEC-4F7C-8BAC-2A624ED69905}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{825DAE18-AFEC-4F7C-8BAC-2A624ED69905}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{825DAE18-AFEC-4F7C-8BAC-2A624ED69905}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3B20873C-FA90-4726-BD65-B4488AD36000}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3B20873C-FA90-4726-BD65-B4488AD36000}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3B20873C-FA90-4726-BD65-B4488AD36000}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3B20873C-FA90-4726-BD65-B4488AD36000}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A535BCE4-A13D-4595-AB27-F670CAA345A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A535BCE4-A13D-4595-AB27-F670CAA345A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A535BCE4-A13D-4595-AB27-F670CAA345A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A535BCE4-A13D-4595-AB27-F670CAA345A0}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D4BC903E-BD85-4F37-893D-FE17A84DEDAF} = {8BF5F1F2-4F36-4F2B-819D-83F22A86DE89}
+		{73D4BB71-21FE-4172-B42A-FC4F43307B82} = {D4BC903E-BD85-4F37-893D-FE17A84DEDAF}
+		{E97B11B4-A756-4041-A5A4-6E06D08C34B9} = {8BF5F1F2-4F36-4F2B-819D-83F22A86DE89}
+		{8AFE875B-9813-41F1-8584-A3AA470C692F} = {E97B11B4-A756-4041-A5A4-6E06D08C34B9}
+		{632E0BD8-2CEB-4CCA-B450-FF94A1E4812D} = {8BF5F1F2-4F36-4F2B-819D-83F22A86DE89}
+		{825DAE18-AFEC-4F7C-8BAC-2A624ED69905} = {632E0BD8-2CEB-4CCA-B450-FF94A1E4812D}
+		{9367A368-965B-4BE2-8F4F-711213BA8120} = {8A043C8E-A684-42E4-BC15-D73F1FE2FA2C}
+		{3B20873C-FA90-4726-BD65-B4488AD36000} = {9367A368-965B-4BE2-8F4F-711213BA8120}
+		{B87A9B0A-A082-409B-9E52-4EE04B6D2F8E} = {8A043C8E-A684-42E4-BC15-D73F1FE2FA2C}
+		{A535BCE4-A13D-4595-AB27-F670CAA345A0} = {B87A9B0A-A082-409B-9E52-4EE04B6D2F8E}
+	EndGlobalSection
+EndGlobal
