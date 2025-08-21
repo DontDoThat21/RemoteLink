@@ -66,3 +66,59 @@ public class MockScreenCaptureTests
         screenCapture.SetQuality(150); // Should clamp to 100
     }
 }
+
+public class MockInputHandlerTests
+{
+    [Fact]
+    public async Task MockInputHandler_ShouldStartAndStopCorrectly()
+    {
+        // Arrange
+        var inputHandler = new MockInputHandler();
+
+        // Act
+        await inputHandler.StartAsync();
+        var isActive = inputHandler.IsActive;
+        
+        await inputHandler.StopAsync();
+        var isInactive = !inputHandler.IsActive;
+
+        // Assert
+        Assert.True(isActive);
+        Assert.True(isInactive);
+    }
+
+    [Fact]
+    public async Task MockInputHandler_ShouldProcessCommandExecution()
+    {
+        // Arrange
+        var inputHandler = new MockInputHandler();
+        await inputHandler.StartAsync();
+
+        var inputEvent = new InputEvent
+        {
+            Type = InputEventType.CommandExecution,
+            Command = "echo Hello Test",
+            WorkingDirectory = Environment.CurrentDirectory
+        };
+
+        // Act & Assert - Should not throw exception
+        await inputHandler.ProcessInputEventAsync(inputEvent);
+    }
+
+    [Fact]
+    public async Task MockInputHandler_ShouldIgnoreEventsWhenInactive()
+    {
+        // Arrange
+        var inputHandler = new MockInputHandler();
+        // Don't start the handler, so it's inactive
+
+        var inputEvent = new InputEvent
+        {
+            Type = InputEventType.CommandExecution,
+            Command = "echo Hello Test"
+        };
+
+        // Act & Assert - Should not throw exception and should handle gracefully
+        await inputHandler.ProcessInputEventAsync(inputEvent);
+    }
+}

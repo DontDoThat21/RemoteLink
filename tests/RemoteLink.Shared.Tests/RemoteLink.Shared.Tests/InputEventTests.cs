@@ -83,4 +83,25 @@ public class InputEventTests
         Assert.Equal(InputEventType.TextInput, inputEvent.Type);
         Assert.Equal(text, inputEvent.Text);
     }
+
+    [Fact]
+    public void InputEvent_CommandExecution_ShouldSetPropertiesCorrectly()
+    {
+        // Arrange
+        var command = "echo Hello World";
+        var workingDirectory = @"C:\temp";
+
+        // Act
+        var inputEvent = new InputEvent
+        {
+            Type = InputEventType.CommandExecution,
+            Command = command,
+            WorkingDirectory = workingDirectory
+        };
+
+        // Assert
+        Assert.Equal(InputEventType.CommandExecution, inputEvent.Type);
+        Assert.Equal(command, inputEvent.Command);
+        Assert.Equal(workingDirectory, inputEvent.WorkingDirectory);
+    }
 }

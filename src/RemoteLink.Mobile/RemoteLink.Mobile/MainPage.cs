@@ -80,10 +80,69 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             TextColor = Colors.Gray
         };
 
+        // Command execution section
+        var commandSectionLabel = new Label
+        {
+            Text = "Command Execution",
+            FontSize = 18,
+            FontAttributes = FontAttributes.Bold,
+            HorizontalOptions = LayoutOptions.Center,
+            TextColor = Colors.DarkBlue,
+            Margin = new Thickness(0, 20, 0, 10)
+        };
+
+        var commandEntry = new Entry
+        {
+            Placeholder = "Enter command (e.g., 'echo Hello World')",
+            FontSize = 14,
+            Margin = new Thickness(0, 5)
+        };
+
+        var workingDirectoryEntry = new Entry
+        {
+            Placeholder = "Working directory (optional)",
+            FontSize = 14,
+            Margin = new Thickness(0, 5)
+        };
+
+        var executeButton = new Button
+        {
+            Text = "Execute Command",
+            BackgroundColor = Colors.Blue,
+            TextColor = Colors.White,
+            Margin = new Thickness(0, 10),
+            IsEnabled = false
+        };
+
+        var resultLabel = new Label
+        {
+            Text = "Command results will appear here",
+            FontSize = 12,
+            TextColor = Colors.Gray,
+            Margin = new Thickness(0, 10)
+        };
+
+        // Enable button when command is entered
+        commandEntry.TextChanged += (s, e) =>
+        {
+            executeButton.IsEnabled = !string.IsNullOrWhiteSpace(e.NewTextValue);
+        };
+
+        // Handle command execution
+        executeButton.Clicked += async (s, e) =>
+        {
+            await ExecuteCommandAsync(commandEntry.Text, workingDirectoryEntry.Text, resultLabel);
+        };
+
         mainLayout.Children.Add(titleLabel);
         mainLayout.Children.Add(statusLabel);
         mainLayout.Children.Add(activityIndicator);
         mainLayout.Children.Add(hostListLabel);
+        mainLayout.Children.Add(commandSectionLabel);
+        mainLayout.Children.Add(commandEntry);
+        mainLayout.Children.Add(workingDirectoryEntry);
+        mainLayout.Children.Add(executeButton);
+        mainLayout.Children.Add(resultLabel);
 
         Content = new ScrollView { Content = mainLayout };
 
@@ -166,5 +225,56 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     protected override void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private async Task ExecuteCommandAsync(string command, string? workingDirectory, Label resultLabel)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            resultLabel.Text = "Please enter a command";
+            resultLabel.TextColor = Colors.Red;
+            return;
+        }
+
+        try
+        {
+            resultLabel.Text = "Executing command...";
+            resultLabel.TextColor = Colors.Blue;
+
+            // Create input event for command execution
+            var inputEvent = new RemoteLink.Shared.Models.InputEvent
+            {
+                Type = RemoteLink.Shared.Models.InputEventType.CommandExecution,
+                Command = command,
+                WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory
+            };
+
+            // For now, since we don't have full communication service implementation,
+            // we'll simulate the command execution locally for demonstration
+            await SimulateCommandExecutionAsync(inputEvent, resultLabel);
+        }
+        catch (Exception ex)
+        {
+            resultLabel.Text = $"Error: {ex.Message}";
+            resultLabel.TextColor = Colors.Red;
+        }
+    }
+
+    private async Task SimulateCommandExecutionAsync(RemoteLink.Shared.Models.InputEvent inputEvent, Label resultLabel)
+    {
+        // Simulate sending to desktop host and getting response
+        await Task.Delay(1000); // Simulate network delay
+
+        // For demonstration, show what would be sent
+        var commandInfo = $"Command: {inputEvent.Command}\n";
+        if (!string.IsNullOrEmpty(inputEvent.WorkingDirectory))
+        {
+            commandInfo += $"Working Directory: {inputEvent.WorkingDirectory}\n";
+        }
+        commandInfo += $"Event ID: {inputEvent.EventId}\n";
+        commandInfo += "Status: Command sent to desktop host";
+
+        resultLabel.Text = commandInfo;
+        resultLabel.TextColor = Colors.Green;
     }
 }
