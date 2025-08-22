@@ -13,6 +13,8 @@ public class InputEvent
     public string? KeyCode { get; set; }
     public bool IsPressed { get; set; }
     public string? Text { get; set; }
+    public string? Command { get; set; }
+    public string? WorkingDirectory { get; set; }
 }
 
 /// <summary>
@@ -25,5 +27,6 @@ public enum InputEventType
     MouseWheel,
     KeyPress,
     KeyRelease,
-    TextInput
+    TextInput,
+    CommandExecution
 }
