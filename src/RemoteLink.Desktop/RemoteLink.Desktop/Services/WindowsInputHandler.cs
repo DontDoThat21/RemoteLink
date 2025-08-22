@@ -119,7 +119,36 @@ public class MockInputHandler : IInputHandler
                 {
                     Console.WriteLine($"Output:\n{output}");
                 }
-                
+
+                // Add a timeout to prevent hanging processes
+                int timeoutMilliseconds = 30000; // 30 seconds
+                using (var cts = new System.Threading.CancellationTokenSource(timeoutMilliseconds))
+                {
+                    try
+                    {
+                        await process.WaitForExitAsync(cts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        try
+                        {
+                            process.Kill(true);
+                        }
+                        catch (Exception killEx)
+                        {
+                            Console.WriteLine($"Failed to kill process after timeout: {killEx.Message}");
+                        }
+                        Console.WriteLine($"Command execution timed out after {timeoutMilliseconds / 1000} seconds and was terminated.");
+                        return;
+                    }
+                }
+
+                Console.WriteLine($"Command execution completed with exit code: {process.ExitCode}");
+
+                if (!string.IsNullOrWhiteSpace(output))
+                {
+                    Console.WriteLine($"Output:\n{output}");
+                }
                 if (!string.IsNullOrWhiteSpace(error))
                 {
                     Console.WriteLine($"Error:\n{error}");
