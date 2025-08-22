@@ -103,7 +103,38 @@ public class MockInputHandler : IInputHandler
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
-            }
+        // Split command into command name and arguments
+        string[] parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            Console.WriteLine("Command execution failed: Invalid command format");
+            return;
+        }
+        string commandName = parts[0];
+        string commandArgs = parts.Length > 1 ? parts[1] : string.Empty;
+
+        bool isWindows = OperatingSystem.IsWindows();
+        var allowedCommands = isWindows ? AllowedCommandsWindows : AllowedCommandsUnix;
+        if (!allowedCommands.Contains(commandName))
+        {
+            Console.WriteLine($"Command execution failed: Command '{commandName}' is not allowed.");
+            return;
+        }
+
+        try
+        {
+            Console.WriteLine($"Executing command: '{commandName} {commandArgs}' in directory: '{workingDirectory ?? Environment.CurrentDirectory}'");
+
+            ProcessStartInfo processStartInfo = new ProcessStartInfo
+            {
+                FileName = commandName,
+                Arguments = commandArgs,
+                WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
 
             using var process = Process.Start(processStartInfo);
             if (process != null)
