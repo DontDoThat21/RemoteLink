@@ -11,6 +11,7 @@ namespace RemoteLink.Desktop.Services;
 /// <list type="bullet">
 /// <item><description>Broadcasts presence on the LAN via UDP discovery.</description></item>
 /// <item><description>Listens for incoming TCP connections via <see cref="ICommunicationService"/>.</description></item>
+/// <item><description>Enforces PIN-based pairing via <see cref="IPairingService"/> before streaming begins.</description></item>
 /// <item><description>Streams screen frames to connected clients.</description></item>
 /// <item><description>Relays received <see cref="InputEvent"/>s to <see cref="IInputHandler"/>.</description></item>
 /// </list>
@@ -22,6 +23,13 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IScreenCapture _screenCapture;
     private readonly IInputHandler _inputHandler;
     private readonly ICommunicationService _communication;
+    private readonly IPairingService _pairing;
+
+    /// <summary>
+    /// Set to true once the currently-connected client has successfully paired.
+    /// Reset to false when the client disconnects.
+    /// </summary>
+    private volatile bool _clientPaired;
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
@@ -31,13 +39,15 @@ public class RemoteDesktopHost : BackgroundService
         INetworkDiscovery networkDiscovery,
         IScreenCapture screenCapture,
         IInputHandler inputHandler,
-        ICommunicationService communication)
+        ICommunicationService communication,
+        IPairingService pairing)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
         _screenCapture = screenCapture;
         _inputHandler = inputHandler;
         _communication = communication;
+        _pairing = pairing;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -46,6 +56,16 @@ public class RemoteDesktopHost : BackgroundService
 
         try
         {
+            // Generate a fresh PIN and display it — the remote user must enter this
+            var pin = _pairing.GeneratePin();
+            _logger.LogInformation("════════════════════════════════════════");
+            _logger.LogInformation("  RemoteLink PIN: {Pin}", pin);
+            _logger.LogInformation("  Enter this PIN on your mobile device.");
+            _logger.LogInformation("════════════════════════════════════════");
+
+            // Wire pairing: handle pairing request before allowing screen/input
+            _communication.PairingRequestReceived += OnPairingRequestReceived;
+
             // Wire input events: when the client sends an input event, relay to input handler
             _communication.InputEventReceived += OnInputEventReceived;
 
@@ -84,6 +104,7 @@ public class RemoteDesktopHost : BackgroundService
         {
             _logger.LogInformation("Remote Desktop Host service stopping…");
 
+            _communication.PairingRequestReceived -= OnPairingRequestReceived;
             _communication.InputEventReceived -= OnInputEventReceived;
             _communication.ConnectionStateChanged -= OnConnectionStateChanged;
 
@@ -100,31 +121,102 @@ public class RemoteDesktopHost : BackgroundService
     // ── Event handlers ────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Called when a client sends a pairing request.
+    /// Validates the PIN and either accepts (starts streaming) or rejects the client.
+    /// </summary>
+    private void OnPairingRequestReceived(object? sender, PairingRequest request)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                bool valid = _pairing.ValidatePin(request.Pin);
+
+                if (valid)
+                {
+                    _clientPaired = true;
+                    var token = Guid.NewGuid().ToString("N");
+                    var response = new PairingResponse
+                    {
+                        Success = true,
+                        SessionToken = token,
+                        Message = "Pairing accepted."
+                    };
+                    await _communication.SendPairingResponseAsync(response);
+
+                    _logger.LogInformation(
+                        "Client '{Name}' ({Id}) paired successfully.",
+                        request.ClientDeviceName,
+                        request.ClientDeviceId);
+
+                    // Client is now trusted — start screen capture and streaming
+                    _screenCapture.FrameCaptured += OnFrameCaptured;
+                    _ = _screenCapture.StartCaptureAsync();
+                }
+                else
+                {
+                    var reason = _pairing.IsLockedOut
+                        ? PairingFailureReason.TooManyAttempts
+                        : PairingFailureReason.InvalidPin;
+
+                    var response = new PairingResponse
+                    {
+                        Success = false,
+                        FailureReason = reason,
+                        Message = reason == PairingFailureReason.TooManyAttempts
+                            ? "Too many failed attempts. Please ask the host to refresh the PIN."
+                            : "Invalid PIN. Please check the PIN displayed on the host."
+                    };
+                    await _communication.SendPairingResponseAsync(response);
+
+                    _logger.LogWarning(
+                        "Pairing rejected for client '{Name}' ({Id}): {Reason}",
+                        request.ClientDeviceName,
+                        request.ClientDeviceId,
+                        reason);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing pairing request");
+            }
+        });
+    }
+
+    /// <summary>
     /// Called when the TCP connection state changes.
-    /// Starts screen capture on connect; stops it on disconnect to save resources.
+    /// On disconnect: resets paired state and stops screen capture.
+    /// Note: screen capture is now started from <see cref="OnPairingRequestReceived"/>
+    /// after successful pairing, not directly on connect.
     /// </summary>
     private void OnConnectionStateChanged(object? sender, bool connected)
     {
         if (connected)
         {
-            _logger.LogInformation("Client connected — starting screen capture and streaming.");
-            _screenCapture.FrameCaptured += OnFrameCaptured;
-            _ = _screenCapture.StartCaptureAsync();
+            _logger.LogInformation("Client connected — awaiting PIN pairing before streaming.");
+            // Do NOT start screen capture yet; wait for successful pairing.
         }
         else
         {
+            _clientPaired = false;
             _logger.LogInformation("Client disconnected — stopping screen capture.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
+
+            // Refresh the PIN ready for the next connection attempt
+            var newPin = _pairing.GeneratePin();
+            _logger.LogInformation(
+                "New PIN generated for next connection: {Pin}", newPin);
         }
     }
 
     /// <summary>
     /// Called when a new screen frame is ready. Sends it to the connected client.
+    /// Only fires when a client has successfully paired.
     /// </summary>
     private void OnFrameCaptured(object? sender, ScreenData screenData)
     {
-        if (!_communication.IsConnected) return;
+        if (!_communication.IsConnected || !_clientPaired) return;
 
         _ = Task.Run(async () =>
         {
@@ -141,9 +233,12 @@ public class RemoteDesktopHost : BackgroundService
 
     /// <summary>
     /// Called when the client sends an input event. Relays it to the local input handler.
+    /// Ignored if the client has not yet successfully paired.
     /// </summary>
     private void OnInputEventReceived(object? sender, InputEvent inputEvent)
     {
+        if (!_clientPaired) return;
+
         _ = Task.Run(async () =>
         {
             try

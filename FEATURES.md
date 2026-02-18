@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-02-18 (session 2)
+> **Last updated:** 2026-02-18 (session 6)
 
 ## Legend
 - ✅ Complete & Tested
@@ -36,7 +36,7 @@
 | 2.6 | Touch-to-mouse translation (mobile) | 📋 | Basic structure in MainPage |
 | 2.7 | Mobile UI — host list + connection flow | 🔧 | Discovery UI exists, connection UI added |
 | 2.8 | Mobile UI — remote desktop viewer | 📋 | Need image rendering surface |
-| 2.9 | Authentication & pairing mechanism | 📋 | PIN/code based pairing |
+| 2.9 | Authentication & pairing mechanism | ✅ | PinPairingService: 6-digit PIN, 5-min TTL, 5-attempt lockout, session token; wired into RemoteDesktopHost + TcpCommunicationService; 29 tests |
 | 2.10 | Session management (connect/disconnect/reconnect) | 📋 | RemoteSession model exists |
 
 ## Phase 3: Enhanced Features
@@ -73,6 +73,7 @@
 > Build-breaking compile errors from session 1 were resolved (duplicate WindowsInputHandler code, MainPage issues).
 > Session 4 (2026-02-18): Implemented real WindowsInputHandler (user32.dll SendInput P/Invoke), split MockInputHandler into its own file, fixed test project references, 17 tests passing.
 > Session 5 (2026-02-18): Implemented real WindowsScreenCapture (BitBlt/GetDIBits GDI P/Invoke, 32-bit BGRA, platform guards). Split MockScreenCapture into its own file. Removed stray src/RemoteLink.Desktop/Services/ directory. 39 tests passing (20 new).
+> Session 6 (2026-02-18): Committed Feature 2.9 — PIN-based authentication & pairing. IPairingService interface, PairingModels, PinPairingService (6-digit PIN, 5-min TTL, lockout), wired into TcpCommunicationService (PairingRequest/Response messages) and RemoteDesktopHost (PIN display on startup, pairing gate before streaming). 67 tests passing (29 new pairing tests).
 
 ---
 

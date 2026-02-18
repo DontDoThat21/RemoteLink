@@ -56,4 +56,26 @@ public interface ICommunicationService
     /// Event fired when connection state changes
     /// </summary>
     event EventHandler<bool> ConnectionStateChanged;
+
+    // ── Pairing ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a pairing request to the connected host (client mode).
+    /// </summary>
+    Task SendPairingRequestAsync(PairingRequest request);
+
+    /// <summary>
+    /// Send a pairing response to the connected client (host mode).
+    /// </summary>
+    Task SendPairingResponseAsync(PairingResponse response);
+
+    /// <summary>
+    /// Event fired when a pairing request is received (host mode).
+    /// </summary>
+    event EventHandler<PairingRequest> PairingRequestReceived;
+
+    /// <summary>
+    /// Event fired when a pairing response is received (client mode).
+    /// </summary>
+    event EventHandler<PairingResponse> PairingResponseReceived;
 }

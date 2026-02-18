@@ -29,6 +29,8 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     private const string MsgTypeScreen = "ScreenData";
     private const string MsgTypeInput = "InputEvent";
+    private const string MsgTypePairingRequest = "PairingRequest";
+    private const string MsgTypePairingResponse = "PairingResponse";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,12 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<bool>? ConnectionStateChanged;
+
+    /// <inheritdoc/>
+    public event EventHandler<PairingRequest>? PairingRequestReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PairingResponse>? PairingResponseReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -170,6 +178,28 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendPairingRequestAsync(PairingRequest request)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePairingRequest,
+            Payload = Encode(request)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendPairingResponseAsync(PairingResponse response)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePairingResponse,
+            Payload = Encode(response)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -257,6 +287,16 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeInput:
                     var ie = Decode<InputEvent>(msg.Payload);
                     if (ie != null) InputEventReceived?.Invoke(this, ie);
+                    break;
+
+                case MsgTypePairingRequest:
+                    var pr = Decode<PairingRequest>(msg.Payload);
+                    if (pr != null) PairingRequestReceived?.Invoke(this, pr);
+                    break;
+
+                case MsgTypePairingResponse:
+                    var prr = Decode<PairingResponse>(msg.Payload);
+                    if (prr != null) PairingResponseReceived?.Invoke(this, prr);
                     break;
 
                 default:

@@ -32,6 +32,7 @@ class Program
         else
             builder.Services.AddSingleton<IInputHandler, MockInputHandler>();
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
+        builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
             var localDevice = new DeviceInfo
