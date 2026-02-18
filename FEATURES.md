@@ -29,7 +29,7 @@
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 2.1 | TCP/SignalR real-time communication service | ✅ | TcpCommunicationService — length-prefixed JSON, bidirectional; 9 integration tests |
-| 2.2 | Screen capture — Windows (real impl) | 📋 | Currently MockScreenCapture |
+| 2.2 | Screen capture — Windows (real impl) | 🔧 | WindowsScreenCapture implemented |
 | 2.3 | Screen streaming (host → client) | 🔧 | RemoteDesktopHost wired: FrameCaptured → SendScreenDataAsync |
 | 2.4 | Input handling — Windows (real impl) | 🔧 | Previously had duplicate code, now fixed |
 | 2.5 | Remote input relay (client → host) | 🔧 | RemoteDesktopHost wired: InputEventReceived → ProcessInputEventAsync |
