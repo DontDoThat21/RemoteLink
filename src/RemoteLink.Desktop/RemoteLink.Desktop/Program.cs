@@ -19,7 +19,11 @@ class Program
         
         // Configure services
         builder.Services.AddLogging();
-        builder.Services.AddSingleton<IScreenCapture, MockScreenCapture>();
+        // Use real GDI screen capture on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IScreenCapture, WindowsScreenCapture>();
+        else
+            builder.Services.AddSingleton<IScreenCapture, MockScreenCapture>();
 
         // Use platform-native input handler when running on Windows;
         // fall back to the mock handler on Linux/macOS (dev/test machines).
