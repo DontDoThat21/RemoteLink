@@ -29,7 +29,7 @@
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 2.1 | TCP/SignalR real-time communication service | ✅ | TcpCommunicationService — length-prefixed JSON, bidirectional; 9 integration tests |
-| 2.2 | Screen capture — Windows (real impl) | 🔧 | WindowsScreenCapture implemented |
+| 2.2 | Screen capture — Windows (real impl) | ✅ | WindowsScreenCapture: BitBlt/GetDIBits GDI P/Invoke, platform guards, 20 tests |
 | 2.3 | Screen streaming (host → client) | 🔧 | RemoteDesktopHost wired: FrameCaptured → SendScreenDataAsync |
 | 2.4 | Input handling — Windows (real impl) | ✅ | WindowsInputHandler: SendInput P/Invoke, full VK enum, platform-gated; 16 tests |
 | 2.5 | Remote input relay (client → host) | 🔧 | RemoteDesktopHost wired: InputEventReceived → ProcessInputEventAsync |
@@ -72,6 +72,7 @@
 
 > Build-breaking compile errors from session 1 were resolved (duplicate WindowsInputHandler code, MainPage issues).
 > Session 4 (2026-02-18): Implemented real WindowsInputHandler (user32.dll SendInput P/Invoke), split MockInputHandler into its own file, fixed test project references, 17 tests passing.
+> Session 5 (2026-02-18): Implemented real WindowsScreenCapture (BitBlt/GetDIBits GDI P/Invoke, 32-bit BGRA, platform guards). Split MockScreenCapture into its own file. Removed stray src/RemoteLink.Desktop/Services/ directory. 39 tests passing (20 new).
 
 ---
 
