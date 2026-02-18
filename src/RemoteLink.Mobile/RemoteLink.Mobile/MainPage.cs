@@ -244,9 +244,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             // Create input event for command execution
             var inputEvent = new RemoteLink.Shared.Models.InputEvent
             {
-            var inputEvent = new InputEvent
-            {
-                Type = InputEventType.CommandExecution,
+                Type = RemoteLink.Shared.Models.InputEventType.CommandExecution,
                 Command = command,
                 WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory
             };

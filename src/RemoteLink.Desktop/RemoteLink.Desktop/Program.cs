@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Desktop.Services;
@@ -21,6 +21,7 @@ class Program
         builder.Services.AddLogging();
         builder.Services.AddSingleton<IScreenCapture, MockScreenCapture>();
         builder.Services.AddSingleton<IInputHandler, MockInputHandler>();
+        builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
             var localDevice = new DeviceInfo
