@@ -20,6 +20,12 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../RemoteLink.Desktop/RemoteLink.Desktop.csproj" />
+    <ProjectReference Include="../../../RemoteLink.Shared/RemoteLink.Shared/RemoteLink.Shared.csproj" />
   </ItemGroup>
 
 </Project>

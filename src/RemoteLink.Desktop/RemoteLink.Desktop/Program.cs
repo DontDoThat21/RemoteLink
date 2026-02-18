@@ -20,7 +20,13 @@ class Program
         // Configure services
         builder.Services.AddLogging();
         builder.Services.AddSingleton<IScreenCapture, MockScreenCapture>();
-        builder.Services.AddSingleton<IInputHandler, MockInputHandler>();
+
+        // Use platform-native input handler when running on Windows;
+        // fall back to the mock handler on Linux/macOS (dev/test machines).
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IInputHandler, WindowsInputHandler>();
+        else
+            builder.Services.AddSingleton<IInputHandler, MockInputHandler>();
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {

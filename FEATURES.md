@@ -31,7 +31,7 @@
 | 2.1 | TCP/SignalR real-time communication service | ✅ | TcpCommunicationService — length-prefixed JSON, bidirectional; 9 integration tests |
 | 2.2 | Screen capture — Windows (real impl) | 🔧 | WindowsScreenCapture implemented |
 | 2.3 | Screen streaming (host → client) | 🔧 | RemoteDesktopHost wired: FrameCaptured → SendScreenDataAsync |
-| 2.4 | Input handling — Windows (real impl) | 🔧 | Previously had duplicate code, now fixed |
+| 2.4 | Input handling — Windows (real impl) | ✅ | WindowsInputHandler: SendInput P/Invoke, full VK enum, platform-gated; 16 tests |
 | 2.5 | Remote input relay (client → host) | 🔧 | RemoteDesktopHost wired: InputEventReceived → ProcessInputEventAsync |
 | 2.6 | Touch-to-mouse translation (mobile) | 📋 | Basic structure in MainPage |
 | 2.7 | Mobile UI — host list + connection flow | 🔧 | Discovery UI exists, connection UI added |
@@ -71,6 +71,7 @@
 | RemoteDesktopClient passes `null!` for ILogger in MainPage | 🟡 Runtime risk | `src/RemoteLink.Mobile/.../MainPage.cs` |
 
 > Build-breaking compile errors from session 1 were resolved (duplicate WindowsInputHandler code, MainPage issues).
+> Session 4 (2026-02-18): Implemented real WindowsInputHandler (user32.dll SendInput P/Invoke), split MockInputHandler into its own file, fixed test project references, 17 tests passing.
 
 ---
 
