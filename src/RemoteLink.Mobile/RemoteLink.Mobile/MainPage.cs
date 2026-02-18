@@ -1,12 +1,17 @@
 using System.ComponentModel;
-using RemoteLink.Mobile.Services;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
 
 namespace RemoteLink.Mobile;
 
+/// <summary>
+/// Main page: combines discovery, host-list, connection flow, and the remote
+/// desktop viewer surface in a single scrollable code-behind page.
+/// </summary>
 public partial class MainPage : ContentPage, INotifyPropertyChanged
 {
+    // ── State ─────────────────────────────────────────────────────────────────
+
     private bool _isDiscovering;
     private string _statusMessage = "Initializing...";
     private readonly List<DeviceInfo> _availableHosts = new();
@@ -15,9 +20,19 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     private readonly TouchToMouseTranslator _touchTranslator = new();
     private RemoteDesktopClient? _client;
 
-    // Target desktop resolution (updated once a session is established)
-    private int _desktopWidth = 1920;
+    // Target desktop resolution (updated when a session is established)
+    private int _desktopWidth  = 1920;
     private int _desktopHeight = 1080;
+
+    // ── Dynamic UI references ─────────────────────────────────────────────────
+
+    private StackLayout    _hostListContainer = null!;
+    private Label          _noHostsLabel      = null!;
+    private StackLayout    _connectedBanner   = null!;
+    private Label          _connectedHostLabel = null!;
+    private BoxView        _remoteViewer      = null!;
+
+    // ── Bindable properties ───────────────────────────────────────────────────
 
     public bool IsDiscovering
     {
@@ -31,152 +46,384 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         set { _statusMessage = value; OnPropertyChanged(); }
     }
 
-    public List<DeviceInfo> AvailableHosts => _availableHosts;
-
-    // ── Remote viewer surface ─────────────────────────────────────────────────
-
-    /// <summary>
-    /// The BoxView that acts as the remote desktop display area.
-    /// Gesture recognizers are attached here to capture touch input.
-    /// </summary>
-    private BoxView RemoteViewer { get; set; } = null!;
+    // ── Constructor ───────────────────────────────────────────────────────────
 
     public MainPage()
     {
         Title = "RemoteLink Mobile";
         BackgroundColor = Colors.White;
 
-        var mainLayout = new StackLayout
-        {
-            Padding = new Thickness(20),
-            Spacing = 20,
-            VerticalOptions = LayoutOptions.Center
-        };
-
-        // Title
-        var titleLabel = new Label
-        {
-            Text = "RemoteLink Mobile Client",
-            FontSize = 24,
-            FontAttributes = FontAttributes.Bold,
-            HorizontalOptions = LayoutOptions.Center,
-            TextColor = Colors.Blue
-        };
-
-        // Status
-        var statusLabel = new Label
-        {
-            FontSize = 16,
-            HorizontalOptions = LayoutOptions.Center,
-            TextColor = Colors.Gray
-        };
-        statusLabel.SetBinding(Label.TextProperty, new Binding(nameof(StatusMessage), source: this));
-
-        // Activity indicator
-        var activityIndicator = new ActivityIndicator
-        {
-            HorizontalOptions = LayoutOptions.Center,
-            Color = Colors.Blue
-        };
-        activityIndicator.SetBinding(
-            ActivityIndicator.IsRunningProperty,
-            new Binding(nameof(IsDiscovering), source: this));
-
-        // Host list placeholder
-        var hostListLabel = new Label
-        {
-            Text = "Discovered hosts will appear here",
-            FontSize = 14,
-            HorizontalOptions = LayoutOptions.Center,
-            TextColor = Colors.Gray
-        };
-
-        // ── Remote viewer surface with touch gesture recognizers ──────────────
-        RemoteViewer = new BoxView
-        {
-            Color = Colors.Black,
-            HeightRequest = 240,
-            HorizontalOptions = LayoutOptions.FillAndExpand,
-            IsVisible = false  // hidden until connected
-        };
-
-        AttachGestureRecognizers(RemoteViewer);
-
-        var remoteViewerLabel = new Label
-        {
-            Text = "Remote Desktop (tap to connect to a host first)",
-            FontSize = 12,
-            HorizontalOptions = LayoutOptions.Center,
-            TextColor = Colors.Gray
-        };
-
-        // Command execution section (retained for demo/debug purposes)
-        var commandSectionLabel = new Label
-        {
-            Text = "Command Execution",
-            FontSize = 18,
-            FontAttributes = FontAttributes.Bold,
-            HorizontalOptions = LayoutOptions.Center,
-            TextColor = Colors.DarkBlue,
-            Margin = new Thickness(0, 20, 0, 10)
-        };
-
-        var commandEntry = new Entry
-        {
-            Placeholder = "Enter command (e.g., 'echo Hello World')",
-            FontSize = 14,
-            Margin = new Thickness(0, 5)
-        };
-
-        var workingDirectoryEntry = new Entry
-        {
-            Placeholder = "Working directory (optional)",
-            FontSize = 14,
-            Margin = new Thickness(0, 5)
-        };
-
-        var executeButton = new Button
-        {
-            Text = "Execute Command",
-            BackgroundColor = Colors.Blue,
-            TextColor = Colors.White,
-            Margin = new Thickness(0, 10),
-            IsEnabled = false
-        };
-
-        var resultLabel = new Label
-        {
-            Text = "Command results will appear here",
-            FontSize = 12,
-            TextColor = Colors.Gray,
-            Margin = new Thickness(0, 10)
-        };
-
-        commandEntry.TextChanged += (s, e) =>
-        {
-            executeButton.IsEnabled = !string.IsNullOrWhiteSpace(e.NewTextValue);
-        };
-        executeButton.Clicked += async (s, e) =>
-            await ExecuteCommandAsync(commandEntry.Text, workingDirectoryEntry.Text, resultLabel);
-
-        mainLayout.Children.Add(titleLabel);
-        mainLayout.Children.Add(statusLabel);
-        mainLayout.Children.Add(activityIndicator);
-        mainLayout.Children.Add(hostListLabel);
-        mainLayout.Children.Add(RemoteViewer);
-        mainLayout.Children.Add(remoteViewerLabel);
-        mainLayout.Children.Add(commandSectionLabel);
-        mainLayout.Children.Add(commandEntry);
-        mainLayout.Children.Add(workingDirectoryEntry);
-        mainLayout.Children.Add(executeButton);
-        mainLayout.Children.Add(resultLabel);
-
-        Content = new ScrollView { Content = mainLayout };
+        Content = new ScrollView { Content = BuildLayout() };
 
         _ = StartDiscoveryAsync();
     }
 
-    // ── Gesture recognizer wiring ─────────────────────────────────────────────
+    // ── Layout builder ────────────────────────────────────────────────────────
+
+    private View BuildLayout()
+    {
+        var root = new StackLayout
+        {
+            Padding = new Thickness(16),
+            Spacing = 12
+        };
+
+        // ── Title ────────────────────────────────────────────────────────────
+        root.Children.Add(new Label
+        {
+            Text              = "RemoteLink",
+            FontSize          = 28,
+            FontAttributes    = FontAttributes.Bold,
+            HorizontalOptions = LayoutOptions.Center,
+            TextColor         = Color.FromArgb("#1A73E8"),
+            Margin            = new Thickness(0, 12, 0, 0)
+        });
+
+        // ── Status row ───────────────────────────────────────────────────────
+        var statusRow = new StackLayout { Orientation = StackOrientation.Horizontal, Spacing = 8 };
+        var activityIndicator = new ActivityIndicator
+        {
+            VerticalOptions = LayoutOptions.Center,
+            Color           = Color.FromArgb("#1A73E8"),
+            WidthRequest    = 20,
+            HeightRequest   = 20
+        };
+        activityIndicator.SetBinding(ActivityIndicator.IsRunningProperty,
+            new Binding(nameof(IsDiscovering), source: this));
+
+        var statusLabel = new Label
+        {
+            FontSize          = 14,
+            VerticalOptions   = LayoutOptions.Center,
+            TextColor         = Colors.Gray
+        };
+        statusLabel.SetBinding(Label.TextProperty,
+            new Binding(nameof(StatusMessage), source: this));
+
+        statusRow.Children.Add(activityIndicator);
+        statusRow.Children.Add(statusLabel);
+        root.Children.Add(statusRow);
+
+        // ── Connected banner (hidden until connected) ─────────────────────────
+        _connectedBanner = new StackLayout
+        {
+            BackgroundColor = Color.FromArgb("#E8F5E9"),
+            Padding         = new Thickness(12),
+            Spacing         = 6,
+            IsVisible       = false
+        };
+
+        _connectedHostLabel = new Label
+        {
+            FontSize       = 14,
+            FontAttributes = FontAttributes.Bold,
+            TextColor      = Color.FromArgb("#2E7D32")
+        };
+
+        var disconnectButton = new Button
+        {
+            Text            = "Disconnect",
+            BackgroundColor = Color.FromArgb("#C62828"),
+            TextColor       = Colors.White,
+            FontSize        = 14,
+            CornerRadius    = 6,
+            HeightRequest   = 36,
+            HorizontalOptions = LayoutOptions.Start
+        };
+        disconnectButton.Clicked += async (_, _) => await DisconnectFromHostAsync();
+
+        _connectedBanner.Children.Add(_connectedHostLabel);
+        _connectedBanner.Children.Add(disconnectButton);
+        root.Children.Add(_connectedBanner);
+
+        // ── Remote viewer surface ─────────────────────────────────────────────
+        _remoteViewer = new BoxView
+        {
+            Color             = Colors.Black,
+            HeightRequest     = 240,
+            HorizontalOptions = LayoutOptions.FillAndExpand,
+            IsVisible         = false,
+            CornerRadius      = 6
+        };
+        AttachGestureRecognizers(_remoteViewer);
+
+        root.Children.Add(new Label
+        {
+            Text      = "Remote Desktop",
+            FontSize  = 16,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Colors.DarkGray
+        });
+        root.Children.Add(_remoteViewer);
+
+        // ── Discovered hosts ──────────────────────────────────────────────────
+        root.Children.Add(new Label
+        {
+            Text           = "Discovered Hosts",
+            FontSize       = 16,
+            FontAttributes = FontAttributes.Bold,
+            TextColor      = Colors.DarkGray,
+            Margin         = new Thickness(0, 8, 0, 0)
+        });
+
+        _noHostsLabel = new Label
+        {
+            Text      = "Scanning for desktop hosts…",
+            FontSize  = 13,
+            TextColor = Colors.Gray,
+            Margin    = new Thickness(4, 0)
+        };
+
+        _hostListContainer = new StackLayout { Spacing = 8 };
+        _hostListContainer.Children.Add(_noHostsLabel);
+
+        root.Children.Add(_hostListContainer);
+
+        // ── Command execution section (debug / demo) ──────────────────────────
+        root.Children.Add(BuildCommandSection());
+
+        return root;
+    }
+
+    // ── Host list helpers ─────────────────────────────────────────────────────
+
+    /// <summary>Creates a tappable card for <paramref name="device"/> and adds it to the list.</summary>
+    private void AddHostCard(DeviceInfo device)
+    {
+        // Remove the "no hosts" placeholder once we have at least one
+        _hostListContainer.Children.Remove(_noHostsLabel);
+
+        var card = new Frame
+        {
+            BackgroundColor  = Colors.White,
+            BorderColor      = Color.FromArgb("#DADCE0"),
+            CornerRadius     = 8,
+            Padding          = new Thickness(12),
+            HasShadow        = true,
+            AutomationId     = $"host-{device.DeviceId}"
+        };
+
+        var nameLabel = new Label
+        {
+            Text           = device.DeviceName,
+            FontSize       = 15,
+            FontAttributes = FontAttributes.Bold,
+            TextColor      = Colors.Black
+        };
+        var addrLabel = new Label
+        {
+            Text      = $"{device.IPAddress}:{device.Port}",
+            FontSize  = 12,
+            TextColor = Colors.Gray
+        };
+        var connectLabel = new Label
+        {
+            Text      = "Tap to connect →",
+            FontSize  = 12,
+            TextColor = Color.FromArgb("#1A73E8"),
+            HorizontalOptions = LayoutOptions.End
+        };
+
+        var cardContent = new StackLayout { Spacing = 2 };
+        cardContent.Children.Add(nameLabel);
+        cardContent.Children.Add(addrLabel);
+        cardContent.Children.Add(connectLabel);
+        card.Content = cardContent;
+
+        var tap = new TapGestureRecognizer();
+        tap.Tapped += async (_, _) => await OnHostCardTappedAsync(device);
+        card.GestureRecognizers.Add(tap);
+
+        _hostListContainer.Children.Add(card);
+    }
+
+    /// <summary>Removes the card for <paramref name="device"/> from the list.</summary>
+    private void RemoveHostCard(DeviceInfo device)
+    {
+        var toRemove = _hostListContainer.Children
+            .OfType<Frame>()
+            .FirstOrDefault(f => f.AutomationId == $"host-{device.DeviceId}");
+
+        if (toRemove != null)
+            _hostListContainer.Children.Remove(toRemove);
+
+        // Re-add "no hosts" placeholder if the list is now empty
+        if (!_hostListContainer.Children.OfType<Frame>().Any())
+            _hostListContainer.Children.Add(_noHostsLabel);
+    }
+
+    // ── Connection flow ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Called when a host card is tapped.  Prompts the user for the PIN shown
+    /// on the desktop host and initiates the connection + pairing flow.
+    /// </summary>
+    private async Task OnHostCardTappedAsync(DeviceInfo host)
+    {
+        // If already connected to the same host, do nothing
+        if (_client?.IsConnected == true &&
+            _client.ConnectedHost?.DeviceId == host.DeviceId)
+        {
+            await DisplayAlert("Already Connected",
+                $"You are already connected to {host.DeviceName}.", "OK");
+            return;
+        }
+
+        // Prompt for PIN
+        var pin = await DisplayPromptAsync(
+            title:       $"Connect to {host.DeviceName}",
+            message:     "Enter the 6-digit PIN shown on the desktop host:",
+            accept:      "Connect",
+            cancel:      "Cancel",
+            placeholder: "123456",
+            maxLength:   6,
+            keyboard:    Keyboard.Numeric);
+
+        if (string.IsNullOrWhiteSpace(pin)) return;   // user cancelled
+
+        if (_client is null)
+        {
+            await DisplayAlert("Not Ready", "Discovery service is not running.", "OK");
+            return;
+        }
+
+        // Disable all host cards during connection attempt
+        StatusMessage = $"Connecting to {host.DeviceName}…";
+        IsDiscovering = true;
+
+        var success = await _client.ConnectToHostAsync(host, pin);
+
+        IsDiscovering = false;
+
+        if (!success)
+        {
+            // PairingFailed event will have already set StatusMessage
+            await DisplayAlert("Connection Failed", StatusMessage, "OK");
+        }
+    }
+
+    /// <summary>Disconnects from the current host and resets the UI.</summary>
+    private async Task DisconnectFromHostAsync()
+    {
+        if (_client is null) return;
+        await _client.DisconnectAsync();
+    }
+
+    // ── RemoteDesktopClient event handlers ────────────────────────────────────
+
+    private void OnDeviceDiscovered(object? sender, DeviceInfo device)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (!_availableHosts.Any(h => h.DeviceId == device.DeviceId))
+            {
+                _availableHosts.Add(device);
+                AddHostCard(device);
+                StatusMessage = $"Found {_availableHosts.Count} host(s). Tap to connect.";
+            }
+        });
+    }
+
+    private void OnDeviceLost(object? sender, DeviceInfo device)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            var existing = _availableHosts.FirstOrDefault(h => h.DeviceId == device.DeviceId);
+            if (existing != null)
+            {
+                _availableHosts.Remove(existing);
+                RemoveHostCard(device);
+                StatusMessage = _availableHosts.Count > 0
+                    ? $"Found {_availableHosts.Count} host(s). Tap to connect."
+                    : "Scanning for desktop hosts…";
+            }
+        });
+    }
+
+    private void OnConnectionStateChanged(object? sender, ClientConnectionState state)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            switch (state)
+            {
+                case ClientConnectionState.Connected:
+                    var hostName = _client?.ConnectedHost?.DeviceName ?? "Unknown";
+                    _connectedHostLabel.Text = $"✓ Connected to {hostName}";
+                    _connectedBanner.IsVisible = true;
+                    _remoteViewer.IsVisible    = true;
+                    StatusMessage = $"Connected to {hostName}";
+                    break;
+
+                case ClientConnectionState.Disconnected:
+                    _connectedBanner.IsVisible = false;
+                    _remoteViewer.IsVisible    = false;
+                    if (StatusMessage.StartsWith("Connected"))
+                        StatusMessage = "Disconnected. Scanning for hosts…";
+                    break;
+
+                case ClientConnectionState.Connecting:
+                    StatusMessage = $"Connecting to {_client?.ConnectedHost?.DeviceName}…";
+                    break;
+
+                case ClientConnectionState.Authenticating:
+                    StatusMessage = "Authenticating…";
+                    break;
+            }
+        });
+    }
+
+    private void OnPairingFailed(object? sender, string reason)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            StatusMessage = $"⚠ {reason}";
+        });
+    }
+
+    private void OnServiceStatusChanged(object? sender, string status)
+    {
+        MainThread.BeginInvokeOnMainThread(() => StatusMessage = status);
+    }
+
+    // ── Discovery startup ─────────────────────────────────────────────────────
+
+    private async Task StartDiscoveryAsync()
+    {
+        try
+        {
+            StatusMessage  = "Starting discovery…";
+            IsDiscovering  = true;
+
+            var localDevice = new DeviceInfo
+            {
+                DeviceId   = $"{Environment.MachineName}_Mobile_{Guid.NewGuid():N}"[..Math.Min(48, 50)],
+                DeviceName = $"{Environment.MachineName} Mobile",
+                Type       = DeviceType.Mobile,
+                Port       = 12347
+            };
+
+            var networkDiscovery = new UdpNetworkDiscovery(localDevice);
+            _client = new RemoteDesktopClient(null, networkDiscovery);
+
+            _client.DeviceDiscovered      += OnDeviceDiscovered;
+            _client.DeviceLost            += OnDeviceLost;
+            _client.ServiceStatusChanged  += OnServiceStatusChanged;
+            _client.ConnectionStateChanged += OnConnectionStateChanged;
+            _client.PairingFailed         += OnPairingFailed;
+
+            await _client.StartAsync();
+
+            StatusMessage = "Scanning for desktop hosts…";
+            IsDiscovering = true;   // keep spinner visible while scanning
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error: {ex.Message}";
+            IsDiscovering = false;
+        }
+    }
+
+    // ── Gesture recognizers ───────────────────────────────────────────────────
 
     /// <summary>
     /// Attaches all four gesture recognizers to the remote viewer surface.
@@ -200,8 +447,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         pan.PanUpdated += OnPanned;
         surface.GestureRecognizers.Add(pan);
 
-        // Two-finger scroll → mouse wheel  (PinchGestureRecognizer is used for
-        // scroll because MAUI's ScrollGestureRecognizer is platform-limited)
+        // Two-finger scroll → mouse wheel
         var pinch = new PinchGestureRecognizer();
         pinch.PinchUpdated += OnScrolled;
         surface.GestureRecognizers.Add(pinch);
@@ -214,15 +460,14 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (sender is not View surface) return;
         var pos = e.GetPosition(surface) ?? new Point(0, 0);
 
-        var gesture = new TouchGestureData
+        ForwardGesture(new TouchGestureData
         {
-            GestureType = TouchGestureType.Tap,
-            X = (float)pos.X,
-            Y = (float)pos.Y,
-            DisplayWidth = (float)surface.Width,
+            GestureType   = TouchGestureType.Tap,
+            X             = (float)pos.X,
+            Y             = (float)pos.Y,
+            DisplayWidth  = (float)surface.Width,
             DisplayHeight = (float)surface.Height
-        };
-        ForwardGesture(gesture);
+        });
     }
 
     private void OnDoubleTapped(object? sender, TappedEventArgs e)
@@ -230,23 +475,16 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (sender is not View surface) return;
         var pos = e.GetPosition(surface) ?? new Point(0, 0);
 
-        var gesture = new TouchGestureData
+        ForwardGesture(new TouchGestureData
         {
-            GestureType = TouchGestureType.DoubleTap,
-            X = (float)pos.X,
-            Y = (float)pos.Y,
-            DisplayWidth = (float)surface.Width,
+            GestureType   = TouchGestureType.DoubleTap,
+            X             = (float)pos.X,
+            Y             = (float)pos.Y,
+            DisplayWidth  = (float)surface.Width,
             DisplayHeight = (float)surface.Height
-        };
-        ForwardGesture(gesture);
+        });
     }
 
-    /// <summary>
-    /// Pan gesture handler — translates the current pan position into a
-    /// MouseMove event.  The <see cref="PanUpdatedEventArgs.TotalX"/> /
-    /// <see cref="PanUpdatedEventArgs.TotalY"/> values are deltas from the
-    /// start of the gesture; we track the running position ourselves.
-    /// </summary>
     private float _panStartX, _panStartY;
 
     private void OnPanned(object? sender, PanUpdatedEventArgs e)
@@ -256,140 +494,130 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         switch (e.StatusType)
         {
             case GestureStatus.Started:
-                // Capture the starting point (centre of surface as fallback)
-                _panStartX = (float)(surface.Width / 2);
+                _panStartX = (float)(surface.Width  / 2);
                 _panStartY = (float)(surface.Height / 2);
                 break;
 
             case GestureStatus.Running:
-                var gesture = new TouchGestureData
+                ForwardGesture(new TouchGestureData
                 {
-                    GestureType = TouchGestureType.Pan,
-                    X = _panStartX + (float)e.TotalX,
-                    Y = _panStartY + (float)e.TotalY,
-                    DeltaX = (float)e.TotalX,
-                    DeltaY = (float)e.TotalY,
-                    DisplayWidth = (float)surface.Width,
+                    GestureType   = TouchGestureType.Pan,
+                    X             = _panStartX + (float)e.TotalX,
+                    Y             = _panStartY + (float)e.TotalY,
+                    DeltaX        = (float)e.TotalX,
+                    DeltaY        = (float)e.TotalY,
+                    DisplayWidth  = (float)surface.Width,
                     DisplayHeight = (float)surface.Height
-                };
-                ForwardGesture(gesture);
+                });
                 break;
         }
     }
 
-    /// <summary>
-    /// Pinch/scroll gesture handler.  We repurpose the pinch recognizer for
-    /// two-finger scroll: when scale &lt; 1 we scroll down, &gt; 1 we scroll up.
-    /// </summary>
     private void OnScrolled(object? sender, PinchGestureUpdatedEventArgs e)
     {
-        if (e.Status != GestureStatus.Running) return;
-        if (sender is not View surface) return;
+        if (e.Status != GestureStatus.Running || sender is not View surface) return;
 
-        // Convert scale change to a pixel delta:
-        //   scale > 1 → fingers moving apart → scroll up (negative DeltaY)
-        //   scale < 1 → fingers pinching in → scroll down (positive DeltaY)
         float pixelDelta = (float)((1.0 - e.Scale) * 80.0);
 
-        var gesture = new TouchGestureData
+        ForwardGesture(new TouchGestureData
         {
-            GestureType = TouchGestureType.Scroll,
-            X = (float)(e.ScaleOrigin.X * surface.Width),
-            Y = (float)(e.ScaleOrigin.Y * surface.Height),
-            DeltaY = pixelDelta,
-            DisplayWidth = (float)surface.Width,
+            GestureType   = TouchGestureType.Scroll,
+            X             = (float)(e.ScaleOrigin.X * surface.Width),
+            Y             = (float)(e.ScaleOrigin.Y * surface.Height),
+            DeltaY        = pixelDelta,
+            DisplayWidth  = (float)surface.Width,
             DisplayHeight = (float)surface.Height
-        };
-        ForwardGesture(gesture);
+        });
     }
 
     // ── Touch → host forwarding ───────────────────────────────────────────────
 
-    /// <summary>
-    /// Translates a touch gesture via <see cref="TouchToMouseTranslator"/> and
-    /// sends each resulting <see cref="InputEvent"/> to the desktop host.
-    /// No-ops when no host is connected.
-    /// </summary>
     private void ForwardGesture(TouchGestureData gesture)
     {
-        if (_client is null) return;
+        if (_client is null || !_client.IsConnected) return;
 
         var events = _touchTranslator.Translate(gesture, _desktopWidth, _desktopHeight);
         foreach (var inputEvent in events)
-        {
-            // Fire-and-forget; errors are logged inside RemoteDesktopClient.
             _ = _client.SendInputEventAsync(inputEvent);
-        }
     }
 
-    // ── Discovery ─────────────────────────────────────────────────────────────
+    // ── Command execution section (debug / demo) ──────────────────────────────
 
-    private async Task StartDiscoveryAsync()
+    private static View BuildCommandSection()
     {
-        try
+        var section = new StackLayout { Spacing = 8, Margin = new Thickness(0, 16, 0, 0) };
+
+        section.Children.Add(new Label
         {
-            StatusMessage = "Starting discovery service...";
-            IsDiscovering = true;
-
-            var localDevice = new DeviceInfo
-            {
-                DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
-                DeviceName = Environment.MachineName + " Mobile",
-                Type = DeviceType.Mobile,
-                Port = 12347
-            };
-            var networkDiscovery = new RemoteLink.Shared.Services.UdpNetworkDiscovery(localDevice);
-            _client = new RemoteDesktopClient(null!, networkDiscovery);
-
-            _client.DeviceDiscovered += OnDeviceDiscovered;
-            _client.DeviceLost += OnDeviceLost;
-            _client.ServiceStatusChanged += OnServiceStatusChanged;
-
-            await _client.StartAsync();
-            StatusMessage = "Searching for desktop hosts...";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Error starting discovery: {ex.Message}";
-            IsDiscovering = false;
-        }
-    }
-
-    private void OnDeviceDiscovered(object? sender, DeviceInfo device)
-    {
-        if (device.Type == DeviceType.Desktop)
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                if (!_availableHosts.Any(h => h.DeviceId == device.DeviceId))
-                {
-                    _availableHosts.Add(device);
-                    StatusMessage = $"Found {_availableHosts.Count} desktop host(s)";
-                    RemoteViewer.IsVisible = true;
-                }
-            });
-        }
-    }
-
-    private void OnDeviceLost(object? sender, DeviceInfo device)
-    {
-        MainThread.BeginInvokeOnMainThread(() =>
-        {
-            var existing = _availableHosts.FirstOrDefault(h => h.DeviceId == device.DeviceId);
-            if (existing != null)
-            {
-                _availableHosts.Remove(existing);
-                StatusMessage = $"Found {_availableHosts.Count} desktop host(s)";
-                if (_availableHosts.Count == 0)
-                    RemoteViewer.IsVisible = false;
-            }
+            Text           = "Command Execution (Debug)",
+            FontSize       = 14,
+            FontAttributes = FontAttributes.Bold,
+            TextColor      = Colors.DarkGray
         });
+
+        var commandEntry = new Entry
+        {
+            Placeholder = "e.g. echo Hello World",
+            FontSize    = 13
+        };
+        var wdEntry = new Entry
+        {
+            Placeholder = "Working directory (optional)",
+            FontSize    = 13
+        };
+        var resultLabel = new Label
+        {
+            Text      = "Results appear here",
+            FontSize  = 12,
+            TextColor = Colors.Gray
+        };
+        var executeButton = new Button
+        {
+            Text            = "Execute Command",
+            BackgroundColor = Color.FromArgb("#1A73E8"),
+            TextColor       = Colors.White,
+            CornerRadius    = 6,
+            IsEnabled       = false
+        };
+
+        commandEntry.TextChanged += (_, e) =>
+            executeButton.IsEnabled = !string.IsNullOrWhiteSpace(e.NewTextValue);
+
+        executeButton.Clicked += async (_, _) =>
+            await ExecuteCommandAsync(commandEntry.Text, wdEntry.Text, resultLabel);
+
+        section.Children.Add(commandEntry);
+        section.Children.Add(wdEntry);
+        section.Children.Add(executeButton);
+        section.Children.Add(resultLabel);
+
+        return section;
     }
 
-    private void OnServiceStatusChanged(object? sender, string status)
+    private static async Task ExecuteCommandAsync(
+        string command, string? workingDirectory, Label resultLabel)
     {
-        MainThread.BeginInvokeOnMainThread(() => { /* update status indicator if desired */ });
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            resultLabel.Text      = "Please enter a command";
+            resultLabel.TextColor = Colors.Red;
+            return;
+        }
+
+        resultLabel.Text      = "Executing…";
+        resultLabel.TextColor = Colors.Blue;
+
+        await Task.Delay(500);
+
+        var info  = $"Command: {command}\n";
+        if (!string.IsNullOrEmpty(workingDirectory)) info += $"Dir: {workingDirectory}\n";
+        info += "Status: would be forwarded to desktop host";
+
+        resultLabel.Text      = info;
+        resultLabel.TextColor = Colors.Green;
     }
+
+    // ── INotifyPropertyChanged ────────────────────────────────────────────────
 
     public new event PropertyChangedEventHandler? PropertyChanged;
 
@@ -397,51 +625,5 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         [System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-    }
-
-    // ── Command execution (debug/demo) ─────────────────────────────────────────
-
-    private async Task ExecuteCommandAsync(string command, string? workingDirectory, Label resultLabel)
-    {
-        if (string.IsNullOrWhiteSpace(command))
-        {
-            resultLabel.Text = "Please enter a command";
-            resultLabel.TextColor = Colors.Red;
-            return;
-        }
-
-        try
-        {
-            resultLabel.Text = "Executing command...";
-            resultLabel.TextColor = Colors.Blue;
-
-            var inputEvent = new InputEvent
-            {
-                Type = InputEventType.CommandExecution,
-                Command = command,
-                WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? null : workingDirectory
-            };
-
-            await SimulateCommandExecutionAsync(inputEvent, resultLabel);
-        }
-        catch (Exception ex)
-        {
-            resultLabel.Text = $"Error: {ex.Message}";
-            resultLabel.TextColor = Colors.Red;
-        }
-    }
-
-    private static async Task SimulateCommandExecutionAsync(InputEvent inputEvent, Label resultLabel)
-    {
-        await Task.Delay(1000);
-
-        var info = $"Command: {inputEvent.Command}\n";
-        if (!string.IsNullOrEmpty(inputEvent.WorkingDirectory))
-            info += $"Working Directory: {inputEvent.WorkingDirectory}\n";
-        info += $"Event ID: {inputEvent.EventId}\n";
-        info += "Status: Command sent to desktop host";
-
-        resultLabel.Text = info;
-        resultLabel.TextColor = Colors.Green;
     }
 }
