@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-02-18 (session 6)
+> **Last updated:** 2026-02-18 (session 7)
 
 ## Legend
 - ✅ Complete & Tested
@@ -30,9 +30,9 @@
 |---|---------|--------|-------|
 | 2.1 | TCP/SignalR real-time communication service | ✅ | TcpCommunicationService — length-prefixed JSON, bidirectional; 9 integration tests |
 | 2.2 | Screen capture — Windows (real impl) | ✅ | WindowsScreenCapture: BitBlt/GetDIBits GDI P/Invoke, platform guards, 20 tests |
-| 2.3 | Screen streaming (host → client) | 🔧 | RemoteDesktopHost wired: FrameCaptured → SendScreenDataAsync |
+| 2.3 | Screen streaming (host → client) | ✅ | RemoteDesktopHost wired: FrameCaptured → SendScreenDataAsync; 21 host-level tests |
 | 2.4 | Input handling — Windows (real impl) | ✅ | WindowsInputHandler: SendInput P/Invoke, full VK enum, platform-gated; 16 tests |
-| 2.5 | Remote input relay (client → host) | 🔧 | RemoteDesktopHost wired: InputEventReceived → ProcessInputEventAsync |
+| 2.5 | Remote input relay (client → host) | ✅ | RemoteDesktopHost wired: InputEventReceived → ProcessInputEventAsync; 21 host-level tests |
 | 2.6 | Touch-to-mouse translation (mobile) | 📋 | Basic structure in MainPage |
 | 2.7 | Mobile UI — host list + connection flow | 🔧 | Discovery UI exists, connection UI added |
 | 2.8 | Mobile UI — remote desktop viewer | 📋 | Need image rendering surface |
@@ -74,6 +74,7 @@
 > Session 4 (2026-02-18): Implemented real WindowsInputHandler (user32.dll SendInput P/Invoke), split MockInputHandler into its own file, fixed test project references, 17 tests passing.
 > Session 5 (2026-02-18): Implemented real WindowsScreenCapture (BitBlt/GetDIBits GDI P/Invoke, 32-bit BGRA, platform guards). Split MockScreenCapture into its own file. Removed stray src/RemoteLink.Desktop/Services/ directory. 39 tests passing (20 new).
 > Session 6 (2026-02-18): Committed Feature 2.9 — PIN-based authentication & pairing. IPairingService interface, PairingModels, PinPairingService (6-digit PIN, 5-min TTL, lockout), wired into TcpCommunicationService (PairingRequest/Response messages) and RemoteDesktopHost (PIN display on startup, pairing gate before streaming). 67 tests passing (29 new pairing tests).
+> Session 7 (2026-02-18): Features 2.3 & 2.5 — RemoteDesktopHost integration tests. 21 new tests using hand-rolled fakes covering screen streaming (capture gating, frame forwarding, stop-on-disconnect) and input relay (relay when paired, block when not). 88 tests passing total.
 
 ---
 
