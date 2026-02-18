@@ -95,4 +95,32 @@ public class RemoteDesktopClient
             DeviceLost?.Invoke(this, device);
         }
     }
+
+    /// <summary>
+    /// Sends an <see cref="InputEvent"/> to the connected desktop host.
+    /// No-ops silently when no communication service is wired up yet.
+    /// </summary>
+    public async Task SendInputEventAsync(RemoteLink.Shared.Models.InputEvent inputEvent)
+    {
+        if (_communicationService is null) return;
+
+        try
+        {
+            await _communicationService.SendInputEventAsync(inputEvent);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send input event of type {Type}", inputEvent.Type);
+        }
+    }
+
+    private ICommunicationService? _communicationService;
+
+    /// <summary>
+    /// Attaches a communication service for forwarding input events to the host.
+    /// </summary>
+    public void SetCommunicationService(ICommunicationService communicationService)
+    {
+        _communicationService = communicationService;
+    }
 }
