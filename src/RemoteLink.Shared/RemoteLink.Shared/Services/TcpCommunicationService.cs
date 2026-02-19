@@ -36,6 +36,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypePairingRequest = "PairingRequest";
     private const string MsgTypePairingResponse = "PairingResponse";
     private const string MsgTypeConnectionQuality = "ConnectionQuality";
+    private const string MsgTypeClipboard = "ClipboardData";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<ClipboardData>? ClipboardDataReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -298,6 +302,17 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendClipboardDataAsync(ClipboardData clipboardData)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeClipboard,
+            Payload = Encode(clipboardData)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -400,6 +415,11 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeConnectionQuality:
                     var cq = Decode<ConnectionQuality>(msg.Payload);
                     if (cq != null) ConnectionQualityReceived?.Invoke(this, cq);
+                    break;
+
+                case MsgTypeClipboard:
+                    var cd = Decode<ClipboardData>(msg.Payload);
+                    if (cd != null) ClipboardDataReceived?.Invoke(this, cd);
                     break;
 
                 default:

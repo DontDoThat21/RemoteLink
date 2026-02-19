@@ -17,6 +17,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     private readonly List<InputEvent> _sentInputEvents = new();
     private readonly List<PairingResponse> _sentPairingResponses = new();
     private readonly List<ConnectionQuality> _sentConnectionQuality = new();
+    private readonly List<ClipboardData> _sentClipboardData = new();
 
     public List<ScreenData> SentScreenData
     {
@@ -34,6 +35,10 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     {
         get { lock (_lock) { return new List<ConnectionQuality>(_sentConnectionQuality); } }
     }
+    public List<ClipboardData> SentClipboardData
+    {
+        get { lock (_lock) { return new List<ClipboardData>(_sentClipboardData); } }
+    }
 
     // Settable connection state — tests can toggle this
     public bool IsConnected { get; set; }
@@ -45,6 +50,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<PairingRequest>? PairingRequestReceived;
     public event EventHandler<PairingResponse>? PairingResponseReceived;
     public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
+    public event EventHandler<ClipboardData>? ClipboardDataReceived;
 
     // ── ICommunicationService methods ─────────────────────────────────────────
     public Task StartAsync(int port) => Task.CompletedTask;
@@ -75,6 +81,12 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public Task SendConnectionQualityAsync(ConnectionQuality quality)
     {
         lock (_lock) { _sentConnectionQuality.Add(quality); }
+        return Task.CompletedTask;
+    }
+
+    public Task SendClipboardDataAsync(ClipboardData clipboardData)
+    {
+        lock (_lock) { _sentClipboardData.Add(clipboardData); }
         return Task.CompletedTask;
     }
 
@@ -406,6 +418,42 @@ internal sealed class FakePerformanceMonitor : IPerformanceMonitor
     }
 }
 
+/// <summary>In-memory fake for <see cref="IClipboardService"/> used in host tests.</summary>
+internal sealed class FakeClipboardService : IClipboardService
+{
+    public bool IsMonitoring { get; private set; }
+    public int StartCallCount { get; private set; }
+    public int StopCallCount { get; private set; }
+
+    public event EventHandler<ClipboardChangedEventArgs>? ClipboardChanged;
+
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        IsMonitoring = true;
+        StartCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        IsMonitoring = false;
+        StopCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task<string?> GetTextAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
+
+    public Task SetTextAsync(string text, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task<byte[]?> GetImageAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult<byte[]?>(null);
+
+    public Task SetImageAsync(byte[] pngData, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -425,6 +473,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeSessionManager _sessionManager = new();
     private readonly FakeDeltaFrameEncoder _deltaEncoder = new();
     private readonly FakePerformanceMonitor _perfMonitor = new();
+    private readonly FakeClipboardService _clipboard = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -440,7 +489,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _pairing,
             _sessionManager,
             _deltaEncoder,
-            _perfMonitor);
+            _perfMonitor,
+            _clipboard);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>

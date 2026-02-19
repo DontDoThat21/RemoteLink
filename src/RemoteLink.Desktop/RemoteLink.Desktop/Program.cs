@@ -31,6 +31,13 @@ class Program
             builder.Services.AddSingleton<IInputHandler, WindowsInputHandler>();
         else
             builder.Services.AddSingleton<IInputHandler, MockInputHandler>();
+
+        // Use Windows clipboard service on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IClipboardService, WindowsClipboardService>();
+        else
+            builder.Services.AddSingleton<IClipboardService, MockClipboardService>();
+
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();

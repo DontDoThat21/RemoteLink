@@ -90,4 +90,16 @@ public interface ICommunicationService
     /// Event fired when connection quality metrics are received (client mode).
     /// </summary>
     event EventHandler<ConnectionQuality> ConnectionQualityReceived;
+
+    // ── Clipboard Sync ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send clipboard data to the remote peer.
+    /// </summary>
+    Task SendClipboardDataAsync(ClipboardData clipboardData);
+
+    /// <summary>
+    /// Event fired when clipboard data is received from the remote peer.
+    /// </summary>
+    event EventHandler<ClipboardData> ClipboardDataReceived;
 }

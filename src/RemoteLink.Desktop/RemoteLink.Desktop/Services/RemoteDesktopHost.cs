@@ -27,6 +27,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly ISessionManager _sessionManager;
     private readonly IDeltaFrameEncoder _deltaEncoder;
     private readonly IPerformanceMonitor _perfMonitor;
+    private readonly IClipboardService _clipboardService;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -51,7 +52,8 @@ public class RemoteDesktopHost : BackgroundService
         IPairingService pairing,
         ISessionManager sessionManager,
         IDeltaFrameEncoder deltaEncoder,
-        IPerformanceMonitor perfMonitor)
+        IPerformanceMonitor perfMonitor,
+        IClipboardService clipboardService)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -62,6 +64,7 @@ public class RemoteDesktopHost : BackgroundService
         _sessionManager = sessionManager;
         _deltaEncoder = deltaEncoder;
         _perfMonitor = perfMonitor;
+        _clipboardService = clipboardService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -85,6 +88,10 @@ public class RemoteDesktopHost : BackgroundService
 
             // Wire connection state: start/stop screen capture based on client presence
             _communication.ConnectionStateChanged += OnConnectionStateChanged;
+
+            // Wire clipboard sync: send local changes to client, apply remote changes locally
+            _clipboardService.ClipboardChanged += OnClipboardChanged;
+            _communication.ClipboardDataReceived += OnClipboardDataReceived;
 
             // Start TCP listener
             await _communication.StartAsync(HostPort);
@@ -129,7 +136,10 @@ public class RemoteDesktopHost : BackgroundService
             _communication.PairingRequestReceived -= OnPairingRequestReceived;
             _communication.InputEventReceived -= OnInputEventReceived;
             _communication.ConnectionStateChanged -= OnConnectionStateChanged;
+            _clipboardService.ClipboardChanged -= OnClipboardChanged;
+            _communication.ClipboardDataReceived -= OnClipboardDataReceived;
 
+            await _clipboardService.StopAsync();
             await _inputHandler.StopAsync();
             await _screenCapture.StopCaptureAsync();
             await _communication.StopAsync();
@@ -187,6 +197,9 @@ public class RemoteDesktopHost : BackgroundService
                     // Client is now trusted — start screen capture and streaming
                     _screenCapture.FrameCaptured += OnFrameCaptured;
                     _ = _screenCapture.StartCaptureAsync();
+
+                    // Start clipboard monitoring for bidirectional sync
+                    _ = _clipboardService.StartAsync();
                 }
                 else
                 {
@@ -234,9 +247,10 @@ public class RemoteDesktopHost : BackgroundService
         else
         {
             _clientPaired = false;
-            _logger.LogInformation("Client disconnected — stopping screen capture.");
+            _logger.LogInformation("Client disconnected — stopping screen capture and clipboard sync.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
+            _ = _clipboardService.StopAsync();
 
             // Reset performance optimization state
             _deltaEncoder.Reset();
@@ -325,6 +339,76 @@ public class RemoteDesktopHost : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to process received input event");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Called when local clipboard content changes.
+    /// Sends clipboard data to the paired client for synchronization.
+    /// </summary>
+    private void OnClipboardChanged(object? sender, ClipboardChangedEventArgs e)
+    {
+        if (!_communication.IsConnected || !_clientPaired) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var clipboardData = new ClipboardData
+                {
+                    ContentType = (ClipboardContentType)e.ContentType,
+                    Text = e.Text,
+                    ImageData = e.ImageData,
+                    Timestamp = DateTime.UtcNow
+                };
+
+                await _communication.SendClipboardDataAsync(clipboardData);
+
+                _logger.LogDebug(
+                    "Sent clipboard data to client: {Type} ({Size} bytes)",
+                    clipboardData.ContentType,
+                    clipboardData.Text?.Length ?? clipboardData.ImageData?.Length ?? 0);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send clipboard data to client");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Called when clipboard data is received from the client.
+    /// Applies the changes to the local clipboard.
+    /// </summary>
+    private void OnClipboardDataReceived(object? sender, ClipboardData clipboardData)
+    {
+        if (!_clientPaired) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                switch (clipboardData.ContentType)
+                {
+                    case ClipboardContentType.Text when !string.IsNullOrEmpty(clipboardData.Text):
+                        await _clipboardService.SetTextAsync(clipboardData.Text);
+                        _logger.LogDebug("Applied clipboard text from client: {Length} chars", clipboardData.Text.Length);
+                        break;
+
+                    case ClipboardContentType.Image when clipboardData.ImageData != null:
+                        await _clipboardService.SetImageAsync(clipboardData.ImageData);
+                        _logger.LogDebug("Applied clipboard image from client: {Size} bytes", clipboardData.ImageData.Length);
+                        break;
+
+                    default:
+                        _logger.LogDebug("Received clipboard data with no content");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to apply clipboard data from client");
             }
         });
     }
