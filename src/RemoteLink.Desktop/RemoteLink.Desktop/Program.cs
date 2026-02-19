@@ -12,11 +12,18 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        Console.WriteLine("RemoteLink Desktop Host Starting...");
-
         // Create host builder
         var builder = Host.CreateApplicationBuilder(args);
-        
+
+        // Enable Windows service support
+        // When running as a Windows service, this allows the app to respond to
+        // service control manager commands (start/stop/pause).
+        // In console mode, this has no effect.
+        builder.Services.AddWindowsService(options =>
+        {
+            options.ServiceName = "RemoteLinkHost";
+        });
+
         // Configure services
         builder.Services.AddLogging();
         // Use real GDI screen capture on Windows; fall back to mock on Linux/macOS.
@@ -69,8 +76,22 @@ class Program
 
         using var host = builder.Build();
 
-        Console.WriteLine("Starting RemoteLink Desktop Host...");
-        Console.WriteLine("Press Ctrl+C to stop the service.");
+        var logger = host.Services.GetRequiredService<ILogger<Program>>();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+
+        // Detect if running as Windows service
+        bool isWindowsService = OperatingSystem.IsWindows() && 
+                                 !Environment.UserInteractive;
+
+        if (isWindowsService)
+        {
+            logger.LogInformation("RemoteLink Desktop Host starting as Windows service");
+        }
+        else
+        {
+            Console.WriteLine("RemoteLink Desktop Host Starting...");
+            Console.WriteLine("Running in console mode. Press Ctrl+C to stop.");
+        }
 
         try
         {
@@ -78,7 +99,10 @@ class Program
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("Service stopped.");
+            if (!isWindowsService)
+            {
+                Console.WriteLine("Service stopped.");
+            }
         }
     }
 }
