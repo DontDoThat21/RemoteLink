@@ -30,6 +30,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IClipboardService _clipboardService;
     private readonly IAudioCaptureService _audioCapture;
     private readonly ISessionRecorder _sessionRecorder;
+    private readonly IMessagingService _messagingService;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -57,7 +58,8 @@ public class RemoteDesktopHost : BackgroundService
         IPerformanceMonitor perfMonitor,
         IClipboardService clipboardService,
         IAudioCaptureService audioCapture,
-        ISessionRecorder sessionRecorder)
+        ISessionRecorder sessionRecorder,
+        IMessagingService messagingService)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -71,6 +73,7 @@ public class RemoteDesktopHost : BackgroundService
         _clipboardService = clipboardService;
         _audioCapture = audioCapture;
         _sessionRecorder = sessionRecorder;
+        _messagingService = messagingService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -79,6 +82,9 @@ public class RemoteDesktopHost : BackgroundService
 
         try
         {
+            // Initialize messaging service with host device info
+            _messagingService.Initialize(Environment.MachineName, $"{Environment.MachineName} Host");
+
             // Generate a fresh PIN and display it — the remote user must enter this
             var pin = _pairing.GeneratePin();
             _logger.LogInformation("════════════════════════════════════════");
@@ -101,6 +107,9 @@ public class RemoteDesktopHost : BackgroundService
 
             // Wire audio streaming: when audio is captured, send to client
             _audioCapture.AudioCaptured += OnAudioCaptured;
+
+            // Wire messaging: log received messages for debugging
+            _messagingService.MessageReceived += OnMessageReceived;
 
             // Start TCP listener
             await _communication.StartAsync(HostPort);
@@ -148,6 +157,7 @@ public class RemoteDesktopHost : BackgroundService
             _clipboardService.ClipboardChanged -= OnClipboardChanged;
             _communication.ClipboardDataReceived -= OnClipboardDataReceived;
             _audioCapture.AudioCaptured -= OnAudioCaptured;
+            _messagingService.MessageReceived -= OnMessageReceived;
 
             await _audioCapture.StopAsync();
             await _clipboardService.StopAsync();
@@ -288,6 +298,10 @@ public class RemoteDesktopHost : BackgroundService
             _deltaEncoder.Reset();
             _perfMonitor.Reset();
 
+            // Clear chat messages
+            _messagingService.ClearMessages();
+            _logger.LogDebug("Chat messages cleared on disconnect");
+
             // End the current session if one exists
             if (_currentSession != null)
             {
@@ -386,6 +400,18 @@ public class RemoteDesktopHost : BackgroundService
                 _logger.LogWarning(ex, "Failed to send audio data to client");
             }
         });
+    }
+
+    /// <summary>
+    /// Called when a chat message is received from the remote client.
+    /// Logs the message for debugging; UI/notification handling is done by the messaging service.
+    /// </summary>
+    private void OnMessageReceived(object? sender, ChatMessage message)
+    {
+        _logger.LogInformation(
+            "Chat message received from {Sender}: {Text}",
+            message.SenderName,
+            message.Text);
     }
 
     /// <summary>

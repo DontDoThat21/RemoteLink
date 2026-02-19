@@ -18,6 +18,8 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     private readonly List<PairingResponse> _sentPairingResponses = new();
     private readonly List<ConnectionQuality> _sentConnectionQuality = new();
     private readonly List<ClipboardData> _sentClipboardData = new();
+    private readonly List<ChatMessage> _sentChatMessages = new();
+    private readonly List<string> _sentMessageReadAcks = new();
 
     public List<ScreenData> SentScreenData
     {
@@ -39,6 +41,14 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     {
         get { lock (_lock) { return new List<ClipboardData>(_sentClipboardData); } }
     }
+    public List<ChatMessage> SentChatMessages
+    {
+        get { lock (_lock) { return new List<ChatMessage>(_sentChatMessages); } }
+    }
+    public List<string> SentMessageReadAcks
+    {
+        get { lock (_lock) { return new List<string>(_sentMessageReadAcks); } }
+    }
 
     // Settable connection state — tests can toggle this
     public bool IsConnected { get; set; }
@@ -56,6 +66,8 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
     public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
     public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
+    public event EventHandler<ChatMessage>? ChatMessageReceived;
+    public event EventHandler<string>? MessageReadReceived;
 
     // ── ICommunicationService methods ─────────────────────────────────────────
     public Task StartAsync(int port) => Task.CompletedTask;
@@ -101,6 +113,18 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public Task SendFileTransferResponseAsync(FileTransferResponse response) => Task.CompletedTask;
     public Task SendFileTransferChunkAsync(FileTransferChunk chunk) => Task.CompletedTask;
     public Task SendFileTransferCompleteAsync(FileTransferComplete complete) => Task.CompletedTask;
+
+    public Task SendChatMessageAsync(ChatMessage message)
+    {
+        lock (_lock) { _sentChatMessages.Add(message); }
+        return Task.CompletedTask;
+    }
+
+    public Task SendMessageReadAsync(string messageId)
+    {
+        lock (_lock) { _sentMessageReadAcks.Add(messageId); }
+        return Task.CompletedTask;
+    }
 
     // ── Test helpers — raise events on behalf of a remote client ─────────────
 
@@ -502,6 +526,54 @@ internal sealed class FakeAudioCaptureService : IAudioCaptureService
     }
 }
 
+/// <summary>In-memory fake for <see cref="IMessagingService"/> used in host tests.</summary>
+internal sealed class FakeMessagingService : IMessagingService
+{
+    private readonly List<ChatMessage> _messages = new();
+
+    public int UnreadCount => _messages.Count(m => !m.IsRead);
+
+    public event EventHandler<ChatMessage>? MessageReceived;
+    public event EventHandler<string>? MessageRead;
+
+    public void Initialize(string deviceId, string deviceName)
+    {
+        // No-op for tests
+    }
+
+    public Task<ChatMessage> SendMessageAsync(string text, string? messageType = null)
+    {
+        var message = new ChatMessage
+        {
+            MessageId = Guid.NewGuid().ToString(),
+            Text = text,
+            MessageType = messageType
+        };
+        _messages.Add(message);
+        return Task.FromResult(message);
+    }
+
+    public Task MarkAsReadAsync(string messageId)
+    {
+        var message = _messages.FirstOrDefault(m => m.MessageId == messageId);
+        if (message != null)
+        {
+            message.IsRead = true;
+        }
+        return Task.CompletedTask;
+    }
+
+    public IReadOnlyList<ChatMessage> GetMessages()
+    {
+        return _messages.AsReadOnly();
+    }
+
+    public void ClearMessages()
+    {
+        _messages.Clear();
+    }
+}
+
 /// <summary>In-memory fake for <see cref="ISessionRecorder"/> used in host tests.</summary>
 internal sealed class FakeSessionRecorder : ISessionRecorder
 {
@@ -593,6 +665,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeClipboardService _clipboard = new();
     private readonly FakeAudioCaptureService _audioCapture = new();
     private readonly FakeSessionRecorder _recorder = new();
+    private readonly FakeMessagingService _messaging = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -611,7 +684,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _perfMonitor,
             _clipboard,
             _audioCapture,
-            _recorder);
+            _recorder,
+            _messaging);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>

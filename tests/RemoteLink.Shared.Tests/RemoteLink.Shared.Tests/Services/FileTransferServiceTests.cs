@@ -489,6 +489,8 @@ public class FileTransferServiceTests
         public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
         public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
         public event EventHandler<AudioData>? AudioDataReceived;
+        public event EventHandler<ChatMessage>? ChatMessageReceived;
+        public event EventHandler<string>? MessageReadReceived;
 
         public Task StartAsync(int port) => Task.CompletedTask;
         public Task StopAsync() => Task.CompletedTask;
@@ -525,6 +527,9 @@ public class FileTransferServiceTests
             SentFileTransferCompletes.Add(complete);
             return Task.CompletedTask;
         }
+
+        public Task SendChatMessageAsync(ChatMessage message) => Task.CompletedTask;
+        public Task SendMessageReadAsync(string messageId) => Task.CompletedTask;
 
         public void SimulateFileTransferRequestReceived(FileTransferRequest request)
         {

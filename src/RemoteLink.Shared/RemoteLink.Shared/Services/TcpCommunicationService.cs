@@ -42,6 +42,8 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypeFileTransferChunk = "FileTransferChunk";
     private const string MsgTypeFileTransferComplete = "FileTransferComplete";
     private const string MsgTypeAudio = "AudioData";
+    private const string MsgTypeChatMessage = "ChatMessage";
+    private const string MsgTypeMessageRead = "MessageRead";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -109,6 +111,12 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<AudioData>? AudioDataReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<ChatMessage>? ChatMessageReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<string>? MessageReadReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -388,6 +396,28 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendChatMessageAsync(ChatMessage message)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeChatMessage,
+            Payload = Encode(message)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendMessageReadAsync(string messageId)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeMessageRead,
+            Payload = Encode(messageId)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -520,6 +550,16 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeAudio:
                     var ad = Decode<AudioData>(msg.Payload);
                     if (ad != null) AudioDataReceived?.Invoke(this, ad);
+                    break;
+
+                case MsgTypeChatMessage:
+                    var cm = Decode<ChatMessage>(msg.Payload);
+                    if (cm != null) ChatMessageReceived?.Invoke(this, cm);
+                    break;
+
+                case MsgTypeMessageRead:
+                    var mr = Decode<string>(msg.Payload);
+                    if (mr != null) MessageReadReceived?.Invoke(this, mr);
                     break;
 
                 default:

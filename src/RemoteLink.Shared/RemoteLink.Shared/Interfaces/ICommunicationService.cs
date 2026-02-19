@@ -156,4 +156,26 @@ public interface ICommunicationService
     /// Event fired when audio data is received from the host (client mode).
     /// </summary>
     event EventHandler<AudioData> AudioDataReceived;
+
+    // ── Chat/Messaging ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a chat message to the remote peer.
+    /// </summary>
+    Task SendChatMessageAsync(ChatMessage message);
+
+    /// <summary>
+    /// Send a message read acknowledgment to the remote peer.
+    /// </summary>
+    Task SendMessageReadAsync(string messageId);
+
+    /// <summary>
+    /// Event fired when a chat message is received from the remote peer.
+    /// </summary>
+    event EventHandler<ChatMessage> ChatMessageReceived;
+
+    /// <summary>
+    /// Event fired when a message read acknowledgment is received from the remote peer.
+    /// </summary>
+    event EventHandler<string> MessageReadReceived;
 }
