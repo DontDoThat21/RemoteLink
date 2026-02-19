@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
+using Microsoft.Maui.Controls;
 
 namespace RemoteLink.Mobile;
 
@@ -26,11 +27,14 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
     // ── Dynamic UI references ─────────────────────────────────────────────────
 
-    private StackLayout    _hostListContainer = null!;
-    private Label          _noHostsLabel      = null!;
-    private StackLayout    _connectedBanner   = null!;
+    private StackLayout    _hostListContainer  = null!;
+    private Label          _noHostsLabel       = null!;
+    private StackLayout    _connectedBanner    = null!;
     private Label          _connectedHostLabel = null!;
-    private BoxView        _remoteViewer      = null!;
+    private Image          _remoteViewer       = null!;
+
+    // Throttle: skip frame rendering if the previous one is still in progress
+    private volatile bool  _frameRenderBusy;
 
     // ── Bindable properties ───────────────────────────────────────────────────
 
@@ -137,13 +141,13 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         root.Children.Add(_connectedBanner);
 
         // ── Remote viewer surface ─────────────────────────────────────────────
-        _remoteViewer = new BoxView
+        _remoteViewer = new Image
         {
-            Color             = Colors.Black,
+            BackgroundColor   = Colors.Black,
             HeightRequest     = 240,
             HorizontalOptions = LayoutOptions.FillAndExpand,
-            IsVisible         = false,
-            CornerRadius      = 6
+            Aspect            = Aspect.AspectFit,
+            IsVisible         = false
         };
         AttachGestureRecognizers(_remoteViewer);
 
@@ -385,6 +389,47 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         MainThread.BeginInvokeOnMainThread(() => StatusMessage = status);
     }
 
+    /// <summary>
+    /// Handles incoming screen frames from the connected desktop host.
+    ///
+    /// Converts <see cref="ScreenData"/> to an image (BMP for Raw format,
+    /// or passes JPEG/PNG bytes through directly) and updates the
+    /// <see cref="Image"/> viewer on the main thread.
+    ///
+    /// A simple busy-flag throttle ensures we skip frames that arrive while
+    /// the previous one is still being rendered, preventing UI thread overload.
+    /// </summary>
+    private void OnScreenDataReceived(object? sender, ScreenData screenData)
+    {
+        // Skip this frame if the previous one is still being applied
+        if (_frameRenderBusy) return;
+        _frameRenderBusy = true;
+
+        // Encode outside the UI thread to keep main thread work minimal
+        var stream = ScreenFrameConverter.ToImageStream(screenData);
+        if (stream is null)
+        {
+            _frameRenderBusy = false;
+            return;
+        }
+
+        // Update desktop resolution so gestures map to the correct scale
+        if (screenData.Width > 0)  _desktopWidth  = screenData.Width;
+        if (screenData.Height > 0) _desktopHeight = screenData.Height;
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            try
+            {
+                _remoteViewer.Source = ImageSource.FromStream(() => stream);
+            }
+            finally
+            {
+                _frameRenderBusy = false;
+            }
+        });
+    }
+
     // ── Discovery startup ─────────────────────────────────────────────────────
 
     private async Task StartDiscoveryAsync()
@@ -405,11 +450,12 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             var networkDiscovery = new UdpNetworkDiscovery(localDevice);
             _client = new RemoteDesktopClient(null, networkDiscovery);
 
-            _client.DeviceDiscovered      += OnDeviceDiscovered;
-            _client.DeviceLost            += OnDeviceLost;
-            _client.ServiceStatusChanged  += OnServiceStatusChanged;
+            _client.DeviceDiscovered       += OnDeviceDiscovered;
+            _client.DeviceLost             += OnDeviceLost;
+            _client.ServiceStatusChanged   += OnServiceStatusChanged;
             _client.ConnectionStateChanged += OnConnectionStateChanged;
-            _client.PairingFailed         += OnPairingFailed;
+            _client.PairingFailed          += OnPairingFailed;
+            _client.ScreenDataReceived     += OnScreenDataReceived;
 
             await _client.StartAsync();
 

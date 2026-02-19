@@ -11,10 +11,24 @@ namespace RemoteLink.Desktop.Tests;
 /// <summary>In-memory fake for <see cref="ICommunicationService"/> used in host tests.</summary>
 internal sealed class FakeCommunicationService : ICommunicationService, IDisposable
 {
-    // Captured outbound messages
-    public List<ScreenData> SentScreenData { get; } = new();
-    public List<InputEvent> SentInputEvents { get; } = new();
-    public List<PairingResponse> SentPairingResponses { get; } = new();
+    // Thread-safe captured outbound messages (accessed from concurrent Task.Run)
+    private readonly object _lock = new();
+    private readonly List<ScreenData> _sentScreenData = new();
+    private readonly List<InputEvent> _sentInputEvents = new();
+    private readonly List<PairingResponse> _sentPairingResponses = new();
+
+    public List<ScreenData> SentScreenData
+    {
+        get { lock (_lock) { return new List<ScreenData>(_sentScreenData); } }
+    }
+    public List<InputEvent> SentInputEvents
+    {
+        get { lock (_lock) { return new List<InputEvent>(_sentInputEvents); } }
+    }
+    public List<PairingResponse> SentPairingResponses
+    {
+        get { lock (_lock) { return new List<PairingResponse>(_sentPairingResponses); } }
+    }
 
     // Settable connection state — tests can toggle this
     public bool IsConnected { get; set; }
@@ -34,13 +48,13 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
 
     public Task SendScreenDataAsync(ScreenData screenData)
     {
-        SentScreenData.Add(screenData);
+        lock (_lock) { _sentScreenData.Add(screenData); }
         return Task.CompletedTask;
     }
 
     public Task SendInputEventAsync(InputEvent inputEvent)
     {
-        SentInputEvents.Add(inputEvent);
+        lock (_lock) { _sentInputEvents.Add(inputEvent); }
         return Task.CompletedTask;
     }
 
@@ -48,7 +62,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
 
     public Task SendPairingResponseAsync(PairingResponse response)
     {
-        SentPairingResponses.Add(response);
+        lock (_lock) { _sentPairingResponses.Add(response); }
         return Task.CompletedTask;
     }
 
@@ -111,7 +125,16 @@ internal sealed class FakeScreenCapture : IScreenCapture
 /// <summary>In-memory fake for <see cref="IInputHandler"/>.</summary>
 internal sealed class FakeInputHandler : IInputHandler
 {
-    public List<InputEvent> ReceivedEvents { get; } = new();
+    // Use a lock to guard against concurrent Task.Run calls from RemoteDesktopHost
+    private readonly object _lock = new();
+    private readonly List<InputEvent> _receivedEvents = new();
+
+    /// <summary>Thread-safe snapshot of events received so far.</summary>
+    public List<InputEvent> ReceivedEvents
+    {
+        get { lock (_lock) { return new List<InputEvent>(_receivedEvents); } }
+    }
+
     public bool IsActive { get; private set; }
 
     public Task StartAsync()
@@ -128,7 +151,7 @@ internal sealed class FakeInputHandler : IInputHandler
 
     public Task ProcessInputEventAsync(InputEvent inputEvent)
     {
-        ReceivedEvents.Add(inputEvent);
+        lock (_lock) { _receivedEvents.Add(inputEvent); }
         return Task.CompletedTask;
     }
 }
