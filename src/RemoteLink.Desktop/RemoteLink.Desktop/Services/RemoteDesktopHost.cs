@@ -28,6 +28,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IDeltaFrameEncoder _deltaEncoder;
     private readonly IPerformanceMonitor _perfMonitor;
     private readonly IClipboardService _clipboardService;
+    private readonly IAudioCaptureService _audioCapture;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -53,7 +54,8 @@ public class RemoteDesktopHost : BackgroundService
         ISessionManager sessionManager,
         IDeltaFrameEncoder deltaEncoder,
         IPerformanceMonitor perfMonitor,
-        IClipboardService clipboardService)
+        IClipboardService clipboardService,
+        IAudioCaptureService audioCapture)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -65,6 +67,7 @@ public class RemoteDesktopHost : BackgroundService
         _deltaEncoder = deltaEncoder;
         _perfMonitor = perfMonitor;
         _clipboardService = clipboardService;
+        _audioCapture = audioCapture;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -92,6 +95,9 @@ public class RemoteDesktopHost : BackgroundService
             // Wire clipboard sync: send local changes to client, apply remote changes locally
             _clipboardService.ClipboardChanged += OnClipboardChanged;
             _communication.ClipboardDataReceived += OnClipboardDataReceived;
+
+            // Wire audio streaming: when audio is captured, send to client
+            _audioCapture.AudioCaptured += OnAudioCaptured;
 
             // Start TCP listener
             await _communication.StartAsync(HostPort);
@@ -138,7 +144,9 @@ public class RemoteDesktopHost : BackgroundService
             _communication.ConnectionStateChanged -= OnConnectionStateChanged;
             _clipboardService.ClipboardChanged -= OnClipboardChanged;
             _communication.ClipboardDataReceived -= OnClipboardDataReceived;
+            _audioCapture.AudioCaptured -= OnAudioCaptured;
 
+            await _audioCapture.StopAsync();
             await _clipboardService.StopAsync();
             await _inputHandler.StopAsync();
             await _screenCapture.StopCaptureAsync();
@@ -200,6 +208,9 @@ public class RemoteDesktopHost : BackgroundService
 
                     // Start clipboard monitoring for bidirectional sync
                     _ = _clipboardService.StartAsync();
+
+                    // Start audio capture and streaming
+                    _ = _audioCapture.StartAsync();
                 }
                 else
                 {
@@ -247,9 +258,10 @@ public class RemoteDesktopHost : BackgroundService
         else
         {
             _clientPaired = false;
-            _logger.LogInformation("Client disconnected — stopping screen capture and clipboard sync.");
+            _logger.LogInformation("Client disconnected — stopping screen capture, audio, and clipboard sync.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
+            _ = _audioCapture.StopAsync();
             _ = _clipboardService.StopAsync();
 
             // Reset performance optimization state
@@ -318,6 +330,34 @@ public class RemoteDesktopHost : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to send screen frame to client");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Called when audio data is captured from the system.
+    /// Sends audio to the connected client when paired.
+    /// </summary>
+    private void OnAudioCaptured(object? sender, AudioData audioData)
+    {
+        if (!_communication.IsConnected || !_clientPaired) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _communication.SendAudioDataAsync(audioData);
+
+                _logger.LogTrace(
+                    "Sent audio chunk: {Size} bytes, {Duration}ms, {SampleRate}Hz, {Channels}ch",
+                    audioData.Data.Length,
+                    audioData.DurationMs,
+                    audioData.SampleRate,
+                    audioData.Channels);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send audio data to client");
             }
         });
     }

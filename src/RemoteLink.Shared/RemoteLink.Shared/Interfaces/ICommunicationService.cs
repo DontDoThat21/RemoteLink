@@ -144,4 +144,16 @@ public interface ICommunicationService
     /// Event fired when a file transfer completion is received.
     /// </summary>
     event EventHandler<FileTransferComplete> FileTransferCompleteReceived;
+
+    // ── Audio Streaming ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send audio data to the connected client (host mode).
+    /// </summary>
+    Task SendAudioDataAsync(AudioData audioData);
+
+    /// <summary>
+    /// Event fired when audio data is received from the host (client mode).
+    /// </summary>
+    event EventHandler<AudioData> AudioDataReceived;
 }

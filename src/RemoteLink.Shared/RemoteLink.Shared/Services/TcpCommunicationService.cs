@@ -41,6 +41,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypeFileTransferResponse = "FileTransferResponse";
     private const string MsgTypeFileTransferChunk = "FileTransferChunk";
     private const string MsgTypeFileTransferComplete = "FileTransferComplete";
+    private const string MsgTypeAudio = "AudioData";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<AudioData>? AudioDataReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -373,6 +377,17 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendAudioDataAsync(AudioData audioData)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeAudio,
+            Payload = Encode(audioData)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -500,6 +515,11 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeFileTransferComplete:
                     var ftcomplete = Decode<FileTransferComplete>(msg.Payload);
                     if (ftcomplete != null) FileTransferCompleteReceived?.Invoke(this, ftcomplete);
+                    break;
+
+                case MsgTypeAudio:
+                    var ad = Decode<AudioData>(msg.Payload);
+                    if (ad != null) AudioDataReceived?.Invoke(this, ad);
                     break;
 
                 default:

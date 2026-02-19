@@ -38,6 +38,12 @@ class Program
         else
             builder.Services.AddSingleton<IClipboardService, MockClipboardService>();
 
+        // Use Windows audio capture on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IAudioCaptureService, WindowsAudioCaptureService>();
+        else
+            builder.Services.AddSingleton<IAudioCaptureService, MockAudioCaptureService>();
+
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();
