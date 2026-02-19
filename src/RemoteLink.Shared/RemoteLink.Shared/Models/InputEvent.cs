@@ -15,6 +15,11 @@ public class InputEvent
     public string? Text { get; set; }
     public string? Command { get; set; }
     public string? WorkingDirectory { get; set; }
+    
+    /// <summary>
+    /// Keyboard shortcut (when Type is KeyboardShortcut)
+    /// </summary>
+    public KeyboardShortcut? Shortcut { get; set; }
 }
 
 /// <summary>
@@ -28,5 +33,6 @@ public enum InputEventType
     KeyPress,
     KeyRelease,
     TextInput,
-    CommandExecution
+    CommandExecution,
+    KeyboardShortcut
 }

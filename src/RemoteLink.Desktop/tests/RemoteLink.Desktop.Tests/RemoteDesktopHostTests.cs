@@ -199,6 +199,12 @@ internal sealed class FakeInputHandler : IInputHandler
         lock (_lock) { _receivedEvents.Add(inputEvent); }
         return Task.CompletedTask;
     }
+
+    public Task SendShortcutAsync(KeyboardShortcut shortcut)
+    {
+        // Track shortcut sends if needed in the future
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>In-memory fake for <see cref="IPairingService"/>.</summary>

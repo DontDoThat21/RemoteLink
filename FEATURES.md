@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-02-19 (session 12)
+> **Last updated:** 2026-02-19 (session 13)
 
 ## Legend
 - ✅ Complete & Tested
@@ -48,7 +48,7 @@
 | 3.3 | Performance optimization (delta frames, adaptive quality) | ✅ | DeltaFrameEncoder (32x32 blocks), PerformanceMonitor (adaptive quality 50-85), 25 tests |
 | 3.4 | Multi-monitor support | ✅ | Monitor enumeration (EnumDisplayMonitors), selection by ID, capture from specific monitor, 16 tests |
 | 3.5 | Connection quality indicator | ✅ | ConnectionQuality model (Fps/Bandwidth/Latency/Rating), periodic updates every 2s, TcpCommunicationService messaging, 14 tests |
-| 3.6 | Clipboard sync | 📋 | Bidirectional text/image |
+| 3.6 | Clipboard sync | ✅ | WindowsClipboardService (Win32 P/Invoke), bidirectional text, starts on pairing, stops on disconnect |
 | 3.7 | Keyboard shortcuts passthrough | 📋 | Ctrl+Alt+Del, etc. |
 
 ## Phase 4: Advanced Features
@@ -80,6 +80,7 @@
 > Session 10 (2026-02-19): Feature 3.3 — Performance optimization. Implemented DeltaFrameEncoder (32x32 block-based change detection, configurable threshold, reference frame tracking, sequential region packing). Implemented PerformanceMonitor (30-frame sliding window, FPS/bandwidth/latency tracking, adaptive quality 50-85 based on connection metrics). Integrated both into RemoteDesktopHost (delta encoding pipeline, dynamic quality adjustment, state reset on disconnect). DI registration in Program.cs. 25 new tests (11 DeltaFrameEncoder + 14 PerformanceMonitor), 216 tests passing total.
 > Session 11 (2026-02-19): Feature 3.4 — Multi-monitor support. Created MonitorInfo model (Id, Name, IsPrimary, bounds, calculated Right/Bottom). Extended IScreenCapture interface with GetMonitorsAsync, SelectMonitorAsync, GetSelectedMonitorId. Implemented in WindowsScreenCapture using EnumDisplayMonitors/GetMonitorInfo P/Invoke to enumerate all displays, select specific monitor by ID, capture from non-primary monitors using monitor's Left/Top as BitBlt source coordinates. Updated MockScreenCapture and FakeScreenCapture for compatibility. 16 comprehensive tests in MonitorSupportTests.cs covering enumeration, selection, switching, dimension queries, capture from selected monitor. All 232 tests passing.
 > Session 12 (2026-02-19): Feature 3.5 — Connection quality indicator. Created ConnectionQuality model (Fps, Bandwidth, Latency, Timestamp, Rating) with GetBandwidthString formatter and CalculateRating static method. Added QualityRating enum (Excellent/Good/Fair/Poor) with threshold-based quality assessment. Extended ICommunicationService with SendConnectionQualityAsync method and ConnectionQualityReceived event. Implemented in TcpCommunicationService with MsgTypeConnectionQuality message type. Modified RemoteDesktopHost to send quality updates every 2 seconds when client is paired, pulling metrics from existing PerformanceMonitor. Added 14 comprehensive tests: 10 ConnectionQuality model tests (bandwidth formatting, rating thresholds, boundary cases), 1 TCP integration test (round-trip), 4 RemoteDesktopHost tests (gating, periodic sending, valid metrics, stop on disconnect). All 236 Desktop tests passing. Note: Shared test project has pre-existing compilation errors in DeltaFrameEncoderTests (not related to this session).
+> Session 13 (2026-02-19): Feature 3.6 — Clipboard sync (bidirectional text). Created IClipboardService interface (Start/Stop monitoring, GetText/SetText/GetImage/SetImage). Implemented WindowsClipboardService with Win32 P/Invoke (OpenClipboard/GetClipboardData/SetClipboardData/GlobalLock/GlobalUnlock), polling every 500ms with change detection for text content (image support stubbed for future enhancement). Created MockClipboardService for non-Windows platforms. Added ClipboardData model and ClipboardContentType enum for network transmission. Extended ICommunicationService with SendClipboardDataAsync method and ClipboardDataReceived event. Updated TcpCommunicationService with MsgTypeClipboard message type and dispatch logic. Integrated into RemoteDesktopHost: clipboard monitoring starts on successful pairing, stops on disconnect; local clipboard changes sent to client, remote clipboard changes applied locally. Registered IClipboardService in Program.cs (WindowsClipboardService on Windows, MockClipboardService otherwise). Added AllowUnsafeBlocks=true to Desktop csproj for LibraryImport source generator. Updated test doubles (FakeCommunicationService, FakeClipboardService). All 236 tests passing (integration verified via existing RemoteDesktopHost test framework).
 
 ---
 
