@@ -51,6 +51,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<PairingResponse>? PairingResponseReceived;
     public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
     public event EventHandler<ClipboardData>? ClipboardDataReceived;
+    public event EventHandler<AudioData>? AudioDataReceived;
     public event EventHandler<FileTransferRequest>? FileTransferRequestReceived;
     public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
     public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
@@ -93,6 +94,8 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
         lock (_lock) { _sentClipboardData.Add(clipboardData); }
         return Task.CompletedTask;
     }
+
+    public Task SendAudioDataAsync(AudioData audioData) => Task.CompletedTask;
 
     public Task SendFileTransferRequestAsync(FileTransferRequest request) => Task.CompletedTask;
     public Task SendFileTransferResponseAsync(FileTransferResponse response) => Task.CompletedTask;
@@ -469,6 +472,105 @@ internal sealed class FakeClipboardService : IClipboardService
         => Task.CompletedTask;
 }
 
+/// <summary>In-memory fake for <see cref="IAudioCaptureService"/> used in host tests.</summary>
+internal sealed class FakeAudioCaptureService : IAudioCaptureService
+{
+    public bool IsCapturing { get; private set; }
+    public int StartCallCount { get; private set; }
+    public int StopCallCount { get; private set; }
+    public AudioCaptureSettings Settings { get; private set; } = new AudioCaptureSettings();
+
+    public event EventHandler<AudioData>? AudioCaptured;
+
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        IsCapturing = true;
+        StartCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync()
+    {
+        IsCapturing = false;
+        StopCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public void UpdateSettings(AudioCaptureSettings settings)
+    {
+        Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+    }
+}
+
+/// <summary>In-memory fake for <see cref="ISessionRecorder"/> used in host tests.</summary>
+internal sealed class FakeSessionRecorder : ISessionRecorder
+{
+    public bool IsRecording { get; private set; }
+    public bool IsPaused { get; private set; }
+    public string? CurrentFilePath { get; private set; }
+    public TimeSpan RecordedDuration { get; private set; }
+
+    public int StartRecordingCallCount { get; private set; }
+    public int StopRecordingCallCount { get; private set; }
+    public int WriteFrameCallCount { get; private set; }
+    public int WriteAudioCallCount { get; private set; }
+
+    public event EventHandler<string>? RecordingStarted;
+    public event EventHandler<string>? RecordingStopped;
+    public event EventHandler<string>? RecordingError;
+
+    public Task<bool> StartRecordingAsync(string filePath, int frameRate = 15, bool includeAudio = true, CancellationToken cancellationToken = default)
+    {
+        if (IsRecording) return Task.FromResult(false);
+
+        IsRecording = true;
+        CurrentFilePath = filePath;
+        StartRecordingCallCount++;
+        RecordingStarted?.Invoke(this, filePath);
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> StopRecordingAsync()
+    {
+        if (!IsRecording) return Task.FromResult(false);
+
+        IsRecording = false;
+        var path = CurrentFilePath;
+        CurrentFilePath = null;
+        StopRecordingCallCount++;
+        RecordingStopped?.Invoke(this, path ?? "unknown");
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> PauseRecordingAsync()
+    {
+        if (!IsRecording || IsPaused) return Task.FromResult(false);
+        IsPaused = true;
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> ResumeRecordingAsync()
+    {
+        if (!IsRecording || !IsPaused) return Task.FromResult(false);
+        IsPaused = false;
+        return Task.FromResult(true);
+    }
+
+    public Task WriteFrameAsync(ScreenData screenData)
+    {
+        if (IsRecording && !IsPaused)
+            WriteFrameCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task WriteAudioAsync(AudioData audioData)
+    {
+        if (IsRecording && !IsPaused)
+            WriteAudioCallCount++;
+        return Task.CompletedTask;
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -489,6 +591,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeDeltaFrameEncoder _deltaEncoder = new();
     private readonly FakePerformanceMonitor _perfMonitor = new();
     private readonly FakeClipboardService _clipboard = new();
+    private readonly FakeAudioCaptureService _audioCapture = new();
+    private readonly FakeSessionRecorder _recorder = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -505,7 +609,9 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _sessionManager,
             _deltaEncoder,
             _perfMonitor,
-            _clipboard);
+            _clipboard,
+            _audioCapture,
+            _recorder);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>

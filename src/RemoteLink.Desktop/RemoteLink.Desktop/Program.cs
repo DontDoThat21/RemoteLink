@@ -44,6 +44,10 @@ class Program
         else
             builder.Services.AddSingleton<IAudioCaptureService, MockAudioCaptureService>();
 
+        // Session recorder (requires FFmpeg for real recording)
+        // TODO: Add configuration to choose SessionRecorder vs MockSessionRecorder
+        builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
+
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();

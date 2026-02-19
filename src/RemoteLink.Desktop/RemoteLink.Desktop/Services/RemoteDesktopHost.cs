@@ -29,6 +29,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IPerformanceMonitor _perfMonitor;
     private readonly IClipboardService _clipboardService;
     private readonly IAudioCaptureService _audioCapture;
+    private readonly ISessionRecorder _sessionRecorder;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -55,7 +56,8 @@ public class RemoteDesktopHost : BackgroundService
         IDeltaFrameEncoder deltaEncoder,
         IPerformanceMonitor perfMonitor,
         IClipboardService clipboardService,
-        IAudioCaptureService audioCapture)
+        IAudioCaptureService audioCapture,
+        ISessionRecorder sessionRecorder)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -68,6 +70,7 @@ public class RemoteDesktopHost : BackgroundService
         _perfMonitor = perfMonitor;
         _clipboardService = clipboardService;
         _audioCapture = audioCapture;
+        _sessionRecorder = sessionRecorder;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -211,6 +214,15 @@ public class RemoteDesktopHost : BackgroundService
 
                     // Start audio capture and streaming
                     _ = _audioCapture.StartAsync();
+
+                    // Start session recording (creates recordings/ directory if needed)
+                    var recordingPath = Path.Combine("recordings", 
+                        $"session_{_currentSession.SessionId[..8]}_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
+                    var recordingStarted = await _sessionRecorder.StartRecordingAsync(recordingPath, frameRate: 15, includeAudio: true);
+                    if (recordingStarted)
+                        _logger.LogInformation("Session recording started: {Path}", recordingPath);
+                    else
+                        _logger.LogWarning("Failed to start session recording");
                 }
                 else
                 {
@@ -258,11 +270,19 @@ public class RemoteDesktopHost : BackgroundService
         else
         {
             _clientPaired = false;
-            _logger.LogInformation("Client disconnected — stopping screen capture, audio, and clipboard sync.");
+            _logger.LogInformation("Client disconnected — stopping screen capture, audio, clipboard sync, and recording.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
             _ = _audioCapture.StopAsync();
             _ = _clipboardService.StopAsync();
+
+            // Stop session recording
+            if (_sessionRecorder.IsRecording)
+            {
+                _ = _sessionRecorder.StopRecordingAsync();
+                _logger.LogInformation("Session recording stopped. Duration: {Duration:mm\\:ss}", 
+                    _sessionRecorder.RecordedDuration);
+            }
 
             // Reset performance optimization state
             _deltaEncoder.Reset();
@@ -311,6 +331,9 @@ public class RemoteDesktopHost : BackgroundService
                 // Send the optimized frame
                 await _communication.SendScreenDataAsync(encodedFrame);
 
+                // Write frame to session recording (if recording is active)
+                await _sessionRecorder.WriteFrameAsync(encodedFrame);
+
                 // Record performance metrics
                 long sendEndTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 long latency = sendEndTime - sendStartTime;
@@ -347,6 +370,9 @@ public class RemoteDesktopHost : BackgroundService
             try
             {
                 await _communication.SendAudioDataAsync(audioData);
+
+                // Write audio to session recording (if recording is active)
+                await _sessionRecorder.WriteAudioAsync(audioData);
 
                 _logger.LogTrace(
                     "Sent audio chunk: {Size} bytes, {Duration}ms, {SampleRate}Hz, {Channels}ch",
