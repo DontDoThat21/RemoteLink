@@ -78,4 +78,16 @@ public interface ICommunicationService
     /// Event fired when a pairing response is received (client mode).
     /// </summary>
     event EventHandler<PairingResponse> PairingResponseReceived;
+
+    // ── Connection Quality ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send connection quality metrics to the connected client (host mode).
+    /// </summary>
+    Task SendConnectionQualityAsync(ConnectionQuality quality);
+
+    /// <summary>
+    /// Event fired when connection quality metrics are received (client mode).
+    /// </summary>
+    event EventHandler<ConnectionQuality> ConnectionQualityReceived;
 }

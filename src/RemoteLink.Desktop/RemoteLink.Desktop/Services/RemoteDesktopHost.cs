@@ -99,10 +99,18 @@ public class RemoteDesktopHost : BackgroundService
 
             _logger.LogInformation("Remote Desktop Host service started. Broadcasting on LAN…");
 
-            // Keep the service alive
+            // Keep the service alive and send periodic quality updates
+            var lastQualityUpdate = DateTime.MinValue;
             while (!stoppingToken.IsCancellationRequested)
             {
                 await Task.Delay(1000, stoppingToken);
+
+                // Send connection quality updates every 2 seconds when client is paired
+                if (_clientPaired && (DateTime.UtcNow - lastQualityUpdate).TotalSeconds >= 2)
+                {
+                    await SendConnectionQualityUpdateAsync();
+                    lastQualityUpdate = DateTime.UtcNow;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -319,5 +327,40 @@ public class RemoteDesktopHost : BackgroundService
                 _logger.LogWarning(ex, "Failed to process received input event");
             }
         });
+    }
+
+    /// <summary>
+    /// Sends connection quality metrics to the connected client.
+    /// Called periodically (every 2 seconds) when a client is paired.
+    /// </summary>
+    private async Task SendConnectionQualityUpdateAsync()
+    {
+        try
+        {
+            var quality = new ConnectionQuality
+            {
+                Fps = _perfMonitor.GetCurrentFps(),
+                Bandwidth = _perfMonitor.GetCurrentBandwidth(),
+                Latency = _perfMonitor.GetAverageLatency(),
+                Timestamp = DateTime.UtcNow
+            };
+
+            // Calculate overall rating
+            quality.Rating = ConnectionQuality.CalculateRating(
+                quality.Fps, quality.Latency, quality.Bandwidth);
+
+            await _communication.SendConnectionQualityAsync(quality);
+
+            _logger.LogDebug(
+                "Connection quality: {Rating} (FPS: {Fps:F1}, Bandwidth: {Bandwidth}, Latency: {Latency}ms)",
+                quality.Rating,
+                quality.Fps,
+                quality.GetBandwidthString(),
+                quality.Latency);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send connection quality update");
+        }
     }
 }

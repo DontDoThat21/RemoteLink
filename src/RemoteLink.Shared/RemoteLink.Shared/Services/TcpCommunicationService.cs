@@ -35,6 +35,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypeInput = "InputEvent";
     private const string MsgTypePairingRequest = "PairingRequest";
     private const string MsgTypePairingResponse = "PairingResponse";
+    private const string MsgTypeConnectionQuality = "ConnectionQuality";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -81,6 +82,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<PairingResponse>? PairingResponseReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -283,6 +287,17 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendConnectionQualityAsync(ConnectionQuality quality)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeConnectionQuality,
+            Payload = Encode(quality)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -380,6 +395,11 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypePairingResponse:
                     var prr = Decode<PairingResponse>(msg.Payload);
                     if (prr != null) PairingResponseReceived?.Invoke(this, prr);
+                    break;
+
+                case MsgTypeConnectionQuality:
+                    var cq = Decode<ConnectionQuality>(msg.Payload);
+                    if (cq != null) ConnectionQualityReceived?.Invoke(this, cq);
                     break;
 
                 default:

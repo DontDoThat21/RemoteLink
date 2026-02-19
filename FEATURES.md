@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-02-19 (session 10)
+> **Last updated:** 2026-02-19 (session 11)
 
 ## Legend
 - ✅ Complete & Tested
@@ -46,7 +46,7 @@
 | 3.1 | Platform-specific UI polish | 📋 | Per-platform layouts |
 | 3.2 | End-to-end encryption | ✅ | TLS 1.2/1.3 with self-signed certs, TlsConfiguration class, 10 tests |
 | 3.3 | Performance optimization (delta frames, adaptive quality) | ✅ | DeltaFrameEncoder (32x32 blocks), PerformanceMonitor (adaptive quality 50-85), 25 tests |
-| 3.4 | Multi-monitor support | 📋 | Monitor selection + switching |
+| 3.4 | Multi-monitor support | ✅ | Monitor enumeration (EnumDisplayMonitors), selection by ID, capture from specific monitor, 16 tests |
 | 3.5 | Connection quality indicator | 📋 | Latency, FPS, bandwidth |
 | 3.6 | Clipboard sync | 📋 | Bidirectional text/image |
 | 3.7 | Keyboard shortcuts passthrough | 📋 | Ctrl+Alt+Del, etc. |
@@ -78,6 +78,7 @@
 > Session 8 (2026-02-19): Features 2.6, 2.8, 2.10 — verified existing implementations were complete (TouchToMouseTranslator 35 tests, ScreenFrameConverter 26 tests, SessionManager 42 tests). Integrated SessionManager into RemoteDesktopHost (DI registration, session creation on pairing, lifecycle tracking). 191 tests passing total.
 > Session 9 (2026-02-19): Features 2.7 & 3.2 — verified 2.7 (Mobile UI) complete (RemoteDesktopClient in Shared, MainPage full implementation). Implemented Feature 3.2 — TLS encryption for TCP communication: TlsConfiguration class (self-signed cert generation, save/load), updated TcpCommunicationService with SslStream support, TLS 1.2/1.3 handshake for both server and client modes, certificate validation callbacks. 10 new TLS tests, 33 total tests passing (26 Shared + 7 Desktop).
 > Session 10 (2026-02-19): Feature 3.3 — Performance optimization. Implemented DeltaFrameEncoder (32x32 block-based change detection, configurable threshold, reference frame tracking, sequential region packing). Implemented PerformanceMonitor (30-frame sliding window, FPS/bandwidth/latency tracking, adaptive quality 50-85 based on connection metrics). Integrated both into RemoteDesktopHost (delta encoding pipeline, dynamic quality adjustment, state reset on disconnect). DI registration in Program.cs. 25 new tests (11 DeltaFrameEncoder + 14 PerformanceMonitor), 216 tests passing total.
+> Session 11 (2026-02-19): Feature 3.4 — Multi-monitor support. Created MonitorInfo model (Id, Name, IsPrimary, bounds, calculated Right/Bottom). Extended IScreenCapture interface with GetMonitorsAsync, SelectMonitorAsync, GetSelectedMonitorId. Implemented in WindowsScreenCapture using EnumDisplayMonitors/GetMonitorInfo P/Invoke to enumerate all displays, select specific monitor by ID, capture from non-primary monitors using monitor's Left/Top as BitBlt source coordinates. Updated MockScreenCapture and FakeScreenCapture for compatibility. 16 comprehensive tests in MonitorSupportTests.cs covering enumeration, selection, switching, dimension queries, capture from selected monitor. All 232 tests passing.
 
 ---
 

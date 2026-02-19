@@ -16,6 +16,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     private readonly List<ScreenData> _sentScreenData = new();
     private readonly List<InputEvent> _sentInputEvents = new();
     private readonly List<PairingResponse> _sentPairingResponses = new();
+    private readonly List<ConnectionQuality> _sentConnectionQuality = new();
 
     public List<ScreenData> SentScreenData
     {
@@ -29,6 +30,10 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     {
         get { lock (_lock) { return new List<PairingResponse>(_sentPairingResponses); } }
     }
+    public List<ConnectionQuality> SentConnectionQuality
+    {
+        get { lock (_lock) { return new List<ConnectionQuality>(_sentConnectionQuality); } }
+    }
 
     // Settable connection state — tests can toggle this
     public bool IsConnected { get; set; }
@@ -39,6 +44,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<bool>? ConnectionStateChanged;
     public event EventHandler<PairingRequest>? PairingRequestReceived;
     public event EventHandler<PairingResponse>? PairingResponseReceived;
+    public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
 
     // ── ICommunicationService methods ─────────────────────────────────────────
     public Task StartAsync(int port) => Task.CompletedTask;
@@ -63,6 +69,12 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public Task SendPairingResponseAsync(PairingResponse response)
     {
         lock (_lock) { _sentPairingResponses.Add(response); }
+        return Task.CompletedTask;
+    }
+
+    public Task SendConnectionQualityAsync(ConnectionQuality quality)
+    {
+        lock (_lock) { _sentConnectionQuality.Add(quality); }
         return Task.CompletedTask;
     }
 
@@ -820,6 +832,74 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         // StopAsync must complete without throwing
         var ex = await Record.ExceptionAsync(() => _host.StopAsync(CancellationToken.None));
         Assert.Null(ex);
+    }
+
+    // ── Feature 3.5: Connection quality indicator ─────────────────────────────
+
+    [Fact]
+    public async Task ConnectionQuality_NotSent_BeforePairing()
+    {
+        await StartHostAsync();
+
+        _comm.RaiseConnectionStateChanged(connected: true);
+        await Task.Delay(3000); // Wait more than 2 seconds (quality update interval)
+
+        // Should not send quality updates before pairing
+        Assert.Empty(_comm.SentConnectionQuality);
+    }
+
+    [Fact]
+    public async Task ConnectionQuality_SentPeriodically_AfterPairing()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        // Wait for multiple quality update intervals (2 seconds each)
+        await Task.Delay(5000);
+
+        // Should have sent at least 2 quality updates (at ~2s and ~4s)
+        Assert.True(_comm.SentConnectionQuality.Count >= 2,
+            $"Expected at least 2 quality updates, got {_comm.SentConnectionQuality.Count}");
+    }
+
+    [Fact]
+    public async Task ConnectionQuality_ContainsValidMetrics_WhenSent()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        // Wait for at least one quality update
+        await Task.Delay(3000);
+
+        Assert.NotEmpty(_comm.SentConnectionQuality);
+        var quality = _comm.SentConnectionQuality[0];
+
+        // Verify all metrics are present and valid
+        Assert.True(quality.Fps >= 0);
+        Assert.True(quality.Bandwidth >= 0);
+        Assert.True(quality.Latency >= 0);
+        Assert.NotEqual(DateTime.MinValue, quality.Timestamp);
+        Assert.True(Enum.IsDefined(typeof(QualityRating), quality.Rating));
+    }
+
+    [Fact]
+    public async Task ConnectionQuality_StopsSending_AfterDisconnect()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        // Wait for initial quality updates
+        await Task.Delay(3000);
+        int countBeforeDisconnect = _comm.SentConnectionQuality.Count;
+
+        // Disconnect
+        _comm.RaiseConnectionStateChanged(connected: false);
+
+        // Wait another quality interval
+        await Task.Delay(3000);
+
+        // Should not have sent more quality updates after disconnect
+        Assert.Equal(countBeforeDisconnect, _comm.SentConnectionQuality.Count);
     }
 
     // ── IAsyncDisposable ───────────────────────────────────────────────────────

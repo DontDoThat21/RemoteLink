@@ -268,6 +268,57 @@ public class TcpCommunicationServiceTests : IAsyncDisposable
         Assert.True(fired);
     }
 
+    // ── Connection quality ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SendConnectionQualityAsync_IsReceived_ByConnectedPeer()
+    {
+        using var server = new TcpCommunicationService();
+        using var client = new TcpCommunicationService();
+
+        var tcs = new TaskCompletionSource<ConnectionQuality>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Server sends quality → client receives it
+        client.ConnectionQualityReceived += (_, cq) => tcs.TrySetResult(cq);
+
+        await server.StartAsync(_port);
+
+        var device = new DeviceInfo
+        {
+            DeviceId = "h", DeviceName = "H",
+            IPAddress = "127.0.0.1", Port = _port,
+            Type = DeviceType.Desktop
+        };
+        await client.ConnectToDeviceAsync(device);
+
+        await Task.Delay(100); // let accept loop run
+
+        var timestamp = DateTime.UtcNow;
+        var quality = new ConnectionQuality
+        {
+            Fps = 25.5,
+            Bandwidth = 2 * 1024 * 1024,
+            Latency = 45,
+            Timestamp = timestamp,
+            Rating = QualityRating.Excellent
+        };
+
+        await server.SendConnectionQualityAsync(quality);
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await client.StopAsync();
+        await server.StopAsync();
+
+        Assert.Equal(25.5, received.Fps);
+        Assert.Equal(2 * 1024 * 1024, received.Bandwidth);
+        Assert.Equal(45, received.Latency);
+        Assert.Equal(QualityRating.Excellent, received.Rating);
+        // Timestamp might have minor serialization differences; check it's close
+        Assert.True((received.Timestamp - timestamp).Duration() < TimeSpan.FromSeconds(1));
+    }
+
     // ── Dispose ───────────────────────────────────────────────────────────────
 
     public async ValueTask DisposeAsync()
