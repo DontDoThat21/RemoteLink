@@ -491,6 +491,9 @@ public class FileTransferServiceTests
         public event EventHandler<AudioData>? AudioDataReceived;
         public event EventHandler<ChatMessage>? ChatMessageReceived;
         public event EventHandler<string>? MessageReadReceived;
+        public event EventHandler<PrintJob>? PrintJobReceived;
+        public event EventHandler<PrintJobResponse>? PrintJobResponseReceived;
+        public event EventHandler<PrintJobStatus>? PrintJobStatusReceived;
 
         public Task StartAsync(int port) => Task.CompletedTask;
         public Task StopAsync() => Task.CompletedTask;
@@ -530,6 +533,9 @@ public class FileTransferServiceTests
 
         public Task SendChatMessageAsync(ChatMessage message) => Task.CompletedTask;
         public Task SendMessageReadAsync(string messageId) => Task.CompletedTask;
+        public Task SendPrintJobAsync(PrintJob printJob) => Task.CompletedTask;
+        public Task SendPrintJobResponseAsync(PrintJobResponse response) => Task.CompletedTask;
+        public Task SendPrintJobStatusAsync(PrintJobStatus status) => Task.CompletedTask;
 
         public void SimulateFileTransferRequestReceived(FileTransferRequest request)
         {
