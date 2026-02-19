@@ -77,6 +77,13 @@ public class WindowsInputHandler : IInputHandler
                     SimulateTextInput(inputEvent.Text);
                     break;
 
+                case InputEventType.KeyboardShortcut:
+                    if (inputEvent.Shortcut.HasValue)
+                        await SendShortcutAsync(inputEvent.Shortcut.Value);
+                    else
+                        _logger.LogWarning("KeyboardShortcut event missing Shortcut value");
+                    break;
+
                 default:
                     _logger.LogWarning("Unhandled input event type: {Type}", inputEvent.Type);
                     break;
@@ -88,6 +95,155 @@ public class WindowsInputHandler : IInputHandler
         }
 
         await Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task SendShortcutAsync(KeyboardShortcut shortcut)
+    {
+        if (!_isActive)
+        {
+            _logger.LogWarning("SendShortcutAsync called while inactive — ignoring.");
+            return Task.CompletedTask;
+        }
+
+        _logger.LogDebug("Sending keyboard shortcut: {Shortcut}", shortcut);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            _logger.LogWarning("Keyboard shortcuts are only supported on Windows.");
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            switch (shortcut)
+            {
+                case KeyboardShortcut.ShowDesktop:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.D);
+                    break;
+
+                case KeyboardShortcut.LockWorkstation:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.L);
+                    break;
+
+                case KeyboardShortcut.TaskSwitcher:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.Menu }, NativeMethods.VirtualKey.Tab);
+                    break;
+
+                case KeyboardShortcut.CloseWindow:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.Menu }, NativeMethods.VirtualKey.F4);
+                    break;
+
+                case KeyboardShortcut.RunDialog:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.R);
+                    break;
+
+                case KeyboardShortcut.Explorer:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.E);
+                    break;
+
+                case KeyboardShortcut.CtrlAltDelete:
+                    // Ctrl+Alt+Del is a Secure Attention Sequence and cannot be simulated via SendInput
+                    _logger.LogWarning("Ctrl+Alt+Delete cannot be simulated via SendInput (security restriction).");
+                    break;
+
+                case KeyboardShortcut.TaskView:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.Tab);
+                    break;
+
+                case KeyboardShortcut.TaskManager:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.Control, NativeMethods.VirtualKey.Shift }, NativeMethods.VirtualKey.Escape);
+                    break;
+
+                case KeyboardShortcut.Settings:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.I);
+                    break;
+
+                case KeyboardShortcut.ToggleFullscreen:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.Menu }, NativeMethods.VirtualKey.Return);
+                    break;
+
+                case KeyboardShortcut.SnapLeft:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.Left);
+                    break;
+
+                case KeyboardShortcut.SnapRight:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.Right);
+                    break;
+
+                case KeyboardShortcut.MaximizeWindow:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.Up);
+                    break;
+
+                case KeyboardShortcut.MinimizeWindow:
+                    SendKeyCombo(new[] { NativeMethods.VirtualKey.LWin }, NativeMethods.VirtualKey.Down);
+                    break;
+
+                default:
+                    _logger.LogWarning("Unhandled keyboard shortcut: {Shortcut}", shortcut);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending keyboard shortcut: {Shortcut}", shortcut);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // ── Keyboard shortcut helper ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Sends a key combination: presses modifiers, then key, then releases all in reverse order.
+    /// </summary>
+    private void SendKeyCombo(NativeMethods.VirtualKey[] modifiers, NativeMethods.VirtualKey key)
+    {
+        var inputs = new List<NativeMethods.INPUT>();
+
+        // Press modifiers
+        foreach (var mod in modifiers)
+        {
+            inputs.Add(CreateKeyInput(mod, pressed: true));
+        }
+
+        // Press main key
+        inputs.Add(CreateKeyInput(key, pressed: true));
+
+        // Release main key
+        inputs.Add(CreateKeyInput(key, pressed: false));
+
+        // Release modifiers in reverse order
+        for (int i = modifiers.Length - 1; i >= 0; i--)
+        {
+            inputs.Add(CreateKeyInput(modifiers[i], pressed: false));
+        }
+
+        var arr = inputs.ToArray();
+        uint sent = NativeMethods.SendInput((uint)arr.Length, arr, NativeMethods.INPUT.Size);
+
+        if (sent != arr.Length)
+            _logger.LogWarning("SendInput sent {Sent}/{Total} key combo events", sent, arr.Length);
+    }
+
+    private NativeMethods.INPUT CreateKeyInput(NativeMethods.VirtualKey vk, bool pressed)
+    {
+        var flags = pressed
+            ? NativeMethods.KEYEVENTF_NONE
+            : NativeMethods.KEYEVENTF_KEYUP;
+
+        return new NativeMethods.INPUT
+        {
+            type = NativeMethods.INPUT_KEYBOARD,
+            union = new NativeMethods.InputUnion
+            {
+                ki = new NativeMethods.KEYBDINPUT
+                {
+                    wVk = (ushort)vk,
+                    dwFlags = flags
+                }
+            }
+        };
     }
 
     // ── Mouse helpers ──────────────────────────────────────────────────────────

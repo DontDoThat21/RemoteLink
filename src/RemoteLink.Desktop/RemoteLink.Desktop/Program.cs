@@ -12,11 +12,18 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        Console.WriteLine("RemoteLink Desktop Host Starting...");
-
         // Create host builder
         var builder = Host.CreateApplicationBuilder(args);
-        
+
+        // Enable Windows service support
+        // When running as a Windows service, this allows the app to respond to
+        // service control manager commands (start/stop/pause).
+        // In console mode, this has no effect.
+        builder.Services.AddWindowsService(options =>
+        {
+            options.ServiceName = "RemoteLinkHost";
+        });
+
         // Configure services
         builder.Services.AddLogging();
         // Use real GDI screen capture on Windows; fall back to mock on Linux/macOS.
@@ -31,8 +38,37 @@ class Program
             builder.Services.AddSingleton<IInputHandler, WindowsInputHandler>();
         else
             builder.Services.AddSingleton<IInputHandler, MockInputHandler>();
+
+        // Use Windows clipboard service on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IClipboardService, WindowsClipboardService>();
+        else
+            builder.Services.AddSingleton<IClipboardService, MockClipboardService>();
+
+        // Use Windows audio capture on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IAudioCaptureService, WindowsAudioCaptureService>();
+        else
+            builder.Services.AddSingleton<IAudioCaptureService, MockAudioCaptureService>();
+
+        // Session recorder (requires FFmpeg for real recording)
+        // TODO: Add configuration to choose SessionRecorder vs MockSessionRecorder
+        builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
+
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
+        builder.Services.AddSingleton<ISessionManager, SessionManager>();
+        builder.Services.AddSingleton<IDeltaFrameEncoder, DeltaFrameEncoder>();
+        builder.Services.AddSingleton<IPerformanceMonitor, PerformanceMonitor>();
+        builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
+        builder.Services.AddSingleton<IMessagingService, MessagingService>();
+        
+        // Use Windows print service on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IPrintService, WindowsPrintService>();
+        else
+            builder.Services.AddSingleton<IPrintService, MockPrintService>();
+        
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
             var localDevice = new DeviceInfo
@@ -49,8 +85,22 @@ class Program
 
         using var host = builder.Build();
 
-        Console.WriteLine("Starting RemoteLink Desktop Host...");
-        Console.WriteLine("Press Ctrl+C to stop the service.");
+        var logger = host.Services.GetRequiredService<ILogger<Program>>();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+
+        // Detect if running as Windows service
+        bool isWindowsService = OperatingSystem.IsWindows() && 
+                                 !Environment.UserInteractive;
+
+        if (isWindowsService)
+        {
+            logger.LogInformation("RemoteLink Desktop Host starting as Windows service");
+        }
+        else
+        {
+            Console.WriteLine("RemoteLink Desktop Host Starting...");
+            Console.WriteLine("Running in console mode. Press Ctrl+C to stop.");
+        }
 
         try
         {
@@ -58,7 +108,10 @@ class Program
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("Service stopped.");
+            if (!isWindowsService)
+            {
+                Console.WriteLine("Service stopped.");
+            }
         }
     }
 }

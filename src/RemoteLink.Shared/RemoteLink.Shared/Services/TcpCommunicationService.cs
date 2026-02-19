@@ -1,9 +1,13 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Security;
 
 namespace RemoteLink.Shared.Services;
 
@@ -31,16 +35,44 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypeInput = "InputEvent";
     private const string MsgTypePairingRequest = "PairingRequest";
     private const string MsgTypePairingResponse = "PairingResponse";
+    private const string MsgTypeConnectionQuality = "ConnectionQuality";
+    private const string MsgTypeClipboard = "ClipboardData";
+    private const string MsgTypeFileTransferRequest = "FileTransferRequest";
+    private const string MsgTypeFileTransferResponse = "FileTransferResponse";
+    private const string MsgTypeFileTransferChunk = "FileTransferChunk";
+    private const string MsgTypeFileTransferComplete = "FileTransferComplete";
+    private const string MsgTypeAudio = "AudioData";
+    private const string MsgTypeChatMessage = "ChatMessage";
+    private const string MsgTypeMessageRead = "MessageRead";
+    private const string MsgTypePrintJob = "PrintJob";
+    private const string MsgTypePrintJobResponse = "PrintJobResponse";
+    private const string MsgTypePrintJobStatus = "PrintJobStatus";
 
     // ── State ────────────────────────────────────────────────────────────────
 
+    private readonly TlsConfiguration _tlsConfig;
     private TcpListener? _listener;
     private TcpClient? _activeClient;
     private NetworkStream? _activeStream;
+    private SslStream? _activeSslStream;
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
     private Task? _acceptTask;
     private bool _disposed;
+
+    // ── Constructor ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates a new <see cref="TcpCommunicationService"/>.
+    /// </summary>
+    /// <param name="tlsConfig">
+    /// TLS configuration. If <c>null</c>, uses default settings
+    /// (TLS enabled with self-signed certificates accepted).
+    /// </param>
+    public TcpCommunicationService(TlsConfiguration? tlsConfig = null)
+    {
+        _tlsConfig = tlsConfig ?? TlsConfiguration.CreateDefault();
+    }
 
     // ── ICommunicationService ────────────────────────────────────────────────
 
@@ -61,6 +93,42 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<PairingResponse>? PairingResponseReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<ClipboardData>? ClipboardDataReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferRequest>? FileTransferRequestReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<AudioData>? AudioDataReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<ChatMessage>? ChatMessageReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<string>? MessageReadReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PrintJob>? PrintJobReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PrintJobResponse>? PrintJobResponseReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PrintJobStatus>? PrintJobStatusReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -96,9 +164,41 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
                 _activeClient = client;
                 _activeStream = client.GetStream();
+
+                // ── TLS handshake (server mode) ──────────────────────────────
+                if (_tlsConfig.Enabled)
+                {
+                    try
+                    {
+                        var cert = _tlsConfig.ServerCertificate 
+                            ?? TlsConfiguration.GenerateSelfSignedCertificate("CN=RemoteLink Host");
+
+                        var sslStream = new SslStream(
+                            _activeStream,
+                            leaveInnerStreamOpen: false,
+                            userCertificateValidationCallback: ValidateClientCertificate);
+
+                        await sslStream.AuthenticateAsServerAsync(
+                            cert,
+                            clientCertificateRequired: false,
+                            enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
+                            checkCertificateRevocation: false);
+
+                        _activeSslStream = sslStream;
+                        Console.WriteLine("[TLS] Server handshake complete");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[TLS] Server handshake failed: {ex.Message}");
+                        await DropConnectionAsync();
+                        continue;
+                    }
+                }
+
                 ConnectionStateChanged?.Invoke(this, true);
 
-                _receiveTask = ReceiveLoopAsync(_activeStream, ct);
+                var readStream = (_activeSslStream as Stream) ?? _activeStream;
+                _receiveTask = ReceiveLoopAsync(readStream, ct);
             }
             catch (OperationCanceledException)
             {
@@ -134,11 +234,42 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
             _activeClient = client;
             _activeStream = client.GetStream();
-            ConnectionStateChanged?.Invoke(this, true);
 
             Console.WriteLine($"[TCP] Connected to {device.DeviceName} at {device.IPAddress}:{device.Port}");
 
-            _receiveTask = ReceiveLoopAsync(_activeStream, _cts.Token);
+            // ── TLS handshake (client mode) ──────────────────────────────────
+            if (_tlsConfig.Enabled)
+            {
+                try
+                {
+                    var sslStream = new SslStream(
+                        _activeStream,
+                        leaveInnerStreamOpen: false,
+                        userCertificateValidationCallback: ValidateServerCertificate);
+
+                    var targetHost = _tlsConfig.TargetHost ?? device.IPAddress;
+
+                    await sslStream.AuthenticateAsClientAsync(
+                        targetHost,
+                        clientCertificates: null,
+                        enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
+                        checkCertificateRevocation: false);
+
+                    _activeSslStream = sslStream;
+                    Console.WriteLine("[TLS] Client handshake complete");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TLS] Client handshake failed: {ex.Message}");
+                    await DropConnectionAsync();
+                    return false;
+                }
+            }
+
+            ConnectionStateChanged?.Invoke(this, true);
+
+            var readStream = (_activeSslStream as Stream) ?? _activeStream;
+            _receiveTask = ReceiveLoopAsync(readStream, _cts.Token);
             return true;
         }
         catch (Exception ex)
@@ -200,6 +331,138 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendConnectionQualityAsync(ConnectionQuality quality)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeConnectionQuality,
+            Payload = Encode(quality)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendClipboardDataAsync(ClipboardData clipboardData)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeClipboard,
+            Payload = Encode(clipboardData)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferRequestAsync(FileTransferRequest request)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferRequest,
+            Payload = Encode(request)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferResponseAsync(FileTransferResponse response)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferResponse,
+            Payload = Encode(response)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferChunkAsync(FileTransferChunk chunk)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferChunk,
+            Payload = Encode(chunk)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferCompleteAsync(FileTransferComplete complete)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferComplete,
+            Payload = Encode(complete)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendAudioDataAsync(AudioData audioData)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeAudio,
+            Payload = Encode(audioData)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendChatMessageAsync(ChatMessage message)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeChatMessage,
+            Payload = Encode(message)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendMessageReadAsync(string messageId)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeMessageRead,
+            Payload = Encode(messageId)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendPrintJobAsync(PrintJob printJob)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePrintJob,
+            Payload = Encode(printJob)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendPrintJobResponseAsync(PrintJobResponse response)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePrintJobResponse,
+            Payload = Encode(response)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendPrintJobStatusAsync(PrintJobStatus status)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePrintJobStatus,
+            Payload = Encode(status)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -224,7 +487,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
+    private async Task ReceiveLoopAsync(Stream stream, CancellationToken ct)
     {
         try
         {
@@ -299,6 +562,66 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                     if (prr != null) PairingResponseReceived?.Invoke(this, prr);
                     break;
 
+                case MsgTypeConnectionQuality:
+                    var cq = Decode<ConnectionQuality>(msg.Payload);
+                    if (cq != null) ConnectionQualityReceived?.Invoke(this, cq);
+                    break;
+
+                case MsgTypeClipboard:
+                    var cd = Decode<ClipboardData>(msg.Payload);
+                    if (cd != null) ClipboardDataReceived?.Invoke(this, cd);
+                    break;
+
+                case MsgTypeFileTransferRequest:
+                    var ftr = Decode<FileTransferRequest>(msg.Payload);
+                    if (ftr != null) FileTransferRequestReceived?.Invoke(this, ftr);
+                    break;
+
+                case MsgTypeFileTransferResponse:
+                    var ftresp = Decode<FileTransferResponse>(msg.Payload);
+                    if (ftresp != null) FileTransferResponseReceived?.Invoke(this, ftresp);
+                    break;
+
+                case MsgTypeFileTransferChunk:
+                    var ftc = Decode<FileTransferChunk>(msg.Payload);
+                    if (ftc != null) FileTransferChunkReceived?.Invoke(this, ftc);
+                    break;
+
+                case MsgTypeFileTransferComplete:
+                    var ftcomplete = Decode<FileTransferComplete>(msg.Payload);
+                    if (ftcomplete != null) FileTransferCompleteReceived?.Invoke(this, ftcomplete);
+                    break;
+
+                case MsgTypeAudio:
+                    var ad = Decode<AudioData>(msg.Payload);
+                    if (ad != null) AudioDataReceived?.Invoke(this, ad);
+                    break;
+
+                case MsgTypeChatMessage:
+                    var cm = Decode<ChatMessage>(msg.Payload);
+                    if (cm != null) ChatMessageReceived?.Invoke(this, cm);
+                    break;
+
+                case MsgTypeMessageRead:
+                    var mr = Decode<string>(msg.Payload);
+                    if (mr != null) MessageReadReceived?.Invoke(this, mr);
+                    break;
+
+                case MsgTypePrintJob:
+                    var pj = Decode<PrintJob>(msg.Payload);
+                    if (pj != null) PrintJobReceived?.Invoke(this, pj);
+                    break;
+
+                case MsgTypePrintJobResponse:
+                    var pjr = Decode<PrintJobResponse>(msg.Payload);
+                    if (pjr != null) PrintJobResponseReceived?.Invoke(this, pjr);
+                    break;
+
+                case MsgTypePrintJobStatus:
+                    var pjs = Decode<PrintJobStatus>(msg.Payload);
+                    if (pjs != null) PrintJobStatusReceived?.Invoke(this, pjs);
+                    break;
+
                 default:
                     Console.WriteLine($"[TCP] Unknown message type: {msg.MessageType}");
                     break;
@@ -312,7 +635,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     private async Task SendMessageAsync(NetworkMessage msg)
     {
-        if (_activeStream == null)
+        var writeStream = (_activeSslStream as Stream) ?? _activeStream;
+        
+        if (writeStream == null)
         {
             Console.WriteLine("[TCP] SendMessage: not connected.");
             return;
@@ -324,9 +649,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
             var lenBuf = BitConverter.GetBytes(json.Length);
 
             // Lock-free for simplicity; in high-throughput code use a write semaphore
-            await _activeStream.WriteAsync(lenBuf);
-            await _activeStream.WriteAsync(json);
-            await _activeStream.FlushAsync();
+            await writeStream.WriteAsync(lenBuf);
+            await writeStream.WriteAsync(json);
+            await writeStream.FlushAsync();
         }
         catch (Exception ex)
         {
@@ -337,6 +662,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     private async Task DropConnectionAsync()
     {
+        var sslStream = Interlocked.Exchange(ref _activeSslStream, null);
+        sslStream?.Dispose();
+
         var stream = Interlocked.Exchange(ref _activeStream, null);
         stream?.Dispose();
 
@@ -350,8 +678,52 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         }
     }
 
+    // ── Certificate validation ────────────────────────────────────────────────
+
+    private bool ValidateServerCertificate(
+        object sender,
+        X509Certificate? certificate,
+        X509Chain? chain,
+        SslPolicyErrors sslPolicyErrors)
+    {
+        // If configured to validate, enforce proper cert checks
+        if (_tlsConfig.ValidateRemoteCertificate)
+        {
+            if (sslPolicyErrors == SslPolicyErrors.None)
+                return true;
+
+            Console.WriteLine($"[TLS] Server certificate validation failed: {sslPolicyErrors}");
+            return false;
+        }
+
+        // For local network use, accept self-signed certificates
+        if (sslPolicyErrors == SslPolicyErrors.None)
+            return true;
+
+        // Allow self-signed or untrusted root for LAN scenarios
+        if (sslPolicyErrors.HasFlag(SslPolicyErrors.RemoteCertificateChainErrors))
+        {
+            Console.WriteLine("[TLS] Accepting self-signed server certificate for local network");
+            return true;
+        }
+
+        Console.WriteLine($"[TLS] Server certificate policy error: {sslPolicyErrors}");
+        return false;
+    }
+
+    private bool ValidateClientCertificate(
+        object sender,
+        X509Certificate? certificate,
+        X509Chain? chain,
+        SslPolicyErrors sslPolicyErrors)
+    {
+        // Client certificates are optional in this implementation
+        // (pairing is done via PIN, not mutual TLS)
+        return true;
+    }
+
     private static async Task<int> ReadExactAsync(
-        NetworkStream stream, byte[] buffer, int offset, int count, CancellationToken ct)
+        Stream stream, byte[] buffer, int offset, int count, CancellationToken ct)
     {
         int totalRead = 0;
         while (totalRead < count)

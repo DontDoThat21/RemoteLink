@@ -58,6 +58,33 @@ public class MockScreenCapture : IScreenCapture, IDisposable
     public void SetQuality(int quality)
         => _quality = Math.Clamp(quality, 1, 100);
 
+    public Task<IReadOnlyList<MonitorInfo>> GetMonitorsAsync()
+    {
+        var mockMonitor = new MonitorInfo
+        {
+            Id = "primary",
+            Name = "Primary Display",
+            IsPrimary = true,
+            Width = 1920,
+            Height = 1080,
+            Left = 0,
+            Top = 0
+        };
+        return Task.FromResult<IReadOnlyList<MonitorInfo>>(new[] { mockMonitor });
+    }
+
+    public Task<bool> SelectMonitorAsync(string monitorId)
+    {
+        // Mock always succeeds
+        return Task.FromResult(true);
+    }
+
+    public string? GetSelectedMonitorId()
+    {
+        // Mock always returns null (primary)
+        return null;
+    }
+
     private async void CaptureFrame(object? state)
     {
         if (!_isCapturing) return;

@@ -8,6 +8,7 @@ public class DeviceInfo
     public string DeviceId { get; set; } = string.Empty;
     public string DeviceName { get; set; } = string.Empty;
     public string IPAddress { get; set; } = string.Empty;
+    public string? MacAddress { get; set; }
     public int Port { get; set; }
     public DeviceType Type { get; set; }
     public DateTime LastSeen { get; set; }

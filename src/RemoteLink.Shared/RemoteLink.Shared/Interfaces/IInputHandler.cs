@@ -13,6 +13,11 @@ public interface IInputHandler
     Task ProcessInputEventAsync(InputEvent inputEvent);
 
     /// <summary>
+    /// Send a predefined keyboard shortcut (e.g., Win+D, Alt+Tab)
+    /// </summary>
+    Task SendShortcutAsync(KeyboardShortcut shortcut);
+
+    /// <summary>
     /// Start input handling service
     /// </summary>
     Task StartAsync();

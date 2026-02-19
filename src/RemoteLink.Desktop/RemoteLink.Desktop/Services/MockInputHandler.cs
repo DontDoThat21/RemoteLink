@@ -45,6 +45,18 @@ public class MockInputHandler : IInputHandler
     }
 
     /// <inheritdoc/>
+    public Task SendShortcutAsync(KeyboardShortcut shortcut)
+    {
+        if (!_isActive)
+        {
+            return Task.CompletedTask;
+        }
+
+        Console.WriteLine($"Mock: Sending keyboard shortcut: {shortcut}");
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
     public async Task ProcessInputEventAsync(InputEvent inputEvent)
     {
         if (!_isActive) return;
@@ -79,6 +91,13 @@ public class MockInputHandler : IInputHandler
 
             case InputEventType.MouseWheel:
                 Console.WriteLine("Mock: Mouse wheel scrolled");
+                break;
+
+            case InputEventType.KeyboardShortcut:
+                if (inputEvent.Shortcut.HasValue)
+                    await SendShortcutAsync(inputEvent.Shortcut.Value);
+                else
+                    Console.WriteLine("Mock: KeyboardShortcut event missing Shortcut value");
                 break;
 
             default:

@@ -78,4 +78,136 @@ public interface ICommunicationService
     /// Event fired when a pairing response is received (client mode).
     /// </summary>
     event EventHandler<PairingResponse> PairingResponseReceived;
+
+    // ── Connection Quality ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send connection quality metrics to the connected client (host mode).
+    /// </summary>
+    Task SendConnectionQualityAsync(ConnectionQuality quality);
+
+    /// <summary>
+    /// Event fired when connection quality metrics are received (client mode).
+    /// </summary>
+    event EventHandler<ConnectionQuality> ConnectionQualityReceived;
+
+    // ── Clipboard Sync ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send clipboard data to the remote peer.
+    /// </summary>
+    Task SendClipboardDataAsync(ClipboardData clipboardData);
+
+    /// <summary>
+    /// Event fired when clipboard data is received from the remote peer.
+    /// </summary>
+    event EventHandler<ClipboardData> ClipboardDataReceived;
+
+    // ── File Transfer ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a file transfer request to the remote peer.
+    /// </summary>
+    Task SendFileTransferRequestAsync(FileTransferRequest request);
+
+    /// <summary>
+    /// Send a file transfer response to the remote peer.
+    /// </summary>
+    Task SendFileTransferResponseAsync(FileTransferResponse response);
+
+    /// <summary>
+    /// Send a file data chunk to the remote peer.
+    /// </summary>
+    Task SendFileTransferChunkAsync(FileTransferChunk chunk);
+
+    /// <summary>
+    /// Send a file transfer completion notification.
+    /// </summary>
+    Task SendFileTransferCompleteAsync(FileTransferComplete complete);
+
+    /// <summary>
+    /// Event fired when a file transfer request is received.
+    /// </summary>
+    event EventHandler<FileTransferRequest> FileTransferRequestReceived;
+
+    /// <summary>
+    /// Event fired when a file transfer response is received.
+    /// </summary>
+    event EventHandler<FileTransferResponse> FileTransferResponseReceived;
+
+    /// <summary>
+    /// Event fired when a file transfer chunk is received.
+    /// </summary>
+    event EventHandler<FileTransferChunk> FileTransferChunkReceived;
+
+    /// <summary>
+    /// Event fired when a file transfer completion is received.
+    /// </summary>
+    event EventHandler<FileTransferComplete> FileTransferCompleteReceived;
+
+    // ── Audio Streaming ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send audio data to the connected client (host mode).
+    /// </summary>
+    Task SendAudioDataAsync(AudioData audioData);
+
+    /// <summary>
+    /// Event fired when audio data is received from the host (client mode).
+    /// </summary>
+    event EventHandler<AudioData> AudioDataReceived;
+
+    // ── Chat/Messaging ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a chat message to the remote peer.
+    /// </summary>
+    Task SendChatMessageAsync(ChatMessage message);
+
+    /// <summary>
+    /// Send a message read acknowledgment to the remote peer.
+    /// </summary>
+    Task SendMessageReadAsync(string messageId);
+
+    /// <summary>
+    /// Event fired when a chat message is received from the remote peer.
+    /// </summary>
+    event EventHandler<ChatMessage> ChatMessageReceived;
+
+    /// <summary>
+    /// Event fired when a message read acknowledgment is received from the remote peer.
+    /// </summary>
+    event EventHandler<string> MessageReadReceived;
+
+    // ── Remote Printing ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a print job to the remote peer.
+    /// </summary>
+    Task SendPrintJobAsync(PrintJob printJob);
+
+    /// <summary>
+    /// Send a print job response to the remote peer.
+    /// </summary>
+    Task SendPrintJobResponseAsync(PrintJobResponse response);
+
+    /// <summary>
+    /// Send a print job status update to the remote peer.
+    /// </summary>
+    Task SendPrintJobStatusAsync(PrintJobStatus status);
+
+    /// <summary>
+    /// Event fired when a print job is received from the remote peer.
+    /// </summary>
+    event EventHandler<PrintJob> PrintJobReceived;
+
+    /// <summary>
+    /// Event fired when a print job response is received from the remote peer.
+    /// </summary>
+    event EventHandler<PrintJobResponse> PrintJobResponseReceived;
+
+    /// <summary>
+    /// Event fired when a print job status update is received from the remote peer.
+    /// </summary>
+    event EventHandler<PrintJobStatus> PrintJobStatusReceived;
 }

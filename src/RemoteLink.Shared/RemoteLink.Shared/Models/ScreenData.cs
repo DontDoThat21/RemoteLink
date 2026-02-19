@@ -12,6 +12,21 @@ public class ScreenData
     public int Height { get; set; }
     public ScreenDataFormat Format { get; set; }
     public int Quality { get; set; } = 75; // JPEG quality for compression
+    
+    /// <summary>
+    /// True if this is a delta frame (only changed regions)
+    /// </summary>
+    public bool IsDelta { get; set; }
+    
+    /// <summary>
+    /// ID of the reference frame for delta encoding
+    /// </summary>
+    public string? ReferenceFrameId { get; set; }
+    
+    /// <summary>
+    /// Changed regions in delta frames (x, y, width, height, offset in ImageData)
+    /// </summary>
+    public List<DeltaRegion>? DeltaRegions { get; set; }
 }
 
 /// <summary>
