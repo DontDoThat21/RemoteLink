@@ -1,9 +1,13 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Security;
 
 namespace RemoteLink.Shared.Services;
 
@@ -34,13 +38,29 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     // ── State ────────────────────────────────────────────────────────────────
 
+    private readonly TlsConfiguration _tlsConfig;
     private TcpListener? _listener;
     private TcpClient? _activeClient;
     private NetworkStream? _activeStream;
+    private SslStream? _activeSslStream;
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
     private Task? _acceptTask;
     private bool _disposed;
+
+    // ── Constructor ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates a new <see cref="TcpCommunicationService"/>.
+    /// </summary>
+    /// <param name="tlsConfig">
+    /// TLS configuration. If <c>null</c>, uses default settings
+    /// (TLS enabled with self-signed certificates accepted).
+    /// </param>
+    public TcpCommunicationService(TlsConfiguration? tlsConfig = null)
+    {
+        _tlsConfig = tlsConfig ?? TlsConfiguration.CreateDefault();
+    }
 
     // ── ICommunicationService ────────────────────────────────────────────────
 
@@ -96,9 +116,41 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
                 _activeClient = client;
                 _activeStream = client.GetStream();
+
+                // ── TLS handshake (server mode) ──────────────────────────────
+                if (_tlsConfig.Enabled)
+                {
+                    try
+                    {
+                        var cert = _tlsConfig.ServerCertificate 
+                            ?? TlsConfiguration.GenerateSelfSignedCertificate("CN=RemoteLink Host");
+
+                        var sslStream = new SslStream(
+                            _activeStream,
+                            leaveInnerStreamOpen: false,
+                            userCertificateValidationCallback: ValidateClientCertificate);
+
+                        await sslStream.AuthenticateAsServerAsync(
+                            cert,
+                            clientCertificateRequired: false,
+                            enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
+                            checkCertificateRevocation: false);
+
+                        _activeSslStream = sslStream;
+                        Console.WriteLine("[TLS] Server handshake complete");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[TLS] Server handshake failed: {ex.Message}");
+                        await DropConnectionAsync();
+                        continue;
+                    }
+                }
+
                 ConnectionStateChanged?.Invoke(this, true);
 
-                _receiveTask = ReceiveLoopAsync(_activeStream, ct);
+                var readStream = (_activeSslStream as Stream) ?? _activeStream;
+                _receiveTask = ReceiveLoopAsync(readStream, ct);
             }
             catch (OperationCanceledException)
             {
@@ -134,11 +186,42 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
             _activeClient = client;
             _activeStream = client.GetStream();
-            ConnectionStateChanged?.Invoke(this, true);
 
             Console.WriteLine($"[TCP] Connected to {device.DeviceName} at {device.IPAddress}:{device.Port}");
 
-            _receiveTask = ReceiveLoopAsync(_activeStream, _cts.Token);
+            // ── TLS handshake (client mode) ──────────────────────────────────
+            if (_tlsConfig.Enabled)
+            {
+                try
+                {
+                    var sslStream = new SslStream(
+                        _activeStream,
+                        leaveInnerStreamOpen: false,
+                        userCertificateValidationCallback: ValidateServerCertificate);
+
+                    var targetHost = _tlsConfig.TargetHost ?? device.IPAddress;
+
+                    await sslStream.AuthenticateAsClientAsync(
+                        targetHost,
+                        clientCertificates: null,
+                        enabledSslProtocols: SslProtocols.Tls12 | SslProtocols.Tls13,
+                        checkCertificateRevocation: false);
+
+                    _activeSslStream = sslStream;
+                    Console.WriteLine("[TLS] Client handshake complete");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TLS] Client handshake failed: {ex.Message}");
+                    await DropConnectionAsync();
+                    return false;
+                }
+            }
+
+            ConnectionStateChanged?.Invoke(this, true);
+
+            var readStream = (_activeSslStream as Stream) ?? _activeStream;
+            _receiveTask = ReceiveLoopAsync(readStream, _cts.Token);
             return true;
         }
         catch (Exception ex)
@@ -224,7 +307,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private async Task ReceiveLoopAsync(NetworkStream stream, CancellationToken ct)
+    private async Task ReceiveLoopAsync(Stream stream, CancellationToken ct)
     {
         try
         {
@@ -312,7 +395,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     private async Task SendMessageAsync(NetworkMessage msg)
     {
-        if (_activeStream == null)
+        var writeStream = (_activeSslStream as Stream) ?? _activeStream;
+        
+        if (writeStream == null)
         {
             Console.WriteLine("[TCP] SendMessage: not connected.");
             return;
@@ -324,9 +409,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
             var lenBuf = BitConverter.GetBytes(json.Length);
 
             // Lock-free for simplicity; in high-throughput code use a write semaphore
-            await _activeStream.WriteAsync(lenBuf);
-            await _activeStream.WriteAsync(json);
-            await _activeStream.FlushAsync();
+            await writeStream.WriteAsync(lenBuf);
+            await writeStream.WriteAsync(json);
+            await writeStream.FlushAsync();
         }
         catch (Exception ex)
         {
@@ -337,6 +422,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     private async Task DropConnectionAsync()
     {
+        var sslStream = Interlocked.Exchange(ref _activeSslStream, null);
+        sslStream?.Dispose();
+
         var stream = Interlocked.Exchange(ref _activeStream, null);
         stream?.Dispose();
 
@@ -350,8 +438,52 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         }
     }
 
+    // ── Certificate validation ────────────────────────────────────────────────
+
+    private bool ValidateServerCertificate(
+        object sender,
+        X509Certificate? certificate,
+        X509Chain? chain,
+        SslPolicyErrors sslPolicyErrors)
+    {
+        // If configured to validate, enforce proper cert checks
+        if (_tlsConfig.ValidateRemoteCertificate)
+        {
+            if (sslPolicyErrors == SslPolicyErrors.None)
+                return true;
+
+            Console.WriteLine($"[TLS] Server certificate validation failed: {sslPolicyErrors}");
+            return false;
+        }
+
+        // For local network use, accept self-signed certificates
+        if (sslPolicyErrors == SslPolicyErrors.None)
+            return true;
+
+        // Allow self-signed or untrusted root for LAN scenarios
+        if (sslPolicyErrors.HasFlag(SslPolicyErrors.RemoteCertificateChainErrors))
+        {
+            Console.WriteLine("[TLS] Accepting self-signed server certificate for local network");
+            return true;
+        }
+
+        Console.WriteLine($"[TLS] Server certificate policy error: {sslPolicyErrors}");
+        return false;
+    }
+
+    private bool ValidateClientCertificate(
+        object sender,
+        X509Certificate? certificate,
+        X509Chain? chain,
+        SslPolicyErrors sslPolicyErrors)
+    {
+        // Client certificates are optional in this implementation
+        // (pairing is done via PIN, not mutual TLS)
+        return true;
+    }
+
     private static async Task<int> ReadExactAsync(
-        NetworkStream stream, byte[] buffer, int offset, int count, CancellationToken ct)
+        Stream stream, byte[] buffer, int offset, int count, CancellationToken ct)
     {
         int totalRead = 0;
         while (totalRead < count)

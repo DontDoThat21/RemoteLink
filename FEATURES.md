@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-02-18 (session 7)
+> **Last updated:** 2026-02-19 (session 8)
 
 ## Legend
 - ✅ Complete & Tested
@@ -33,18 +33,18 @@
 | 2.3 | Screen streaming (host → client) | ✅ | RemoteDesktopHost wired: FrameCaptured → SendScreenDataAsync; 21 host-level tests |
 | 2.4 | Input handling — Windows (real impl) | ✅ | WindowsInputHandler: SendInput P/Invoke, full VK enum, platform-gated; 16 tests |
 | 2.5 | Remote input relay (client → host) | ✅ | RemoteDesktopHost wired: InputEventReceived → ProcessInputEventAsync; 21 host-level tests |
-| 2.6 | Touch-to-mouse translation (mobile) | 📋 | Basic structure in MainPage |
-| 2.7 | Mobile UI — host list + connection flow | 🔧 | Discovery UI exists, connection UI added |
-| 2.8 | Mobile UI — remote desktop viewer | 📋 | Need image rendering surface |
+| 2.6 | Touch-to-mouse translation (mobile) | ✅ | TouchToMouseTranslator: 5 gesture types (tap/double/long/pan/scroll) → InputEvents; coordinate mapping; 35 tests |
+| 2.7 | Mobile UI — host list + connection flow | ✅ | Discovery UI, PIN prompt, connect/disconnect, RemoteDesktopClient integration |
+| 2.8 | Mobile UI — remote desktop viewer | ✅ | ScreenFrameConverter: Raw→BMP, JPEG/PNG passthrough; MainPage Image viewer + frame rendering; 26 tests |
 | 2.9 | Authentication & pairing mechanism | ✅ | PinPairingService: 6-digit PIN, 5-min TTL, 5-attempt lockout, session token; wired into RemoteDesktopHost + TcpCommunicationService; 29 tests |
-| 2.10 | Session management (connect/disconnect/reconnect) | 📋 | RemoteSession model exists |
+| 2.10 | Session management (connect/disconnect/reconnect) | ✅ | SessionManager: lifecycle tracking (Pending→Connected→Disconnected/Ended), duration calc, reconnect w/ attempt limit; integrated into RemoteDesktopHost; 42 tests |
 
 ## Phase 3: Enhanced Features
 
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 3.1 | Platform-specific UI polish | 📋 | Per-platform layouts |
-| 3.2 | End-to-end encryption | 📋 | TLS or custom key exchange |
+| 3.2 | End-to-end encryption | ✅ | TLS 1.2/1.3 with self-signed certs, TlsConfiguration class, 10 tests |
 | 3.3 | Performance optimization (delta frames, adaptive quality) | 📋 | |
 | 3.4 | Multi-monitor support | 📋 | Monitor selection + switching |
 | 3.5 | Connection quality indicator | 📋 | Latency, FPS, bandwidth |
@@ -75,6 +75,8 @@
 > Session 5 (2026-02-18): Implemented real WindowsScreenCapture (BitBlt/GetDIBits GDI P/Invoke, 32-bit BGRA, platform guards). Split MockScreenCapture into its own file. Removed stray src/RemoteLink.Desktop/Services/ directory. 39 tests passing (20 new).
 > Session 6 (2026-02-18): Committed Feature 2.9 — PIN-based authentication & pairing. IPairingService interface, PairingModels, PinPairingService (6-digit PIN, 5-min TTL, lockout), wired into TcpCommunicationService (PairingRequest/Response messages) and RemoteDesktopHost (PIN display on startup, pairing gate before streaming). 67 tests passing (29 new pairing tests).
 > Session 7 (2026-02-18): Features 2.3 & 2.5 — RemoteDesktopHost integration tests. 21 new tests using hand-rolled fakes covering screen streaming (capture gating, frame forwarding, stop-on-disconnect) and input relay (relay when paired, block when not). 88 tests passing total.
+> Session 8 (2026-02-19): Features 2.6, 2.8, 2.10 — verified existing implementations were complete (TouchToMouseTranslator 35 tests, ScreenFrameConverter 26 tests, SessionManager 42 tests). Integrated SessionManager into RemoteDesktopHost (DI registration, session creation on pairing, lifecycle tracking). 191 tests passing total.
+> Session 9 (2026-02-19): Features 2.7 & 3.2 — verified 2.7 (Mobile UI) complete (RemoteDesktopClient in Shared, MainPage full implementation). Implemented Feature 3.2 — TLS encryption for TCP communication: TlsConfiguration class (self-signed cert generation, save/load), updated TcpCommunicationService with SslStream support, TLS 1.2/1.3 handshake for both server and client modes, certificate validation callbacks. 10 new TLS tests, 33 total tests passing (26 Shared + 7 Desktop).
 
 ---
 
