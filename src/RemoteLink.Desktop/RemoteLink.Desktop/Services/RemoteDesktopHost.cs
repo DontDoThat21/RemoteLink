@@ -24,12 +24,18 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IInputHandler _inputHandler;
     private readonly ICommunicationService _communication;
     private readonly IPairingService _pairing;
+    private readonly ISessionManager _sessionManager;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
     /// Reset to false when the client disconnects.
     /// </summary>
     private volatile bool _clientPaired;
+
+    /// <summary>
+    /// The active session for the currently connected/paired client, or null when no client is connected.
+    /// </summary>
+    private RemoteSession? _currentSession;
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
@@ -40,7 +46,8 @@ public class RemoteDesktopHost : BackgroundService
         IScreenCapture screenCapture,
         IInputHandler inputHandler,
         ICommunicationService communication,
-        IPairingService pairing)
+        IPairingService pairing,
+        ISessionManager sessionManager)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -48,6 +55,7 @@ public class RemoteDesktopHost : BackgroundService
         _inputHandler = inputHandler;
         _communication = communication;
         _pairing = pairing;
+        _sessionManager = sessionManager;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -135,7 +143,19 @@ public class RemoteDesktopHost : BackgroundService
                 if (valid)
                 {
                     _clientPaired = true;
-                    var token = Guid.NewGuid().ToString("N");
+
+                    // Create and track session
+                    _currentSession = _sessionManager.CreateSession(
+                        hostId: Environment.MachineName,
+                        hostDeviceName: Environment.MachineName,
+                        clientId: request.ClientDeviceId,
+                        clientDeviceName: request.ClientDeviceName);
+
+                    var token = _currentSession.SessionId;
+
+                    // Transition session to Connected state
+                    _sessionManager.OnConnected(_currentSession.SessionId);
+
                     var response = new PairingResponse
                     {
                         Success = true,
@@ -145,9 +165,10 @@ public class RemoteDesktopHost : BackgroundService
                     await _communication.SendPairingResponseAsync(response);
 
                     _logger.LogInformation(
-                        "Client '{Name}' ({Id}) paired successfully.",
+                        "Client '{Name}' ({Id}) paired successfully. Session {SessionId} created.",
                         request.ClientDeviceName,
-                        request.ClientDeviceId);
+                        request.ClientDeviceId,
+                        _currentSession.SessionId[..8]);
 
                     // Client is now trusted — start screen capture and streaming
                     _screenCapture.FrameCaptured += OnFrameCaptured;
@@ -202,6 +223,17 @@ public class RemoteDesktopHost : BackgroundService
             _logger.LogInformation("Client disconnected — stopping screen capture.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
+
+            // End the current session if one exists
+            if (_currentSession != null)
+            {
+                _sessionManager.EndSession(_currentSession.SessionId);
+                _logger.LogInformation(
+                    "Session {SessionId} ended. Duration: {Duration:mm\\:ss}",
+                    _currentSession.SessionId[..8],
+                    _currentSession.Duration);
+                _currentSession = null;
+            }
 
             // Refresh the PIN ready for the next connection attempt
             var newPin = _pairing.GeneratePin();

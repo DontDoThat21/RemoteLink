@@ -205,6 +205,120 @@ internal sealed class FakeNetworkDiscovery : INetworkDiscovery
         => Task.FromResult(Enumerable.Empty<DeviceInfo>());
 }
 
+/// <summary>In-memory fake for <see cref="ISessionManager"/> used in host tests.</summary>
+internal sealed class FakeSessionManager : ISessionManager
+{
+    private readonly List<RemoteSession> _sessions = new();
+    private readonly object _lock = new();
+
+    public List<RemoteSession> CreatedSessions
+    {
+        get { lock (_lock) { return new List<RemoteSession>(_sessions); } }
+    }
+
+    // ── ISessionManager events ────────────────────────────────────────────────
+    public event EventHandler<RemoteSession>? SessionCreated;
+    public event EventHandler<RemoteSession>? SessionConnected;
+    public event EventHandler<RemoteSession>? SessionDisconnected;
+    public event EventHandler<RemoteSession>? SessionEnded;
+    public event EventHandler<RemoteSession>? ReconnectFailed;
+
+    // ── ISessionManager methods ───────────────────────────────────────────────
+    public RemoteSession CreateSession(
+        string hostId, string hostDeviceName,
+        string clientId, string clientDeviceName)
+    {
+        var session = new RemoteSession
+        {
+            SessionId = Guid.NewGuid().ToString(),
+            HostId = hostId,
+            HostDeviceName = hostDeviceName,
+            ClientId = clientId,
+            ClientDeviceName = clientDeviceName,
+            CreatedAt = DateTime.UtcNow,
+            Status = SessionStatus.Pending
+        };
+        lock (_lock) { _sessions.Add(session); }
+        SessionCreated?.Invoke(this, session);
+        return session;
+    }
+
+    public RemoteSession? GetSession(string sessionId)
+    {
+        lock (_lock) { return _sessions.FirstOrDefault(s => s.SessionId == sessionId); }
+    }
+
+    public IReadOnlyList<RemoteSession> GetAllSessions()
+    {
+        lock (_lock) { return new List<RemoteSession>(_sessions).AsReadOnly(); }
+    }
+
+    public RemoteSession? GetActiveSession()
+    {
+        lock (_lock) { return _sessions.FirstOrDefault(s => s.Status == SessionStatus.Connected); }
+    }
+
+    public void OnConnected(string sessionId)
+    {
+        RemoteSession? session;
+        lock (_lock)
+        {
+            session = GetSession(sessionId);
+            if (session != null)
+            {
+                session.Status = SessionStatus.Connected;
+                session.LastConnectedAt = DateTime.UtcNow;
+                session.ReconnectAttempts = 0;
+            }
+        }
+        if (session != null) SessionConnected?.Invoke(this, session);
+    }
+
+    public void OnDisconnected(string sessionId, string? reason = null)
+    {
+        RemoteSession? session;
+        lock (_lock)
+        {
+            session = GetSession(sessionId);
+            if (session != null)
+            {
+                session.Status = SessionStatus.Disconnected;
+                session.DisconnectedAt = DateTime.UtcNow;
+                session.DisconnectReason = reason;
+            }
+        }
+        if (session != null) SessionDisconnected?.Invoke(this, session);
+    }
+
+    public bool TryReconnect(string sessionId)
+    {
+        RemoteSession? session;
+        bool accepted;
+        lock (_lock)
+        {
+            session = GetSession(sessionId);
+            if (session == null) return false;
+
+            session.ReconnectAttempts++;
+            accepted = session.ReconnectAttempts <= session.MaxReconnectAttempts;
+            session.Status = accepted ? SessionStatus.Pending : SessionStatus.Error;
+        }
+        if (!accepted && session != null) ReconnectFailed?.Invoke(this, session);
+        return accepted;
+    }
+
+    public void EndSession(string sessionId)
+    {
+        RemoteSession? session;
+        lock (_lock)
+        {
+            session = GetSession(sessionId);
+            if (session != null) session.Status = SessionStatus.Ended;
+        }
+        if (session != null) SessionEnded?.Invoke(this, session);
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -221,6 +335,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeInputHandler _input = new();
     private readonly FakePairingService _pairing = new();
     private readonly FakeNetworkDiscovery _discovery = new();
+    private readonly FakeSessionManager _sessionManager = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -233,7 +348,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _screen,
             _input,
             _comm,
-            _pairing);
+            _pairing,
+            _sessionManager);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>
