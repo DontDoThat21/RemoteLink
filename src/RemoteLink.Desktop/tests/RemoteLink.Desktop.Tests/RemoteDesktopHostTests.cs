@@ -51,6 +51,10 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<PairingResponse>? PairingResponseReceived;
     public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
     public event EventHandler<ClipboardData>? ClipboardDataReceived;
+    public event EventHandler<FileTransferRequest>? FileTransferRequestReceived;
+    public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
+    public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
+    public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
 
     // ── ICommunicationService methods ─────────────────────────────────────────
     public Task StartAsync(int port) => Task.CompletedTask;
@@ -89,6 +93,11 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
         lock (_lock) { _sentClipboardData.Add(clipboardData); }
         return Task.CompletedTask;
     }
+
+    public Task SendFileTransferRequestAsync(FileTransferRequest request) => Task.CompletedTask;
+    public Task SendFileTransferResponseAsync(FileTransferResponse response) => Task.CompletedTask;
+    public Task SendFileTransferChunkAsync(FileTransferChunk chunk) => Task.CompletedTask;
+    public Task SendFileTransferCompleteAsync(FileTransferComplete complete) => Task.CompletedTask;
 
     // ── Test helpers — raise events on behalf of a remote client ─────────────
 

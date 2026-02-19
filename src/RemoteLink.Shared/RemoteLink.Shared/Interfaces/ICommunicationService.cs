@@ -102,4 +102,46 @@ public interface ICommunicationService
     /// Event fired when clipboard data is received from the remote peer.
     /// </summary>
     event EventHandler<ClipboardData> ClipboardDataReceived;
+
+    // ── File Transfer ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a file transfer request to the remote peer.
+    /// </summary>
+    Task SendFileTransferRequestAsync(FileTransferRequest request);
+
+    /// <summary>
+    /// Send a file transfer response to the remote peer.
+    /// </summary>
+    Task SendFileTransferResponseAsync(FileTransferResponse response);
+
+    /// <summary>
+    /// Send a file data chunk to the remote peer.
+    /// </summary>
+    Task SendFileTransferChunkAsync(FileTransferChunk chunk);
+
+    /// <summary>
+    /// Send a file transfer completion notification.
+    /// </summary>
+    Task SendFileTransferCompleteAsync(FileTransferComplete complete);
+
+    /// <summary>
+    /// Event fired when a file transfer request is received.
+    /// </summary>
+    event EventHandler<FileTransferRequest> FileTransferRequestReceived;
+
+    /// <summary>
+    /// Event fired when a file transfer response is received.
+    /// </summary>
+    event EventHandler<FileTransferResponse> FileTransferResponseReceived;
+
+    /// <summary>
+    /// Event fired when a file transfer chunk is received.
+    /// </summary>
+    event EventHandler<FileTransferChunk> FileTransferChunkReceived;
+
+    /// <summary>
+    /// Event fired when a file transfer completion is received.
+    /// </summary>
+    event EventHandler<FileTransferComplete> FileTransferCompleteReceived;
 }

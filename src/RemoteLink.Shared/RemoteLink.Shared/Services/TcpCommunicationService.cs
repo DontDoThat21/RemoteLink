@@ -37,6 +37,10 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypePairingResponse = "PairingResponse";
     private const string MsgTypeConnectionQuality = "ConnectionQuality";
     private const string MsgTypeClipboard = "ClipboardData";
+    private const string MsgTypeFileTransferRequest = "FileTransferRequest";
+    private const string MsgTypeFileTransferResponse = "FileTransferResponse";
+    private const string MsgTypeFileTransferChunk = "FileTransferChunk";
+    private const string MsgTypeFileTransferComplete = "FileTransferComplete";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -89,6 +93,18 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<ClipboardData>? ClipboardDataReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferRequest>? FileTransferRequestReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -313,6 +329,50 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendFileTransferRequestAsync(FileTransferRequest request)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferRequest,
+            Payload = Encode(request)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferResponseAsync(FileTransferResponse response)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferResponse,
+            Payload = Encode(response)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferChunkAsync(FileTransferChunk chunk)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferChunk,
+            Payload = Encode(chunk)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendFileTransferCompleteAsync(FileTransferComplete complete)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeFileTransferComplete,
+            Payload = Encode(complete)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -420,6 +480,26 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeClipboard:
                     var cd = Decode<ClipboardData>(msg.Payload);
                     if (cd != null) ClipboardDataReceived?.Invoke(this, cd);
+                    break;
+
+                case MsgTypeFileTransferRequest:
+                    var ftr = Decode<FileTransferRequest>(msg.Payload);
+                    if (ftr != null) FileTransferRequestReceived?.Invoke(this, ftr);
+                    break;
+
+                case MsgTypeFileTransferResponse:
+                    var ftresp = Decode<FileTransferResponse>(msg.Payload);
+                    if (ftresp != null) FileTransferResponseReceived?.Invoke(this, ftresp);
+                    break;
+
+                case MsgTypeFileTransferChunk:
+                    var ftc = Decode<FileTransferChunk>(msg.Payload);
+                    if (ftc != null) FileTransferChunkReceived?.Invoke(this, ftc);
+                    break;
+
+                case MsgTypeFileTransferComplete:
+                    var ftcomplete = Decode<FileTransferComplete>(msg.Payload);
+                    if (ftcomplete != null) FileTransferCompleteReceived?.Invoke(this, ftcomplete);
                     break;
 
                 default:
