@@ -60,6 +60,7 @@ class Program
         builder.Services.AddSingleton<ISessionManager, SessionManager>();
         builder.Services.AddSingleton<IDeltaFrameEncoder, DeltaFrameEncoder>();
         builder.Services.AddSingleton<IPerformanceMonitor, PerformanceMonitor>();
+        builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
             var localDevice = new DeviceInfo

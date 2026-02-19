@@ -488,6 +488,7 @@ public class FileTransferServiceTests
         public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
         public event EventHandler<FileTransferChunk>? FileTransferChunkReceived;
         public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
+        public event EventHandler<AudioData>? AudioDataReceived;
 
         public Task StartAsync(int port) => Task.CompletedTask;
         public Task StopAsync() => Task.CompletedTask;
@@ -499,6 +500,7 @@ public class FileTransferServiceTests
         public Task SendPairingResponseAsync(PairingResponse response) => Task.CompletedTask;
         public Task SendConnectionQualityAsync(ConnectionQuality quality) => Task.CompletedTask;
         public Task SendClipboardDataAsync(ClipboardData clipboardData) => Task.CompletedTask;
+        public Task SendAudioDataAsync(AudioData audioData) => Task.CompletedTask;
 
         public Task SendFileTransferRequestAsync(FileTransferRequest request)
         {
