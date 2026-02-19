@@ -62,6 +62,13 @@ class Program
         builder.Services.AddSingleton<IPerformanceMonitor, PerformanceMonitor>();
         builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
         builder.Services.AddSingleton<IMessagingService, MessagingService>();
+        
+        // Use Windows print service on Windows; fall back to mock on Linux/macOS.
+        if (OperatingSystem.IsWindows())
+            builder.Services.AddSingleton<IPrintService, WindowsPrintService>();
+        else
+            builder.Services.AddSingleton<IPrintService, MockPrintService>();
+        
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
             var localDevice = new DeviceInfo

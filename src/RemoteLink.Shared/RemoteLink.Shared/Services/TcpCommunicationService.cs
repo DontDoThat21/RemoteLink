@@ -44,6 +44,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypeAudio = "AudioData";
     private const string MsgTypeChatMessage = "ChatMessage";
     private const string MsgTypeMessageRead = "MessageRead";
+    private const string MsgTypePrintJob = "PrintJob";
+    private const string MsgTypePrintJobResponse = "PrintJobResponse";
+    private const string MsgTypePrintJobStatus = "PrintJobStatus";
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -117,6 +120,15 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<string>? MessageReadReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PrintJob>? PrintJobReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PrintJobResponse>? PrintJobResponseReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<PrintJobStatus>? PrintJobStatusReceived;
 
     // ── Server / host mode ───────────────────────────────────────────────────
 
@@ -418,6 +430,39 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await SendMessageAsync(msg);
     }
 
+    /// <inheritdoc/>
+    public async Task SendPrintJobAsync(PrintJob printJob)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePrintJob,
+            Payload = Encode(printJob)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendPrintJobResponseAsync(PrintJobResponse response)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePrintJobResponse,
+            Payload = Encode(response)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendPrintJobStatusAsync(PrintJobStatus status)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypePrintJobStatus,
+            Payload = Encode(status)
+        };
+        await SendMessageAsync(msg);
+    }
+
     // ── Stop ─────────────────────────────────────────────────────────────────
 
     /// <inheritdoc/>
@@ -560,6 +605,21 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeMessageRead:
                     var mr = Decode<string>(msg.Payload);
                     if (mr != null) MessageReadReceived?.Invoke(this, mr);
+                    break;
+
+                case MsgTypePrintJob:
+                    var pj = Decode<PrintJob>(msg.Payload);
+                    if (pj != null) PrintJobReceived?.Invoke(this, pj);
+                    break;
+
+                case MsgTypePrintJobResponse:
+                    var pjr = Decode<PrintJobResponse>(msg.Payload);
+                    if (pjr != null) PrintJobResponseReceived?.Invoke(this, pjr);
+                    break;
+
+                case MsgTypePrintJobStatus:
+                    var pjs = Decode<PrintJobStatus>(msg.Payload);
+                    if (pjs != null) PrintJobStatusReceived?.Invoke(this, pjs);
                     break;
 
                 default:

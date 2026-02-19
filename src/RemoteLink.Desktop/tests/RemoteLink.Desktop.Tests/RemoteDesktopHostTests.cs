@@ -68,6 +68,9 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<FileTransferComplete>? FileTransferCompleteReceived;
     public event EventHandler<ChatMessage>? ChatMessageReceived;
     public event EventHandler<string>? MessageReadReceived;
+    public event EventHandler<PrintJob>? PrintJobReceived;
+    public event EventHandler<PrintJobResponse>? PrintJobResponseReceived;
+    public event EventHandler<PrintJobStatus>? PrintJobStatusReceived;
 
     // ── ICommunicationService methods ─────────────────────────────────────────
     public Task StartAsync(int port) => Task.CompletedTask;
@@ -125,6 +128,10 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
         lock (_lock) { _sentMessageReadAcks.Add(messageId); }
         return Task.CompletedTask;
     }
+
+    public Task SendPrintJobAsync(PrintJob printJob) => Task.CompletedTask;
+    public Task SendPrintJobResponseAsync(PrintJobResponse response) => Task.CompletedTask;
+    public Task SendPrintJobStatusAsync(PrintJobStatus status) => Task.CompletedTask;
 
     // ── Test helpers — raise events on behalf of a remote client ─────────────
 

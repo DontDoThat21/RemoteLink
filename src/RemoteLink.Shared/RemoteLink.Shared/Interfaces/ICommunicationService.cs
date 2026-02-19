@@ -178,4 +178,36 @@ public interface ICommunicationService
     /// Event fired when a message read acknowledgment is received from the remote peer.
     /// </summary>
     event EventHandler<string> MessageReadReceived;
+
+    // ── Remote Printing ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a print job to the remote peer.
+    /// </summary>
+    Task SendPrintJobAsync(PrintJob printJob);
+
+    /// <summary>
+    /// Send a print job response to the remote peer.
+    /// </summary>
+    Task SendPrintJobResponseAsync(PrintJobResponse response);
+
+    /// <summary>
+    /// Send a print job status update to the remote peer.
+    /// </summary>
+    Task SendPrintJobStatusAsync(PrintJobStatus status);
+
+    /// <summary>
+    /// Event fired when a print job is received from the remote peer.
+    /// </summary>
+    event EventHandler<PrintJob> PrintJobReceived;
+
+    /// <summary>
+    /// Event fired when a print job response is received from the remote peer.
+    /// </summary>
+    event EventHandler<PrintJobResponse> PrintJobResponseReceived;
+
+    /// <summary>
+    /// Event fired when a print job status update is received from the remote peer.
+    /// </summary>
+    event EventHandler<PrintJobStatus> PrintJobStatusReceived;
 }
