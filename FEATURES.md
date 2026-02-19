@@ -63,12 +63,104 @@
 | 4.6 | Chat/messaging between devices | ✅ | In-session text chat |
 | 4.7 | Remote printing | ✅ | PrintJob/PrintJobResponse/PrintJobStatus models, IPrintService interface, WindowsPrintService (System.Drawing.Printing), MockPrintService, image (PNG/JPEG/BMP) + text printing, status tracking, 30 tests |
 
+## Phase 5: Desktop GUI Application (TeamViewer Parity — Host UI)
+
+> **Critical gap:** The Desktop host is currently a headless console/service app with zero GUI.
+> TeamViewer's desktop app surfaces a rich windowed UI. This phase converts the
+> Desktop project to a .NET MAUI WinUI3 app (or adds a companion MAUI Desktop project)
+> so the host has a proper window on Windows (and optionally macOS/Linux).
+
+| # | Feature | Status | Notes |
+|---|---------|--------|-------|
+| 5.1 | Desktop host windowed UI shell (MAUI WinUI3) | 📋 | Replace console `Exe` with MAUI Desktop app; keep background service for headless/service mode |
+| 5.2 | Main dashboard — "Your ID" and PIN display | 📋 | TeamViewer-style panel showing device ID + current PIN prominently |
+| 5.3 | Partner connection panel (enter remote ID + PIN) | 📋 | Allow desktop-to-desktop connections, not just mobile→desktop |
+| 5.4 | System tray / notification area icon | 📋 | Minimize to tray, quick-access context menu (status, connections, quit) |
+| 5.5 | Connection status indicator on desktop | 📋 | Show active sessions, connected clients, bandwidth, latency |
+| 5.6 | Settings / preferences window | 📋 | General, security, network, display, audio, recording, startup options |
+| 5.7 | Session toolbar overlay (during active connection) | 📋 | Actions bar: file transfer, chat, recording, quality, monitors, disconnect |
+| 5.8 | Desktop remote viewer window | 📋 | Full remote desktop viewer when connecting *from* desktop to another host |
+| 5.9 | Dark / light theme support (desktop) | 📋 | Follow OS theme + manual toggle |
+| 5.10 | Desktop installer / MSIX package | 📋 | Proper install experience, start-menu shortcut, auto-start option |
+
+## Phase 6: Mobile UI Enhancements (TeamViewer Parity — Client UI)
+
+> The Mobile MAUI app has a basic discovery + viewer page. TeamViewer's mobile
+> app has a polished multi-page experience with navigation, settings, and
+> feature-specific screens.
+
+| # | Feature | Status | Notes |
+|---|---------|--------|-------|
+| 6.1 | Tab / flyout navigation shell | 📋 | Bottom tabs or hamburger: Connect, Devices, Files, Chat, Settings |
+| 6.2 | Connection page — enter ID + PIN manually | 📋 | Numeric entry with "Connect" button (not only auto-discovery) |
+| 6.3 | QR code scanner for quick connect | 📋 | Scan QR displayed on desktop dashboard to auto-fill ID + PIN |
+| 6.4 | Address book / saved devices page | 📋 | Persist known devices with friendly names, last-connected timestamp |
+| 6.5 | Recent connections history page | 📋 | Scrollable list of past sessions with date, duration, device name |
+| 6.6 | File transfer UI (browse, send, receive, progress) | 📋 | Backend exists (4.1); needs mobile file picker + transfer progress page |
+| 6.7 | Chat UI overlay / page | 📋 | Backend exists (4.6); needs chat bubble view + unread badge |
+| 6.8 | Session toolbar (floating action buttons) | 📋 | Keyboard toggle, special keys bar, monitor selector, quality picker, disconnect |
+| 6.9 | On-screen virtual keyboard & special keys | 📋 | Ctrl, Alt, Shift, Win, function keys, arrow keys, Esc, Tab overlay |
+| 6.10 | Multi-monitor selector UI | 📋 | Backend exists (3.4); needs picker/carousel to switch monitors |
+| 6.11 | Connection quality badge / overlay | 📋 | Backend exists (3.5); needs real-time badge (Excellent/Good/Fair/Poor) |
+| 6.12 | Settings page (display quality, input, notifications) | 📋 | Adaptive quality, image format, gesture sensitivity, audio toggle |
+| 6.13 | Dark / light theme support (mobile) | 📋 | Follow OS theme + manual toggle |
+| 6.14 | Biometric / PIN app lock | 📋 | Fingerprint or face ID to unlock the app (secure device list) |
+| 6.15 | Push notifications for incoming connection requests | 📋 | Alert when another device wants to connect |
+
+## Phase 7: Networking & Connectivity (TeamViewer Parity)
+
+> RemoteLink works only on local networks. TeamViewer works over the internet
+> via relay servers and NAT traversal.
+
+| # | Feature | Status | Notes |
+|---|---------|--------|-------|
+| 7.1 | NAT traversal (STUN/TURN/ICE) | 📋 | Peer-to-peer connections through firewalls and routers |
+| 7.2 | Relay server for fallback connectivity | 📋 | Cloud relay when P2P hole-punching fails |
+| 7.3 | Internet-based device ID system | 📋 | Globally unique numeric IDs (like TeamViewer's 9-digit IDs) |
+| 7.4 | Dynamic DNS / signaling server | 📋 | Coordinate connections between devices not on the same LAN |
+| 7.5 | VPN / secure tunnel mode | 📋 | Encrypted tunnel for all traffic between paired devices |
+| 7.6 | Proxy support (HTTP/SOCKS5) | 📋 | Connect through corporate proxies |
+| 7.7 | Bandwidth throttling / adaptive bitrate | 📋 | Graceful degradation on slow connections (partially in 3.3) |
+
+## Phase 8: Security & Administration (TeamViewer Parity)
+
+| # | Feature | Status | Notes |
+|---|---------|--------|-------|
+| 8.1 | User account system (registration, login) | 📋 | Optional account for address book sync, device management |
+| 8.2 | Two-factor authentication (TOTP) | 📋 | App-based 2FA for account and unattended access |
+| 8.3 | Trusted devices allow-list | 📋 | Whitelist specific devices that can connect without PIN |
+| 8.4 | Block & deny list | 📋 | Reject connections from specific IDs |
+| 8.5 | Granular permission controls per session | 📋 | View-only, no file transfer, no clipboard, etc. |
+| 8.6 | Connection audit log / history | 📋 | Timestamped log: who connected, when, duration, actions |
+| 8.7 | Session timeout & idle disconnect | 📋 | Auto-disconnect after configurable idle period |
+| 8.8 | Remote device lock on disconnect | 📋 | Lock the remote workstation when session ends |
+
+## Phase 9: Collaboration & Productivity (TeamViewer Parity)
+
+| # | Feature | Status | Notes |
+|---|---------|--------|-------|
+| 9.1 | Meeting / presentation mode | 📋 | Share screen to multiple viewers (read-only broadcast) |
+| 9.2 | Whiteboard / screen annotation | 📋 | Draw arrows, rectangles, text on shared screen in real-time |
+| 9.3 | Remote reboot & auto-reconnect | 📋 | Reboot remote machine and automatically re-establish session |
+| 9.4 | Remote system information panel | 📋 | View remote OS, CPU, RAM, disk, network info without full desktop |
+| 9.5 | Remote command / script execution | 📋 | Run CLI commands or scripts on remote host from client |
+| 9.6 | Multi-session support | 📋 | Connect to multiple hosts simultaneously (tabbed sessions) |
+| 9.7 | Drag-and-drop file transfer | 📋 | Drag files from local file explorer into remote viewer to transfer |
+| 9.8 | Screenshot capture (single frame save) | 📋 | Save current remote frame to local gallery / photos |
+| 9.9 | Auto-update mechanism | 📋 | Check for new versions and self-update (desktop + mobile stores) |
+
+---
+
 ## Known Issues
 
 | Issue | Severity | File |
 |-------|----------|------|
+| **Desktop host has no GUI — runs as console/service only** | 🔴 Critical UX gap | `src/RemoteLink.Desktop/Program.cs` |
 | MockScreenCapture generates random bytes instead of real frames | 🟡 Expected (mock) | `src/RemoteLink.Desktop/.../Services/WindowsScreenCapture.cs` |
 | RemoteDesktopClient passes `null!` for ILogger in MainPage | 🟡 Runtime risk | `src/RemoteLink.Mobile/.../MainPage.cs` |
+| Mobile app is a single page — no navigation shell, settings, or feature pages | 🟠 Major UX gap | `src/RemoteLink.Mobile/.../MainPage.cs` |
+| File transfer, chat, printing have backends but zero UI | 🟠 Major UX gap | Multiple shared services |
+| Local network only — no internet/NAT traversal connectivity | 🟠 Feature gap vs TeamViewer | Network layer |
 
 > Build-breaking compile errors from session 1 were resolved (duplicate WindowsInputHandler code, MainPage issues).
 > Session 4 (2026-02-18): Implemented real WindowsInputHandler (user32.dll SendInput P/Invoke), split MockInputHandler into its own file, fixed test project references, 17 tests passing.
