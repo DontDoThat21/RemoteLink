@@ -25,6 +25,8 @@ public class RemoteDesktopHost : BackgroundService
     private readonly ICommunicationService _communication;
     private readonly IPairingService _pairing;
     private readonly ISessionManager _sessionManager;
+    private readonly IDeltaFrameEncoder _deltaEncoder;
+    private readonly IPerformanceMonitor _perfMonitor;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -47,7 +49,9 @@ public class RemoteDesktopHost : BackgroundService
         IInputHandler inputHandler,
         ICommunicationService communication,
         IPairingService pairing,
-        ISessionManager sessionManager)
+        ISessionManager sessionManager,
+        IDeltaFrameEncoder deltaEncoder,
+        IPerformanceMonitor perfMonitor)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -56,6 +60,8 @@ public class RemoteDesktopHost : BackgroundService
         _communication = communication;
         _pairing = pairing;
         _sessionManager = sessionManager;
+        _deltaEncoder = deltaEncoder;
+        _perfMonitor = perfMonitor;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -224,6 +230,10 @@ public class RemoteDesktopHost : BackgroundService
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
 
+            // Reset performance optimization state
+            _deltaEncoder.Reset();
+            _perfMonitor.Reset();
+
             // End the current session if one exists
             if (_currentSession != null)
             {
@@ -245,6 +255,7 @@ public class RemoteDesktopHost : BackgroundService
     /// <summary>
     /// Called when a new screen frame is ready. Sends it to the connected client.
     /// Only fires when a client has successfully paired.
+    /// Applies delta encoding and adaptive quality based on connection performance.
     /// </summary>
     private void OnFrameCaptured(object? sender, ScreenData screenData)
     {
@@ -254,7 +265,33 @@ public class RemoteDesktopHost : BackgroundService
         {
             try
             {
-                await _communication.SendScreenDataAsync(screenData);
+                var sendStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                // Apply adaptive quality
+                int recommendedQuality = _perfMonitor.GetRecommendedQuality();
+                _screenCapture.SetQuality(recommendedQuality);
+
+                // Apply delta encoding
+                var (encodedFrame, isDelta) = await _deltaEncoder.EncodeFrameAsync(screenData);
+
+                // Send the optimized frame
+                await _communication.SendScreenDataAsync(encodedFrame);
+
+                // Record performance metrics
+                long sendEndTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                long latency = sendEndTime - sendStartTime;
+                _perfMonitor.RecordFrameSent(encodedFrame.ImageData.Length, latency);
+
+                if (isDelta)
+                {
+                    _logger.LogTrace(
+                        "Sent delta frame {FrameId} ({Size} bytes, {Regions} regions, quality {Quality}, latency {Latency}ms)",
+                        encodedFrame.FrameId[..8],
+                        encodedFrame.ImageData.Length,
+                        encodedFrame.DeltaRegions?.Count ?? 0,
+                        recommendedQuality,
+                        latency);
+                }
             }
             catch (Exception ex)
             {

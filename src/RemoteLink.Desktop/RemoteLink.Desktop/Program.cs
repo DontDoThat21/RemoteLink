@@ -34,6 +34,8 @@ class Program
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();
+        builder.Services.AddSingleton<IDeltaFrameEncoder, DeltaFrameEncoder>();
+        builder.Services.AddSingleton<IPerformanceMonitor, PerformanceMonitor>();
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
             var localDevice = new DeviceInfo

@@ -319,6 +319,60 @@ internal sealed class FakeSessionManager : ISessionManager
     }
 }
 
+/// <summary>In-memory fake for <see cref="IDeltaFrameEncoder"/> used in host tests.</summary>
+internal sealed class FakeDeltaFrameEncoder : IDeltaFrameEncoder
+{
+    public bool ResetCalled { get; private set; }
+
+    public Task<(ScreenData EncodedFrame, bool IsDelta)> EncodeFrameAsync(ScreenData currentFrame)
+    {
+        // Just pass through the frame unmodified (no actual delta encoding in tests)
+        return Task.FromResult((currentFrame, false));
+    }
+
+    public void Reset()
+    {
+        ResetCalled = true;
+    }
+
+    public void SetDeltaThreshold(int percentageThreshold)
+    {
+        // No-op in fake
+    }
+}
+
+/// <summary>In-memory fake for <see cref="IPerformanceMonitor"/> used in host tests.</summary>
+internal sealed class FakePerformanceMonitor : IPerformanceMonitor
+{
+    private int _recommendedQuality = 75;
+    public bool ResetCalled { get; private set; }
+    public int RecordFrameSentCallCount { get; private set; }
+
+    public void RecordFrameSent(int frameBytes, long latencyMs)
+    {
+        RecordFrameSentCallCount++;
+    }
+
+    public int GetRecommendedQuality() => _recommendedQuality;
+
+    public double GetCurrentFps() => 10.0;
+
+    public long GetCurrentBandwidth() => 1_000_000;
+
+    public long GetAverageLatency() => 20;
+
+    public void Reset()
+    {
+        ResetCalled = true;
+        RecordFrameSentCallCount = 0;
+    }
+
+    public void SetRecommendedQuality(int quality)
+    {
+        _recommendedQuality = quality;
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -336,6 +390,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakePairingService _pairing = new();
     private readonly FakeNetworkDiscovery _discovery = new();
     private readonly FakeSessionManager _sessionManager = new();
+    private readonly FakeDeltaFrameEncoder _deltaEncoder = new();
+    private readonly FakePerformanceMonitor _perfMonitor = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -349,7 +405,9 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _input,
             _comm,
             _pairing,
-            _sessionManager);
+            _sessionManager,
+            _deltaEncoder,
+            _perfMonitor);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>
