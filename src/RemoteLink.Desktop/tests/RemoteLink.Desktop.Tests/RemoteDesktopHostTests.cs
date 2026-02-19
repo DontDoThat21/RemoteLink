@@ -117,6 +117,27 @@ internal sealed class FakeScreenCapture : IScreenCapture
 
     public void SetQuality(int quality) { }
 
+    public Task<IReadOnlyList<MonitorInfo>> GetMonitorsAsync()
+    {
+        var monitor = new MonitorInfo
+        {
+            Id = "fake-monitor",
+            Name = "Fake Monitor",
+            IsPrimary = true,
+            Width = 1920,
+            Height = 1080,
+            Left = 0,
+            Top = 0
+        };
+        return Task.FromResult<IReadOnlyList<MonitorInfo>>(new[] { monitor });
+    }
+
+    public Task<bool> SelectMonitorAsync(string monitorId)
+        => Task.FromResult(true);
+
+    public string? GetSelectedMonitorId()
+        => null;
+
     /// <summary>Manually fire a <see cref="FrameCaptured"/> event.</summary>
     public void RaiseFrameCaptured(ScreenData data)
         => FrameCaptured?.Invoke(this, data);
