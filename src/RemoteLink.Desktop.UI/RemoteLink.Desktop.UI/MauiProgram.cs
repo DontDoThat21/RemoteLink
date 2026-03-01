@@ -59,6 +59,15 @@ public static class MauiProgram
         // The background host service that manages the remote desktop server
         builder.Services.AddSingleton<RemoteDesktopHost>();
 
+        // Remote desktop client (for outgoing connections to other hosts)
+        // Uses its own TcpCommunicationService instances (separate from the host listener)
+        builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
+        {
+            var logger = provider.GetRequiredService<ILogger<RemoteDesktopClient>>();
+            var discovery = provider.GetRequiredService<INetworkDiscovery>();
+            return new RemoteDesktopClient(logger, discovery);
+        });
+
         // Pages
         builder.Services.AddSingleton<MainPage>();
 

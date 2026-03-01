@@ -18,9 +18,9 @@ public partial class App : Application
         });
 
         window.Title = "RemoteLink Desktop";
-        window.Width = 520;
+        window.Width = 780;
         window.Height = 680;
-        window.MinimumWidth = 420;
+        window.MinimumWidth = 640;
         window.MinimumHeight = 560;
 
         return window;

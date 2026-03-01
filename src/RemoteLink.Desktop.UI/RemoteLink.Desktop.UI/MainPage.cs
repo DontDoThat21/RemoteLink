@@ -6,6 +6,9 @@ using Microsoft.Extensions.Logging;
 using RemoteLink.Desktop.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Services;
+using DeviceInfo = RemoteLink.Shared.Models.DeviceInfo;
+using DeviceType = RemoteLink.Shared.Models.DeviceType;
 
 namespace RemoteLink.Desktop.UI;
 
@@ -18,11 +21,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly INetworkDiscovery _networkDiscovery;
     private readonly IInputHandler _inputHandler;
     private readonly IPerformanceMonitor _perfMonitor;
+    private readonly RemoteDesktopClient _client;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
 
-    // UI state
+    // UI state — host side
     private string _currentPin = "------";
     private string _statusText = "Stopped";
     private Color _statusColor = Colors.Gray;
@@ -31,7 +35,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private bool _pinVisible;
     private string _deviceNumericId;
 
-    // UI element references
+    // UI state — client (partner connection) side
+    private bool _isConnecting;
+    private readonly List<DeviceInfo> _discoveredHosts = new();
+
+    // UI element references — host panel
     private Label? _pinLabel;
     private Label? _statusLabel;
     private Label? _connectionLabel;
@@ -44,6 +52,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private Label? _copyIdFeedback;
     private Label? _copyPinFeedback;
 
+    // UI element references — partner connection panel
+    private Entry? _partnerIdEntry;
+    private Entry? _partnerPinEntry;
+    private Button? _connectButton;
+    private Label? _partnerStatusLabel;
+    private Picker? _discoveredHostsPicker;
+
     public MainPage(
         ILogger<MainPage> logger,
         RemoteDesktopHost host,
@@ -51,7 +66,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         ICommunicationService communication,
         INetworkDiscovery networkDiscovery,
         IInputHandler inputHandler,
-        IPerformanceMonitor perfMonitor)
+        IPerformanceMonitor perfMonitor,
+        RemoteDesktopClient client)
     {
         _logger = logger;
         _host = host;
@@ -60,6 +76,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _networkDiscovery = networkDiscovery;
         _inputHandler = inputHandler;
         _perfMonitor = perfMonitor;
+        _client = client;
 
         _deviceNumericId = GenerateNumericId(Environment.MachineName);
 
@@ -68,8 +85,15 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         Content = BuildLayout();
 
+        // Host-side events
         _communication.ConnectionStateChanged += OnConnectionStateChanged;
         _communication.PairingRequestReceived += OnPairingRequestReceivedUI;
+
+        // Client-side events
+        _client.DeviceDiscovered += OnRemoteHostDiscovered;
+        _client.DeviceLost += OnRemoteHostLost;
+        _client.ConnectionStateChanged += OnClientConnectionStateChanged;
+        _client.PairingFailed += OnClientPairingFailed;
     }
 
     /// <summary>
@@ -79,10 +103,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private static string GenerateNumericId(string machineName)
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(machineName + "RemoteLink"));
-        // Take first 8 bytes and reduce to a 9-digit number (100000000–999999999)
         long value = Math.Abs(BitConverter.ToInt64(hash, 0));
         long id = (value % 900_000_000) + 100_000_000;
-        // Format as "XXX XXX XXX" for readability
         var digits = id.ToString();
         return $"{digits[..3]} {digits[3..6]} {digits[6..]}";
     }
@@ -96,7 +118,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             RowDefinitions =
             {
                 new RowDefinition(GridLength.Auto),   // Header
-                new RowDefinition(GridLength.Auto),   // Allow Remote Control panel
+                new RowDefinition(GridLength.Auto),   // Two-column: Allow Remote Control + Control Remote Computer
                 new RowDefinition(GridLength.Star),   // Connection status area
                 new RowDefinition(GridLength.Auto),   // Start/Stop button
                 new RowDefinition(GridLength.Auto),   // Status bar
@@ -106,7 +128,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         };
 
         root.Add(BuildHeader(), 0, 0);
-        root.Add(BuildRemoteControlPanel(), 0, 1);
+        root.Add(BuildDashboardPanels(), 0, 1);
         root.Add(BuildConnectionPanel(), 0, 2);
         root.Add(BuildControlPanel(), 0, 3);
         root.Add(BuildStatusBar(), 0, 4);
@@ -148,8 +170,30 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Builds the combined "Allow Remote Control" panel — the central TeamViewer-style
-    /// card displaying both "Your ID" and the connection PIN prominently.
+    /// Builds the two side-by-side dashboard panels:
+    /// Left: "Allow Remote Control" (host ID + PIN)
+    /// Right: "Control Remote Computer" (partner ID + PIN entry)
+    /// </summary>
+    private View BuildDashboardPanels()
+    {
+        return new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Star),
+            },
+            ColumnSpacing = 0,
+            Children =
+            {
+                BuildRemoteControlPanel(),
+                CreateGridChild(BuildPartnerConnectionPanel(), column: 1)
+            }
+        };
+    }
+
+    /// <summary>
+    /// Left panel — "Allow Remote Control": device ID + PIN display.
     /// </summary>
     private View BuildRemoteControlPanel()
     {
@@ -157,10 +201,10 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _deviceIdLabel = new Label
         {
             Text = _deviceNumericId,
-            FontSize = 28,
+            FontSize = 22,
             FontAttributes = FontAttributes.Bold,
             TextColor = Color.FromArgb("#222222"),
-            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Center,
             FontFamily = "OpenSansRegular"
         };
 
@@ -169,38 +213,31 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Text = "",
             FontSize = 10,
             TextColor = Color.FromArgb("#4CAF50"),
-            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Center,
             IsVisible = false
         };
 
         var copyIdButton = new Button
         {
             Text = "Copy",
-            FontSize = 11,
+            FontSize = 10,
             BackgroundColor = Color.FromArgb("#E8E0FF"),
             TextColor = Color.FromArgb("#512BD4"),
             CornerRadius = 4,
-            Padding = new Thickness(10, 2),
-            HeightRequest = 28,
-            VerticalOptions = LayoutOptions.Center
+            Padding = new Thickness(8, 2),
+            HeightRequest = 26,
+            HorizontalOptions = LayoutOptions.Center
         };
         copyIdButton.Clicked += OnCopyIdClicked;
-
-        var idValueRow = new HorizontalStackLayout
-        {
-            Spacing = 8,
-            HorizontalOptions = LayoutOptions.Center,
-            Children = { _deviceIdLabel, copyIdButton, _copyIdFeedback }
-        };
 
         // ── PIN row ──
         _pinLabel = new Label
         {
             Text = FormatPinDisplay(),
-            FontSize = 28,
+            FontSize = 22,
             FontAttributes = FontAttributes.Bold,
             TextColor = Color.FromArgb("#512BD4"),
-            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Center,
             CharacterSpacing = 4,
             FontFamily = "OpenSansRegular"
         };
@@ -208,13 +245,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _pinVisibilityButton = new Button
         {
             Text = "Show",
-            FontSize = 11,
+            FontSize = 10,
             BackgroundColor = Color.FromArgb("#E8E0FF"),
             TextColor = Color.FromArgb("#512BD4"),
             CornerRadius = 4,
-            Padding = new Thickness(10, 2),
-            HeightRequest = 28,
-            VerticalOptions = LayoutOptions.Center
+            Padding = new Thickness(8, 2),
+            HeightRequest = 26,
+            HorizontalOptions = LayoutOptions.Center
         };
         _pinVisibilityButton.Clicked += OnTogglePinVisibility;
 
@@ -223,35 +260,35 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Text = "",
             FontSize = 10,
             TextColor = Color.FromArgb("#4CAF50"),
-            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.Center,
             IsVisible = false
         };
 
         var copyPinButton = new Button
         {
             Text = "Copy",
-            FontSize = 11,
+            FontSize = 10,
             BackgroundColor = Color.FromArgb("#E8E0FF"),
             TextColor = Color.FromArgb("#512BD4"),
             CornerRadius = 4,
-            Padding = new Thickness(10, 2),
-            HeightRequest = 28,
-            VerticalOptions = LayoutOptions.Center
+            Padding = new Thickness(8, 2),
+            HeightRequest = 26,
+            HorizontalOptions = LayoutOptions.Center
         };
         copyPinButton.Clicked += OnCopyPinClicked;
 
-        var pinValueRow = new HorizontalStackLayout
+        var pinButtonRow = new HorizontalStackLayout
         {
-            Spacing = 8,
+            Spacing = 6,
             HorizontalOptions = LayoutOptions.Center,
-            Children = { _pinLabel, _pinVisibilityButton, copyPinButton, _copyPinFeedback }
+            Children = { _pinVisibilityButton, copyPinButton }
         };
 
-        // ── PIN metadata row (expiry + attempts) ──
+        // ── PIN metadata row ──
         _pinExpiryLabel = new Label
         {
             Text = "",
-            FontSize = 11,
+            FontSize = 10,
             TextColor = Color.FromArgb("#999999"),
             HorizontalOptions = LayoutOptions.Center
         };
@@ -259,14 +296,14 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _attemptsLabel = new Label
         {
             Text = "",
-            FontSize = 11,
+            FontSize = 10,
             TextColor = Color.FromArgb("#999999"),
             HorizontalOptions = LayoutOptions.Center
         };
 
         var pinMetaRow = new HorizontalStackLayout
         {
-            Spacing = 16,
+            Spacing = 12,
             HorizontalOptions = LayoutOptions.Center,
             Children = { _pinExpiryLabel, _attemptsLabel }
         };
@@ -275,29 +312,27 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         var refreshButton = new Button
         {
             Text = "Refresh PIN",
-            FontSize = 12,
+            FontSize = 11,
             BackgroundColor = Color.FromArgb("#E8E0FF"),
             TextColor = Color.FromArgb("#512BD4"),
             CornerRadius = 4,
-            Padding = new Thickness(14, 4),
-            HeightRequest = 32,
+            Padding = new Thickness(10, 2),
+            HeightRequest = 28,
             HorizontalOptions = LayoutOptions.Center
         };
         refreshButton.Clicked += OnRefreshPinClicked;
 
-        // ── Divider ──
         var divider = new BoxView
         {
             Color = Color.FromArgb("#E8E0FF"),
             HeightRequest = 1,
-            Margin = new Thickness(0, 8, 0, 8)
+            Margin = new Thickness(0, 6, 0, 6)
         };
 
-        // ── Assemble the card ──
         return new Border
         {
-            Margin = new Thickness(16, 12, 16, 4),
-            Padding = new Thickness(20, 16),
+            Margin = new Thickness(12, 12, 6, 4),
+            Padding = new Thickness(14, 12),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
             BackgroundColor = Colors.White,
             Stroke = Color.FromArgb("#D8D0F0"),
@@ -310,43 +345,165 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             },
             Content = new StackLayout
             {
-                Spacing = 4,
+                Spacing = 2,
                 Children =
                 {
-                    // Panel title
                     new Label
                     {
                         Text = "Allow Remote Control",
-                        FontSize = 15,
+                        FontSize = 13,
                         FontAttributes = FontAttributes.Bold,
                         TextColor = Color.FromArgb("#512BD4"),
                         HorizontalOptions = LayoutOptions.Center,
-                        Margin = new Thickness(0, 0, 0, 8)
+                        Margin = new Thickness(0, 0, 0, 6)
                     },
-
-                    // Your ID section
-                    new Label
+                    new Label { Text = "Your ID", FontSize = 11, TextColor = Color.FromArgb("#888888"), HorizontalOptions = LayoutOptions.Center },
+                    _deviceIdLabel,
+                    new HorizontalStackLayout
                     {
-                        Text = "Your ID",
-                        FontSize = 12,
-                        TextColor = Color.FromArgb("#888888"),
-                        HorizontalOptions = LayoutOptions.Center
+                        Spacing = 4,
+                        HorizontalOptions = LayoutOptions.Center,
+                        Children = { copyIdButton, _copyIdFeedback }
                     },
-                    idValueRow,
-
                     divider,
-
-                    // PIN section
-                    new Label
-                    {
-                        Text = "Password",
-                        FontSize = 12,
-                        TextColor = Color.FromArgb("#888888"),
-                        HorizontalOptions = LayoutOptions.Center
-                    },
-                    pinValueRow,
+                    new Label { Text = "Password", FontSize = 11, TextColor = Color.FromArgb("#888888"), HorizontalOptions = LayoutOptions.Center },
+                    _pinLabel,
+                    pinButtonRow,
+                    _copyPinFeedback,
                     pinMetaRow,
                     refreshButton,
+                }
+            }
+        };
+    }
+
+    /// <summary>
+    /// Right panel — "Control Remote Computer": partner ID + PIN entry + connect button.
+    /// Enables desktop-to-desktop connections.
+    /// </summary>
+    private View BuildPartnerConnectionPanel()
+    {
+        // ── Discovered hosts picker ──
+        _discoveredHostsPicker = new Picker
+        {
+            Title = "Select discovered host...",
+            FontSize = 13,
+            HorizontalOptions = LayoutOptions.Fill,
+            TextColor = Color.FromArgb("#333333"),
+            TitleColor = Color.FromArgb("#AAAAAA"),
+        };
+        _discoveredHostsPicker.SelectedIndexChanged += OnDiscoveredHostSelected;
+
+        // ── Partner ID entry ──
+        _partnerIdEntry = new Entry
+        {
+            Placeholder = "Partner ID or IP address",
+            FontSize = 14,
+            Keyboard = Keyboard.Text,
+            HorizontalOptions = LayoutOptions.Fill,
+            ClearButtonVisibility = ClearButtonVisibility.WhileEditing,
+            TextColor = Color.FromArgb("#333333"),
+            PlaceholderColor = Color.FromArgb("#AAAAAA"),
+        };
+
+        // ── Partner PIN entry ──
+        _partnerPinEntry = new Entry
+        {
+            Placeholder = "PIN",
+            FontSize = 14,
+            Keyboard = Keyboard.Numeric,
+            MaxLength = 6,
+            IsPassword = true,
+            HorizontalOptions = LayoutOptions.Fill,
+            ClearButtonVisibility = ClearButtonVisibility.WhileEditing,
+            TextColor = Color.FromArgb("#333333"),
+            PlaceholderColor = Color.FromArgb("#AAAAAA"),
+        };
+
+        // ── Connect button ──
+        _connectButton = new Button
+        {
+            Text = "Connect",
+            FontSize = 14,
+            BackgroundColor = Color.FromArgb("#512BD4"),
+            TextColor = Colors.White,
+            CornerRadius = 6,
+            HeightRequest = 40,
+            HorizontalOptions = LayoutOptions.Fill,
+        };
+        _connectButton.Clicked += OnConnectToPartnerClicked;
+
+        // ── Status label ──
+        _partnerStatusLabel = new Label
+        {
+            Text = "",
+            FontSize = 11,
+            TextColor = Color.FromArgb("#999999"),
+            HorizontalOptions = LayoutOptions.Center
+        };
+
+        // ── "or" separator ──
+        var orSeparator = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+                new ColumnDefinition(GridLength.Star),
+            },
+            Margin = new Thickness(0, 2),
+            Children =
+            {
+                new BoxView { Color = Color.FromArgb("#E0E0E0"), HeightRequest = 1, VerticalOptions = LayoutOptions.Center },
+                CreateGridChild(new Label
+                {
+                    Text = "or enter manually",
+                    FontSize = 10,
+                    TextColor = Color.FromArgb("#BBBBBB"),
+                    Margin = new Thickness(8, 0),
+                    VerticalOptions = LayoutOptions.Center,
+                }, column: 1),
+                CreateGridChild(new BoxView { Color = Color.FromArgb("#E0E0E0"), HeightRequest = 1, VerticalOptions = LayoutOptions.Center }, column: 2),
+            }
+        };
+
+        return new Border
+        {
+            Margin = new Thickness(6, 12, 12, 4),
+            Padding = new Thickness(14, 12),
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+            BackgroundColor = Colors.White,
+            Stroke = Color.FromArgb("#D8D0F0"),
+            StrokeThickness = 1,
+            Shadow = new Shadow
+            {
+                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Offset = new Point(0, 2),
+                Radius = 6
+            },
+            Content = new StackLayout
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new Label
+                    {
+                        Text = "Control Remote Computer",
+                        FontSize = 13,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Color.FromArgb("#512BD4"),
+                        HorizontalOptions = LayoutOptions.Center,
+                        Margin = new Thickness(0, 0, 0, 4)
+                    },
+                    new Label { Text = "Discovered Hosts", FontSize = 11, TextColor = Color.FromArgb("#888888") },
+                    _discoveredHostsPicker,
+                    orSeparator,
+                    new Label { Text = "Partner ID", FontSize = 11, TextColor = Color.FromArgb("#888888") },
+                    _partnerIdEntry,
+                    new Label { Text = "Password", FontSize = 11, TextColor = Color.FromArgb("#888888") },
+                    _partnerPinEntry,
+                    _connectButton,
+                    _partnerStatusLabel,
                 }
             }
         };
@@ -470,7 +627,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         if (!_pinVisible)
             return "*** ***";
 
-        // Format as "XXX XXX" for readability
         return _currentPin.Length == 6
             ? $"{_currentPin[..3]} {_currentPin[3..]}"
             : _currentPin;
@@ -493,20 +649,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             if (!_isRunning || _currentPin == "------")
             {
-                if (_pinExpiryLabel != null)
-                {
-                    _pinExpiryLabel.Text = "";
-                    _pinExpiryLabel.IsVisible = false;
-                }
-                if (_attemptsLabel != null)
-                {
-                    _attemptsLabel.Text = "";
-                    _attemptsLabel.IsVisible = false;
-                }
+                if (_pinExpiryLabel != null) { _pinExpiryLabel.Text = ""; _pinExpiryLabel.IsVisible = false; }
+                if (_attemptsLabel != null) { _attemptsLabel.Text = ""; _attemptsLabel.IsVisible = false; }
                 return;
             }
 
-            // Expiry status
             if (_pinExpiryLabel != null)
             {
                 _pinExpiryLabel.IsVisible = true;
@@ -522,7 +669,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 }
             }
 
-            // Attempts remaining
             if (_attemptsLabel != null)
             {
                 _attemptsLabel.IsVisible = true;
@@ -559,7 +705,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _pinExpiryTimer = null;
     }
 
-    // ── Event Handlers ─────────────────────────────────────────────────
+    // ── Host-side event handlers ───────────────────────────────────────
 
     private async void OnStartStopClicked(object? sender, EventArgs e)
     {
@@ -576,13 +722,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             _isRunning = true;
             UpdateStatusBar("Starting...", Color.FromArgb("#FFA500"));
 
-            // Generate PIN and update display
             _currentPin = _pairing.GeneratePin();
             _pinVisible = false;
             RefreshPinDisplay();
             StartPinExpiryTimer();
 
-            // Start the host background service
             _hostCts = new CancellationTokenSource();
             _ = Task.Run(async () =>
             {
@@ -590,18 +734,19 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 {
                     await _host.StartAsync(_hostCts.Token);
                 }
-                catch (OperationCanceledException)
-                {
-                    // Expected on stop
-                }
+                catch (OperationCanceledException) { }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Host service error");
-                    MainThread.BeginInvokeOnMainThread(() =>
-                    {
-                        UpdateStatusBar("Error: " + ex.Message, Colors.Red);
-                    });
+                    MainThread.BeginInvokeOnMainThread(() => UpdateStatusBar("Error: " + ex.Message, Colors.Red));
                 }
+            });
+
+            // Also start client-side discovery so we can find other hosts
+            _ = Task.Run(async () =>
+            {
+                try { await _client.StartAsync(); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Client discovery start failed"); }
             });
 
             UpdateStatusBar("Running — Listening for connections", Color.FromArgb("#4CAF50"));
@@ -634,6 +779,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
             _hostCts?.Cancel();
             await _host.StopAsync(CancellationToken.None);
+            await _client.StopAsync();
 
             _isRunning = false;
             _currentPin = "------";
@@ -641,6 +787,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             RefreshPinDisplay();
             StopPinExpiryTimer();
             UpdatePinMetadata();
+
+            // Clear discovered hosts
+            _discoveredHosts.Clear();
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                _discoveredHostsPicker?.Items.Clear();
+            });
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -681,7 +834,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private async void OnCopyIdClicked(object? sender, EventArgs e)
     {
-        // Copy the raw digits (no spaces) to clipboard
         var rawId = _deviceNumericId.Replace(" ", "");
         await Clipboard.Default.SetTextAsync(rawId);
         ShowCopyFeedback(_copyIdFeedback);
@@ -697,7 +849,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private void ShowCopyFeedback(Label? feedbackLabel)
     {
         if (feedbackLabel == null) return;
-
         MainThread.BeginInvokeOnMainThread(async () =>
         {
             feedbackLabel.Text = "Copied!";
@@ -715,20 +866,14 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (connected)
             {
                 _connectionInfo = "Client connected — awaiting PIN pairing";
-                if (_statusIndicator != null)
-                    _statusIndicator.Color = Color.FromArgb("#FFA500");
-                if (_connectionLabel != null)
-                    _connectionLabel.Text = _connectionInfo;
+                if (_statusIndicator != null) _statusIndicator.Color = Color.FromArgb("#FFA500");
+                if (_connectionLabel != null) _connectionLabel.Text = _connectionInfo;
             }
             else
             {
                 _connectionInfo = "No active connections";
-                if (_statusIndicator != null)
-                    _statusIndicator.Color = _isRunning ? Color.FromArgb("#4CAF50") : Colors.Gray;
-                if (_connectionLabel != null)
-                    _connectionLabel.Text = _connectionInfo;
-
-                // Refresh PIN metadata (new PIN generated by host on disconnect)
+                if (_statusIndicator != null) _statusIndicator.Color = _isRunning ? Color.FromArgb("#4CAF50") : Colors.Gray;
+                if (_connectionLabel != null) _connectionLabel.Text = _connectionInfo;
                 UpdatePinMetadata();
             }
         });
@@ -736,15 +881,271 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private void OnPairingRequestReceivedUI(object? sender, PairingRequest request)
     {
-        // Update attempts display after each pairing attempt
         UpdatePinMetadata();
-
         MainThread.BeginInvokeOnMainThread(() =>
         {
             if (_connectionLabel != null)
                 _connectionLabel.Text = $"Pairing attempt from {request.ClientDeviceName}...";
         });
     }
+
+    // ── Partner connection (client-side) event handlers ────────────────
+
+    private void OnRemoteHostDiscovered(object? sender, DeviceInfo host)
+    {
+        // Don't show ourselves in the discovered list
+        if (host.DeviceName == Environment.MachineName) return;
+
+        lock (_discoveredHosts)
+        {
+            if (_discoveredHosts.Any(h => h.DeviceId == host.DeviceId))
+                return;
+            _discoveredHosts.Add(host);
+        }
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            var displayName = $"{host.DeviceName} ({host.IPAddress}:{host.Port})";
+            _discoveredHostsPicker?.Items.Add(displayName);
+        });
+
+        _logger.LogInformation("Discovered remote host: {Name} at {IP}:{Port}",
+            host.DeviceName, host.IPAddress, host.Port);
+    }
+
+    private void OnRemoteHostLost(object? sender, DeviceInfo host)
+    {
+        int removedIndex;
+        lock (_discoveredHosts)
+        {
+            removedIndex = _discoveredHosts.FindIndex(h => h.DeviceId == host.DeviceId);
+            if (removedIndex >= 0)
+                _discoveredHosts.RemoveAt(removedIndex);
+        }
+
+        if (removedIndex >= 0)
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_discoveredHostsPicker != null && removedIndex < _discoveredHostsPicker.Items.Count)
+                    _discoveredHostsPicker.Items.RemoveAt(removedIndex);
+            });
+        }
+    }
+
+    private void OnDiscoveredHostSelected(object? sender, EventArgs e)
+    {
+        if (_discoveredHostsPicker == null) return;
+        int idx = _discoveredHostsPicker.SelectedIndex;
+        if (idx < 0) return;
+
+        DeviceInfo? selected;
+        lock (_discoveredHosts)
+        {
+            selected = idx < _discoveredHosts.Count ? _discoveredHosts[idx] : null;
+        }
+
+        if (selected != null && _partnerIdEntry != null)
+        {
+            // Fill the Partner ID field with IP:Port for the selected host
+            _partnerIdEntry.Text = $"{selected.IPAddress}:{selected.Port}";
+        }
+    }
+
+    private async void OnConnectToPartnerClicked(object? sender, EventArgs e)
+    {
+        if (_isConnecting)
+        {
+            // Disconnect
+            await DisconnectFromPartnerAsync();
+            return;
+        }
+
+        var partnerId = _partnerIdEntry?.Text?.Trim();
+        var pin = _partnerPinEntry?.Text?.Trim();
+
+        if (string.IsNullOrEmpty(partnerId))
+        {
+            SetPartnerStatus("Enter a Partner ID or select a discovered host", Color.FromArgb("#D32F2F"));
+            return;
+        }
+
+        if (string.IsNullOrEmpty(pin) || pin.Length != 6)
+        {
+            SetPartnerStatus("Enter the 6-digit PIN from the remote host", Color.FromArgb("#D32F2F"));
+            return;
+        }
+
+        // Resolve the partner to a DeviceInfo
+        var targetDevice = ResolvePartner(partnerId);
+        if (targetDevice == null)
+        {
+            SetPartnerStatus("Cannot resolve partner — use IP:Port format", Color.FromArgb("#D32F2F"));
+            return;
+        }
+
+        _isConnecting = true;
+        SetPartnerStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", Color.FromArgb("#FFA500"));
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_connectButton != null)
+            {
+                _connectButton.Text = "Cancel";
+                _connectButton.BackgroundColor = Color.FromArgb("#D32F2F");
+            }
+        });
+
+        var success = await _client.ConnectToHostAsync(targetDevice, pin);
+
+        if (success)
+        {
+            SetPartnerStatus($"Connected to {targetDevice.DeviceName}", Color.FromArgb("#4CAF50"));
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_connectButton != null)
+                {
+                    _connectButton.Text = "Disconnect";
+                    _connectButton.BackgroundColor = Color.FromArgb("#D32F2F");
+                }
+            });
+        }
+        else
+        {
+            _isConnecting = false;
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_connectButton != null)
+                {
+                    _connectButton.Text = "Connect";
+                    _connectButton.BackgroundColor = Color.FromArgb("#512BD4");
+                }
+            });
+            // Status is set by PairingFailed event handler
+        }
+    }
+
+    private async Task DisconnectFromPartnerAsync()
+    {
+        await _client.DisconnectAsync();
+        _isConnecting = false;
+
+        SetPartnerStatus("Disconnected", Colors.Gray);
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_connectButton != null)
+            {
+                _connectButton.Text = "Connect";
+                _connectButton.BackgroundColor = Color.FromArgb("#512BD4");
+            }
+        });
+    }
+
+    private void OnClientConnectionStateChanged(object? sender, ClientConnectionState state)
+    {
+        var text = state switch
+        {
+            ClientConnectionState.Connecting => "Connecting...",
+            ClientConnectionState.Authenticating => "Authenticating...",
+            ClientConnectionState.Connected => "Connected",
+            ClientConnectionState.Disconnected => _isConnecting ? "Connection lost" : "",
+            _ => ""
+        };
+
+        var color = state switch
+        {
+            ClientConnectionState.Connected => Color.FromArgb("#4CAF50"),
+            ClientConnectionState.Disconnected => Colors.Gray,
+            _ => Color.FromArgb("#FFA500")
+        };
+
+        if (!string.IsNullOrEmpty(text))
+            SetPartnerStatus(text, color);
+
+        if (state == ClientConnectionState.Disconnected && _isConnecting)
+        {
+            _isConnecting = false;
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_connectButton != null)
+                {
+                    _connectButton.Text = "Connect";
+                    _connectButton.BackgroundColor = Color.FromArgb("#512BD4");
+                }
+            });
+        }
+    }
+
+    private void OnClientPairingFailed(object? sender, string reason)
+    {
+        SetPartnerStatus(reason, Color.FromArgb("#D32F2F"));
+    }
+
+    /// <summary>
+    /// Resolves a partner ID string to a DeviceInfo for connection.
+    /// Supports: IP:Port format, plain IP (default port 12346), or
+    /// lookup by numeric ID in discovered hosts.
+    /// </summary>
+    private DeviceInfo? ResolvePartner(string partnerId)
+    {
+        // Try to match against discovered hosts by numeric ID
+        var strippedId = partnerId.Replace(" ", "");
+        lock (_discoveredHosts)
+        {
+            foreach (var host in _discoveredHosts)
+            {
+                var hostNumericId = GenerateNumericId(host.DeviceName).Replace(" ", "");
+                if (hostNumericId == strippedId)
+                    return host;
+            }
+        }
+
+        // Try IP:Port format
+        if (partnerId.Contains(':'))
+        {
+            var parts = partnerId.Split(':', 2);
+            if (parts.Length == 2 && int.TryParse(parts[1], out int port))
+            {
+                return new DeviceInfo
+                {
+                    DeviceId = $"manual_{parts[0]}_{port}",
+                    DeviceName = parts[0],
+                    IPAddress = parts[0],
+                    Port = port,
+                    Type = DeviceType.Desktop
+                };
+            }
+        }
+
+        // Try plain IP (use default port)
+        if (System.Net.IPAddress.TryParse(partnerId, out _))
+        {
+            return new DeviceInfo
+            {
+                DeviceId = $"manual_{partnerId}_12346",
+                DeviceName = partnerId,
+                IPAddress = partnerId,
+                Port = 12346,
+                Type = DeviceType.Desktop
+            };
+        }
+
+        return null;
+    }
+
+    private void SetPartnerStatus(string text, Color color)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_partnerStatusLabel != null)
+            {
+                _partnerStatusLabel.Text = text;
+                _partnerStatusLabel.TextColor = color;
+            }
+        });
+    }
+
+    // ── Shared helpers ─────────────────────────────────────────────────
 
     private void UpdateStatusBar(string status, Color color)
     {
@@ -753,14 +1154,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            if (_statusLabel != null)
-                _statusLabel.Text = _statusText;
+            if (_statusLabel != null) _statusLabel.Text = _statusText;
             if (_statusIndicator != null && !_statusText.Contains("connection"))
                 _statusIndicator.Color = _statusColor;
         });
     }
-
-    // ── Helpers ─────────────────────────────────────────────────────────
 
     private static View CreateGridChild(View view, int column = 0, int row = 0)
     {
