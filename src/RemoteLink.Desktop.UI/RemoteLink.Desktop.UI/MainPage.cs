@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Desktop.Services;
 using RemoteLink.Shared.Interfaces;
@@ -18,6 +20,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly IPerformanceMonitor _perfMonitor;
 
     private CancellationTokenSource? _hostCts;
+    private IDispatcherTimer? _pinExpiryTimer;
 
     // UI state
     private string _currentPin = "------";
@@ -25,14 +28,21 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private Color _statusColor = Colors.Gray;
     private bool _isRunning;
     private string _connectionInfo = "No active connections";
+    private bool _pinVisible;
+    private string _deviceNumericId;
 
-    // UI element references for updating
+    // UI element references
     private Label? _pinLabel;
     private Label? _statusLabel;
     private Label? _connectionLabel;
     private Button? _startStopButton;
     private Label? _deviceIdLabel;
     private BoxView? _statusIndicator;
+    private Button? _pinVisibilityButton;
+    private Label? _pinExpiryLabel;
+    private Label? _attemptsLabel;
+    private Label? _copyIdFeedback;
+    private Label? _copyPinFeedback;
 
     public MainPage(
         ILogger<MainPage> logger,
@@ -51,13 +61,33 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _inputHandler = inputHandler;
         _perfMonitor = perfMonitor;
 
+        _deviceNumericId = GenerateNumericId(Environment.MachineName);
+
         Title = "RemoteLink Desktop";
         BackgroundColor = Color.FromArgb("#F5F5F5");
 
         Content = BuildLayout();
 
         _communication.ConnectionStateChanged += OnConnectionStateChanged;
+        _communication.PairingRequestReceived += OnPairingRequestReceivedUI;
     }
+
+    /// <summary>
+    /// Generates a stable 9-digit numeric ID from the machine name,
+    /// similar to TeamViewer's device IDs.
+    /// </summary>
+    private static string GenerateNumericId(string machineName)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(machineName + "RemoteLink"));
+        // Take first 8 bytes and reduce to a 9-digit number (100000000–999999999)
+        long value = Math.Abs(BitConverter.ToInt64(hash, 0));
+        long id = (value % 900_000_000) + 100_000_000;
+        // Format as "XXX XXX XXX" for readability
+        var digits = id.ToString();
+        return $"{digits[..3]} {digits[3..6]} {digits[6..]}";
+    }
+
+    // ── Layout ─────────────────────────────────────────────────────────
 
     private View BuildLayout()
     {
@@ -66,8 +96,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             RowDefinitions =
             {
                 new RowDefinition(GridLength.Auto),   // Header
-                new RowDefinition(GridLength.Auto),   // Your ID panel
-                new RowDefinition(GridLength.Auto),   // PIN panel
+                new RowDefinition(GridLength.Auto),   // Allow Remote Control panel
                 new RowDefinition(GridLength.Star),   // Connection status area
                 new RowDefinition(GridLength.Auto),   // Start/Stop button
                 new RowDefinition(GridLength.Auto),   // Status bar
@@ -77,11 +106,10 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         };
 
         root.Add(BuildHeader(), 0, 0);
-        root.Add(BuildIdPanel(), 0, 1);
-        root.Add(BuildPinPanel(), 0, 2);
-        root.Add(BuildConnectionPanel(), 0, 3);
-        root.Add(BuildControlPanel(), 0, 4);
-        root.Add(BuildStatusBar(), 0, 5);
+        root.Add(BuildRemoteControlPanel(), 0, 1);
+        root.Add(BuildConnectionPanel(), 0, 2);
+        root.Add(BuildControlPanel(), 0, 3);
+        root.Add(BuildStatusBar(), 0, 4);
 
         return root;
     }
@@ -119,55 +147,131 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         };
     }
 
-    private View BuildIdPanel()
+    /// <summary>
+    /// Builds the combined "Allow Remote Control" panel — the central TeamViewer-style
+    /// card displaying both "Your ID" and the connection PIN prominently.
+    /// </summary>
+    private View BuildRemoteControlPanel()
     {
+        // ── Your ID row ──
         _deviceIdLabel = new Label
         {
-            Text = Environment.MachineName,
-            FontSize = 20,
+            Text = _deviceNumericId,
+            FontSize = 28,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#333333"),
+            TextColor = Color.FromArgb("#222222"),
+            VerticalOptions = LayoutOptions.Center,
+            FontFamily = "OpenSansRegular"
+        };
+
+        _copyIdFeedback = new Label
+        {
+            Text = "",
+            FontSize = 10,
+            TextColor = Color.FromArgb("#4CAF50"),
+            VerticalOptions = LayoutOptions.Center,
+            IsVisible = false
+        };
+
+        var copyIdButton = new Button
+        {
+            Text = "Copy",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 4,
+            Padding = new Thickness(10, 2),
+            HeightRequest = 28,
+            VerticalOptions = LayoutOptions.Center
+        };
+        copyIdButton.Clicked += OnCopyIdClicked;
+
+        var idValueRow = new HorizontalStackLayout
+        {
+            Spacing = 8,
+            HorizontalOptions = LayoutOptions.Center,
+            Children = { _deviceIdLabel, copyIdButton, _copyIdFeedback }
+        };
+
+        // ── PIN row ──
+        _pinLabel = new Label
+        {
+            Text = FormatPinDisplay(),
+            FontSize = 28,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Color.FromArgb("#512BD4"),
+            VerticalOptions = LayoutOptions.Center,
+            CharacterSpacing = 4,
+            FontFamily = "OpenSansRegular"
+        };
+
+        _pinVisibilityButton = new Button
+        {
+            Text = "Show",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 4,
+            Padding = new Thickness(10, 2),
+            HeightRequest = 28,
+            VerticalOptions = LayoutOptions.Center
+        };
+        _pinVisibilityButton.Clicked += OnTogglePinVisibility;
+
+        _copyPinFeedback = new Label
+        {
+            Text = "",
+            FontSize = 10,
+            TextColor = Color.FromArgb("#4CAF50"),
+            VerticalOptions = LayoutOptions.Center,
+            IsVisible = false
+        };
+
+        var copyPinButton = new Button
+        {
+            Text = "Copy",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 4,
+            Padding = new Thickness(10, 2),
+            HeightRequest = 28,
+            VerticalOptions = LayoutOptions.Center
+        };
+        copyPinButton.Clicked += OnCopyPinClicked;
+
+        var pinValueRow = new HorizontalStackLayout
+        {
+            Spacing = 8,
+            HorizontalOptions = LayoutOptions.Center,
+            Children = { _pinLabel, _pinVisibilityButton, copyPinButton, _copyPinFeedback }
+        };
+
+        // ── PIN metadata row (expiry + attempts) ──
+        _pinExpiryLabel = new Label
+        {
+            Text = "",
+            FontSize = 11,
+            TextColor = Color.FromArgb("#999999"),
             HorizontalOptions = LayoutOptions.Center
         };
 
-        return new Border
+        _attemptsLabel = new Label
         {
-            Margin = new Thickness(16, 12, 16, 4),
-            Padding = new Thickness(16, 12),
-            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
-            StrokeThickness = 1,
-            Content = new StackLayout
-            {
-                Spacing = 4,
-                Children =
-                {
-                    new Label
-                    {
-                        Text = "Your Device ID",
-                        FontSize = 12,
-                        TextColor = Color.FromArgb("#888888"),
-                        HorizontalOptions = LayoutOptions.Center
-                    },
-                    _deviceIdLabel
-                }
-            }
+            Text = "",
+            FontSize = 11,
+            TextColor = Color.FromArgb("#999999"),
+            HorizontalOptions = LayoutOptions.Center
         };
-    }
 
-    private View BuildPinPanel()
-    {
-        _pinLabel = new Label
+        var pinMetaRow = new HorizontalStackLayout
         {
-            Text = _currentPin,
-            FontSize = 36,
-            FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4"),
+            Spacing = 16,
             HorizontalOptions = LayoutOptions.Center,
-            CharacterSpacing = 8
+            Children = { _pinExpiryLabel, _attemptsLabel }
         };
 
+        // ── Refresh PIN button ──
         var refreshButton = new Button
         {
             Text = "Refresh PIN",
@@ -175,41 +279,74 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             BackgroundColor = Color.FromArgb("#E8E0FF"),
             TextColor = Color.FromArgb("#512BD4"),
             CornerRadius = 4,
-            Padding = new Thickness(12, 4),
+            Padding = new Thickness(14, 4),
             HeightRequest = 32,
             HorizontalOptions = LayoutOptions.Center
         };
         refreshButton.Clicked += OnRefreshPinClicked;
 
+        // ── Divider ──
+        var divider = new BoxView
+        {
+            Color = Color.FromArgb("#E8E0FF"),
+            HeightRequest = 1,
+            Margin = new Thickness(0, 8, 0, 8)
+        };
+
+        // ── Assemble the card ──
         return new Border
         {
-            Margin = new Thickness(16, 4, 16, 4),
-            Padding = new Thickness(16, 12),
-            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
+            Margin = new Thickness(16, 12, 16, 4),
+            Padding = new Thickness(20, 16),
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
             BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
+            Stroke = Color.FromArgb("#D8D0F0"),
             StrokeThickness = 1,
+            Shadow = new Shadow
+            {
+                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Offset = new Point(0, 2),
+                Radius = 6
+            },
             Content = new StackLayout
             {
-                Spacing = 8,
+                Spacing = 4,
                 Children =
                 {
+                    // Panel title
                     new Label
                     {
-                        Text = "Connection PIN",
+                        Text = "Allow Remote Control",
+                        FontSize = 15,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Color.FromArgb("#512BD4"),
+                        HorizontalOptions = LayoutOptions.Center,
+                        Margin = new Thickness(0, 0, 0, 8)
+                    },
+
+                    // Your ID section
+                    new Label
+                    {
+                        Text = "Your ID",
                         FontSize = 12,
                         TextColor = Color.FromArgb("#888888"),
                         HorizontalOptions = LayoutOptions.Center
                     },
-                    _pinLabel,
+                    idValueRow,
+
+                    divider,
+
+                    // PIN section
                     new Label
                     {
-                        Text = "Share this PIN with the connecting device",
-                        FontSize = 11,
-                        TextColor = Color.FromArgb("#AAAAAA"),
+                        Text = "Password",
+                        FontSize = 12,
+                        TextColor = Color.FromArgb("#888888"),
                         HorizontalOptions = LayoutOptions.Center
                     },
-                    refreshButton
+                    pinValueRow,
+                    pinMetaRow,
+                    refreshButton,
                 }
             }
         };
@@ -323,18 +460,113 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         };
     }
 
+    // ── PIN display helpers ────────────────────────────────────────────
+
+    private string FormatPinDisplay()
+    {
+        if (_currentPin == "------")
+            return "--- ---";
+
+        if (!_pinVisible)
+            return "*** ***";
+
+        // Format as "XXX XXX" for readability
+        return _currentPin.Length == 6
+            ? $"{_currentPin[..3]} {_currentPin[3..]}"
+            : _currentPin;
+    }
+
+    private void RefreshPinDisplay()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_pinLabel != null)
+                _pinLabel.Text = FormatPinDisplay();
+            if (_pinVisibilityButton != null)
+                _pinVisibilityButton.Text = _pinVisible ? "Hide" : "Show";
+        });
+    }
+
+    private void UpdatePinMetadata()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (!_isRunning || _currentPin == "------")
+            {
+                if (_pinExpiryLabel != null)
+                {
+                    _pinExpiryLabel.Text = "";
+                    _pinExpiryLabel.IsVisible = false;
+                }
+                if (_attemptsLabel != null)
+                {
+                    _attemptsLabel.Text = "";
+                    _attemptsLabel.IsVisible = false;
+                }
+                return;
+            }
+
+            // Expiry status
+            if (_pinExpiryLabel != null)
+            {
+                _pinExpiryLabel.IsVisible = true;
+                if (_pairing.IsPinExpired)
+                {
+                    _pinExpiryLabel.Text = "PIN expired";
+                    _pinExpiryLabel.TextColor = Color.FromArgb("#D32F2F");
+                }
+                else
+                {
+                    _pinExpiryLabel.Text = "PIN active";
+                    _pinExpiryLabel.TextColor = Color.FromArgb("#4CAF50");
+                }
+            }
+
+            // Attempts remaining
+            if (_attemptsLabel != null)
+            {
+                _attemptsLabel.IsVisible = true;
+                if (_pairing.IsLockedOut)
+                {
+                    _attemptsLabel.Text = "Locked out";
+                    _attemptsLabel.TextColor = Color.FromArgb("#D32F2F");
+                }
+                else
+                {
+                    int remaining = _pairing.AttemptsRemaining;
+                    _attemptsLabel.Text = $"{remaining} attempts left";
+                    _attemptsLabel.TextColor = remaining <= 2
+                        ? Color.FromArgb("#FFA500")
+                        : Color.FromArgb("#999999");
+                }
+            }
+        });
+    }
+
+    private void StartPinExpiryTimer()
+    {
+        StopPinExpiryTimer();
+        _pinExpiryTimer = Dispatcher.CreateTimer();
+        _pinExpiryTimer.Interval = TimeSpan.FromSeconds(5);
+        _pinExpiryTimer.Tick += (_, _) => UpdatePinMetadata();
+        _pinExpiryTimer.Start();
+        UpdatePinMetadata();
+    }
+
+    private void StopPinExpiryTimer()
+    {
+        _pinExpiryTimer?.Stop();
+        _pinExpiryTimer = null;
+    }
+
     // ── Event Handlers ─────────────────────────────────────────────────
 
     private async void OnStartStopClicked(object? sender, EventArgs e)
     {
         if (_isRunning)
-        {
             await StopHostAsync();
-        }
         else
-        {
             await StartHostAsync();
-        }
     }
 
     private async Task StartHostAsync()
@@ -342,15 +574,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         try
         {
             _isRunning = true;
-            UpdateUI("Starting...", Color.FromArgb("#FFA500"));
+            UpdateStatusBar("Starting...", Color.FromArgb("#FFA500"));
 
-            // Generate PIN
+            // Generate PIN and update display
             _currentPin = _pairing.GeneratePin();
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                if (_pinLabel != null)
-                    _pinLabel.Text = _currentPin;
-            });
+            _pinVisible = false;
+            RefreshPinDisplay();
+            StartPinExpiryTimer();
 
             // Start the host background service
             _hostCts = new CancellationTokenSource();
@@ -369,12 +599,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     _logger.LogError(ex, "Host service error");
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
-                        UpdateUI("Error: " + ex.Message, Colors.Red);
+                        UpdateStatusBar("Error: " + ex.Message, Colors.Red);
                     });
                 }
             });
 
-            UpdateUI("Running — Listening for connections", Color.FromArgb("#4CAF50"));
+            UpdateStatusBar("Running — Listening for connections", Color.FromArgb("#4CAF50"));
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -391,7 +621,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             _logger.LogError(ex, "Failed to start host");
             _isRunning = false;
-            UpdateUI("Failed to start: " + ex.Message, Colors.Red);
+            UpdateStatusBar("Failed to start: " + ex.Message, Colors.Red);
             await DisplayAlertAsync("Error", $"Failed to start host: {ex.Message}", "OK");
         }
     }
@@ -400,18 +630,20 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     {
         try
         {
-            UpdateUI("Stopping...", Color.FromArgb("#FFA500"));
+            UpdateStatusBar("Stopping...", Color.FromArgb("#FFA500"));
 
             _hostCts?.Cancel();
             await _host.StopAsync(CancellationToken.None);
 
             _isRunning = false;
             _currentPin = "------";
+            _pinVisible = false;
+            RefreshPinDisplay();
+            StopPinExpiryTimer();
+            UpdatePinMetadata();
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
-                if (_pinLabel != null)
-                    _pinLabel.Text = _currentPin;
                 if (_startStopButton != null)
                 {
                     _startStopButton.Text = "Start Host";
@@ -419,13 +651,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 }
             });
 
-            UpdateUI("Stopped", Colors.Gray);
+            UpdateStatusBar("Stopped", Colors.Gray);
             _logger.LogInformation("Desktop host stopped from UI");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to stop host");
-            UpdateUI("Error stopping: " + ex.Message, Colors.Red);
+            UpdateStatusBar("Error stopping: " + ex.Message, Colors.Red);
         }
     }
 
@@ -434,13 +666,46 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         if (!_isRunning) return;
 
         _currentPin = _pairing.GeneratePin();
-        MainThread.BeginInvokeOnMainThread(() =>
-        {
-            if (_pinLabel != null)
-                _pinLabel.Text = _currentPin;
-        });
+        _pinVisible = false;
+        RefreshPinDisplay();
+        UpdatePinMetadata();
 
-        _logger.LogInformation("PIN refreshed from UI: {Pin}", _currentPin);
+        _logger.LogInformation("PIN refreshed from UI");
+    }
+
+    private void OnTogglePinVisibility(object? sender, EventArgs e)
+    {
+        _pinVisible = !_pinVisible;
+        RefreshPinDisplay();
+    }
+
+    private async void OnCopyIdClicked(object? sender, EventArgs e)
+    {
+        // Copy the raw digits (no spaces) to clipboard
+        var rawId = _deviceNumericId.Replace(" ", "");
+        await Clipboard.Default.SetTextAsync(rawId);
+        ShowCopyFeedback(_copyIdFeedback);
+    }
+
+    private async void OnCopyPinClicked(object? sender, EventArgs e)
+    {
+        if (_currentPin == "------") return;
+        await Clipboard.Default.SetTextAsync(_currentPin);
+        ShowCopyFeedback(_copyPinFeedback);
+    }
+
+    private void ShowCopyFeedback(Label? feedbackLabel)
+    {
+        if (feedbackLabel == null) return;
+
+        MainThread.BeginInvokeOnMainThread(async () =>
+        {
+            feedbackLabel.Text = "Copied!";
+            feedbackLabel.IsVisible = true;
+            await Task.Delay(1500);
+            feedbackLabel.IsVisible = false;
+            feedbackLabel.Text = "";
+        });
     }
 
     private void OnConnectionStateChanged(object? sender, bool connected)
@@ -462,11 +727,26 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     _statusIndicator.Color = _isRunning ? Color.FromArgb("#4CAF50") : Colors.Gray;
                 if (_connectionLabel != null)
                     _connectionLabel.Text = _connectionInfo;
+
+                // Refresh PIN metadata (new PIN generated by host on disconnect)
+                UpdatePinMetadata();
             }
         });
     }
 
-    private void UpdateUI(string status, Color color)
+    private void OnPairingRequestReceivedUI(object? sender, PairingRequest request)
+    {
+        // Update attempts display after each pairing attempt
+        UpdatePinMetadata();
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_connectionLabel != null)
+                _connectionLabel.Text = $"Pairing attempt from {request.ClientDeviceName}...";
+        });
+    }
+
+    private void UpdateStatusBar(string status, Color color)
     {
         _statusText = status;
         _statusColor = color;
@@ -479,6 +759,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 _statusIndicator.Color = _statusColor;
         });
     }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
 
     private static View CreateGridChild(View view, int column = 0, int row = 0)
     {
