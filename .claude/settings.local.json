@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet sln:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet workload:*)",
+      "Bash(dotnet test:*)"
+    ]
+  }
+}
