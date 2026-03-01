@@ -35,6 +35,9 @@ public static class MauiProgram
         // Session recorder (mock by default; swap for SessionRecorder when FFmpeg is available)
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
+        // File transfer (chunked streaming with progress tracking)
+        builder.Services.AddSingleton<IFileTransferService, FileTransferService>();
+
         // Core shared services
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
@@ -80,6 +83,9 @@ public static class MauiProgram
         builder.Services.AddTransient<SettingsPage>();
         builder.Services.AddSingleton<Func<SettingsPage>>(provider =>
             () => provider.GetRequiredService<SettingsPage>());
+        builder.Services.AddTransient<ChatPage>();
+        builder.Services.AddSingleton<Func<ChatPage>>(provider =>
+            () => provider.GetRequiredService<ChatPage>());
 
         return builder.Build();
     }

@@ -206,7 +206,6 @@ public class SettingsPage : ContentPage
             BackgroundColor = Colors.Transparent,
             TextColor = Color.FromArgb("#CCCCCC"),
             HorizontalOptions = LayoutOptions.Fill,
-            HorizontalTextAlignment = TextAlignment.Start,
             CornerRadius = 0,
             Padding = new Thickness(16, 10),
             HeightRequest = 40
@@ -670,7 +669,7 @@ public class SettingsPage : ContentPage
         // Display
         if (_targetFpsEntry    != null) _targetFpsEntry.Text       = s.Display.TargetFps.ToString();
         if (_imageQualityEntry != null) _imageQualityEntry.Text    = s.Display.ImageQuality.ToString();
-        if (_imageFormatPicker != null) _imageFormatPicker.SelectedIndex = s.Display.ImageFormat == ImageFormat.Png ? 1 : 0;
+        if (_imageFormatPicker != null) _imageFormatPicker.SelectedIndex = s.Display.ImageFormat == RemoteLink.Shared.Models.ImageFormat.Png ? 1 : 0;
         if (_deltaEncodingSw   != null) _deltaEncodingSw.IsToggled = s.Display.UseDeltaEncoding;
 
         // Audio
@@ -724,7 +723,7 @@ public class SettingsPage : ContentPage
         if (int.TryParse(_imageQualityEntry?.Text, out int quality) && quality is >= 1 and <= 100)
             s.Display.ImageQuality = quality;
         if (_imageFormatPicker != null)
-            s.Display.ImageFormat = _imageFormatPicker.SelectedIndex == 1 ? ImageFormat.Png : ImageFormat.Jpeg;
+            s.Display.ImageFormat = _imageFormatPicker.SelectedIndex == 1 ? RemoteLink.Shared.Models.ImageFormat.Png : RemoteLink.Shared.Models.ImageFormat.Jpeg;
         s.Display.UseDeltaEncoding = _deltaEncodingSw?.IsToggled ?? s.Display.UseDeltaEncoding;
 
         // Audio
@@ -766,7 +765,7 @@ public class SettingsPage : ContentPage
 
     private async void OnResetClicked(object? sender, EventArgs e)
     {
-        bool confirm = await DisplayAlert(
+        bool confirm = await DisplayAlertAsync(
             "Reset Settings",
             "Reset all settings to their factory defaults? This cannot be undone.",
             "Reset",

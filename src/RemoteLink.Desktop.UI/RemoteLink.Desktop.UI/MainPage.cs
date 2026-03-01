@@ -27,6 +27,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly WindowsSystemTrayService _trayService;
     private readonly IAppSettingsService _appSettings;
     private readonly Func<SettingsPage> _settingsPageFactory;
+    private readonly IFileTransferService _fileTransfer;
+    private readonly ISessionRecorder _sessionRecorder;
+    private readonly IScreenCapture _screenCapture;
+    private readonly IMessagingService _messaging;
+    private readonly Func<ChatPage> _chatPageFactory;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
@@ -75,6 +80,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private Label? _partnerStatusLabel;
     private Picker? _discoveredHostsPicker;
 
+    // UI element references — session toolbar
+    private Border? _sessionToolbar;
+    private Button? _recordButton;
+    private Button? _chatButton;
+
     public MainPage(
         ILogger<MainPage> logger,
         RemoteDesktopHost host,
@@ -87,7 +97,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         RemoteDesktopClient client,
         WindowsSystemTrayService trayService,
         IAppSettingsService appSettings,
-        Func<SettingsPage> settingsPageFactory)
+        Func<SettingsPage> settingsPageFactory,
+        IFileTransferService fileTransfer,
+        ISessionRecorder sessionRecorder,
+        IScreenCapture screenCapture,
+        IMessagingService messaging,
+        Func<ChatPage> chatPageFactory)
     {
         _logger = logger;
         _host = host;
@@ -101,6 +116,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _trayService = trayService;
         _appSettings = appSettings;
         _settingsPageFactory = settingsPageFactory;
+        _fileTransfer = fileTransfer;
+        _sessionRecorder = sessionRecorder;
+        _screenCapture = screenCapture;
+        _messaging = messaging;
+        _chatPageFactory = chatPageFactory;
 
         _deviceNumericId = GenerateNumericId(Environment.MachineName);
 
@@ -121,6 +141,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _client.DeviceLost += OnRemoteHostLost;
         _client.ConnectionStateChanged += OnClientConnectionStateChanged;
         _client.PairingFailed += OnClientPairingFailed;
+
+        // Chat badge updates
+        _messaging.MessageReceived += OnChatMessageReceived;
     }
 
     /// <summary>
@@ -717,6 +740,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         TextColor = Color.FromArgb("#888888"),
                     },
                     _sessionListLayout,
+                    BuildSessionToolbar(),
                 }
             }
         };
@@ -1220,6 +1244,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_connectionLabel != null) _connectionLabel.Text = _connectionInfo;
                 UpdatePinMetadata();
             }
+            UpdateToolbarVisibility();
         });
     }
 
@@ -1487,6 +1512,280 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 _partnerStatusLabel.TextColor = color;
             }
         });
+    }
+
+    // ── Session toolbar ────────────────────────────────────────────────
+
+    private View BuildSessionToolbar()
+    {
+        var filesButton = new Button
+        {
+            Text = "📁 Files",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 5,
+            Padding = new Thickness(10, 4),
+            HeightRequest = 32,
+        };
+        filesButton.Clicked += OnFileTransferClicked;
+
+        _chatButton = new Button
+        {
+            Text = "💬 Chat",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 5,
+            Padding = new Thickness(10, 4),
+            HeightRequest = 32,
+        };
+        _chatButton.Clicked += OnChatClicked;
+
+        _recordButton = new Button
+        {
+            Text = "⏺ Record",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 5,
+            Padding = new Thickness(10, 4),
+            HeightRequest = 32,
+        };
+        _recordButton.Clicked += OnRecordClicked;
+
+        var qualityButton = new Button
+        {
+            Text = "📊 Quality",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 5,
+            Padding = new Thickness(10, 4),
+            HeightRequest = 32,
+        };
+        qualityButton.Clicked += OnQualityClicked;
+
+        var monitorButton = new Button
+        {
+            Text = "🖥 Monitor",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#E8E0FF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 5,
+            Padding = new Thickness(10, 4),
+            HeightRequest = 32,
+        };
+        monitorButton.Clicked += OnMonitorClicked;
+
+        var disconnectButton = new Button
+        {
+            Text = "✕ Disconnect",
+            FontSize = 11,
+            BackgroundColor = Color.FromArgb("#FFEAEA"),
+            TextColor = Color.FromArgb("#D32F2F"),
+            CornerRadius = 5,
+            Padding = new Thickness(10, 4),
+            HeightRequest = 32,
+        };
+        disconnectButton.Clicked += OnDisconnectAllClicked;
+
+        var buttonRow = new ScrollView
+        {
+            Orientation = ScrollOrientation.Horizontal,
+            Content = new HorizontalStackLayout
+            {
+                Spacing = 6,
+                Children = { filesButton, _chatButton, _recordButton, qualityButton, monitorButton, disconnectButton }
+            }
+        };
+
+        _sessionToolbar = new Border
+        {
+            Margin = new Thickness(0, 6, 0, 0),
+            Padding = new Thickness(8, 6),
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 6 },
+            BackgroundColor = Color.FromArgb("#F8F5FF"),
+            Stroke = Color.FromArgb("#E0D8F8"),
+            StrokeThickness = 1,
+            IsVisible = false,
+            Content = new StackLayout
+            {
+                Spacing = 4,
+                Children =
+                {
+                    new Label
+                    {
+                        Text = "Session Actions",
+                        FontSize = 10,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Color.FromArgb("#888888"),
+                    },
+                    buttonRow
+                }
+            }
+        };
+
+        return _sessionToolbar;
+    }
+
+    private void UpdateToolbarVisibility()
+    {
+        if (_sessionToolbar != null)
+            _sessionToolbar.IsVisible = _activeConnectionCount > 0;
+    }
+
+    private void UpdateChatButton()
+    {
+        if (_chatButton == null) return;
+        int unread = _messaging.UnreadCount;
+        _chatButton.Text = unread > 0 ? $"💬 Chat ({unread})" : "💬 Chat";
+    }
+
+    private void OnChatMessageReceived(object? sender, ChatMessage message)
+    {
+        MainThread.BeginInvokeOnMainThread(UpdateChatButton);
+    }
+
+    private async void OnFileTransferClicked(object? sender, EventArgs e)
+    {
+        if (_activeConnectionCount == 0)
+        {
+            await DisplayAlertAsync("No Connection", "No active connections for file transfer.", "OK");
+            return;
+        }
+
+        try
+        {
+            var result = await FilePicker.Default.PickAsync();
+            if (result == null) return;
+
+            var transferId = await _fileTransfer.InitiateTransferAsync(
+                result.FullPath,
+                FileTransferDirection.Upload);
+
+            _logger.LogInformation("File transfer initiated: {TransferId} for {File}", transferId, result.FileName);
+            await DisplayAlertAsync("File Transfer", $"Sending '{result.FileName}'...", "OK");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "File transfer failed");
+            await DisplayAlertAsync("Error", $"File transfer failed: {ex.Message}", "OK");
+        }
+    }
+
+    private async void OnChatClicked(object? sender, EventArgs e)
+    {
+        var page = _chatPageFactory();
+        await Navigation.PushAsync(page);
+        MainThread.BeginInvokeOnMainThread(UpdateChatButton);
+    }
+
+    private async void OnRecordClicked(object? sender, EventArgs e)
+    {
+        if (_sessionRecorder.IsRecording)
+        {
+            await _sessionRecorder.StopRecordingAsync();
+            if (_recordButton != null)
+            {
+                _recordButton.Text = "⏺ Record";
+                _recordButton.BackgroundColor = Color.FromArgb("#E8E0FF");
+                _recordButton.TextColor = Color.FromArgb("#512BD4");
+            }
+            _logger.LogInformation("Session recording stopped from toolbar");
+        }
+        else
+        {
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+                $"RemoteLink_session_{timestamp}.mp4");
+
+            var started = await _sessionRecorder.StartRecordingAsync(path);
+            if (started)
+            {
+                if (_recordButton != null)
+                {
+                    _recordButton.Text = "⏹ Stop Rec";
+                    _recordButton.BackgroundColor = Color.FromArgb("#D32F2F");
+                    _recordButton.TextColor = Colors.White;
+                }
+                _logger.LogInformation("Session recording started: {Path}", path);
+            }
+            else
+            {
+                await DisplayAlertAsync("Recording", "Could not start recording. Ensure FFmpeg is installed.", "OK");
+            }
+        }
+    }
+
+    private async void OnQualityClicked(object? sender, EventArgs e)
+    {
+        var choice = await DisplayActionSheetAsync(
+            "Capture Quality",
+            "Cancel",
+            null,
+            "Low (50%)", "Medium (65%)", "High (75%)", "Ultra (85%)");
+
+        var quality = choice switch
+        {
+            "Low (50%)" => 50,
+            "Medium (65%)" => 65,
+            "High (75%)" => 75,
+            "Ultra (85%)" => 85,
+            _ => -1
+        };
+
+        if (quality >= 0)
+        {
+            _screenCapture.SetQuality(quality);
+            _logger.LogInformation("Capture quality set to {Quality}%", quality);
+        }
+    }
+
+    private async void OnMonitorClicked(object? sender, EventArgs e)
+    {
+        try
+        {
+            var monitors = await _screenCapture.GetMonitorsAsync();
+            if (monitors.Count == 0)
+            {
+                await DisplayAlertAsync("Monitors", "No monitors found.", "OK");
+                return;
+            }
+
+            var selectedId = _screenCapture.GetSelectedMonitorId();
+            var options = monitors
+                .Select(m => $"{m.Name} ({m.Width}×{m.Height}){(m.IsPrimary ? " [Primary]" : "")}{(m.Id == selectedId ? " ✓" : "")}")
+                .ToArray();
+
+            var choice = await DisplayActionSheetAsync("Select Monitor", "Cancel", null, options);
+            if (string.IsNullOrEmpty(choice) || choice == "Cancel") return;
+
+            int idx = Array.IndexOf(options, choice);
+            if (idx >= 0)
+            {
+                await _screenCapture.SelectMonitorAsync(monitors[idx].Id);
+                _logger.LogInformation("Monitor selected: {Monitor}", monitors[idx].Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Monitor selection failed");
+            await DisplayAlertAsync("Error", $"Failed to get monitors: {ex.Message}", "OK");
+        }
+    }
+
+    private async void OnDisconnectAllClicked(object? sender, EventArgs e)
+    {
+        bool confirm = await DisplayAlertAsync(
+            "Disconnect All",
+            "Disconnect all active sessions and stop the host?",
+            "Disconnect",
+            "Cancel");
+
+        if (confirm)
+            await StopHostAsync();
     }
 
     // ── Shared helpers ─────────────────────────────────────────────────
