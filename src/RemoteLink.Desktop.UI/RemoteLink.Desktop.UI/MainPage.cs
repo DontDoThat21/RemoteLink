@@ -25,6 +25,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly ISessionManager _sessionManager;
     private readonly RemoteDesktopClient _client;
     private readonly WindowsSystemTrayService _trayService;
+    private readonly IAppSettingsService _appSettings;
+    private readonly Func<SettingsPage> _settingsPageFactory;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
@@ -83,7 +85,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         IPerformanceMonitor perfMonitor,
         ISessionManager sessionManager,
         RemoteDesktopClient client,
-        WindowsSystemTrayService trayService)
+        WindowsSystemTrayService trayService,
+        IAppSettingsService appSettings,
+        Func<SettingsPage> settingsPageFactory)
     {
         _logger = logger;
         _host = host;
@@ -95,11 +99,16 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _sessionManager = sessionManager;
         _client = client;
         _trayService = trayService;
+        _appSettings = appSettings;
+        _settingsPageFactory = settingsPageFactory;
 
         _deviceNumericId = GenerateNumericId(Environment.MachineName);
 
         Title = "RemoteLink Desktop";
         BackgroundColor = Color.FromArgb("#F5F5F5");
+
+        // Load settings asynchronously; UI is built immediately with defaults
+        _ = Task.Run(async () => await _appSettings.LoadAsync());
 
         Content = BuildLayout();
 
@@ -156,6 +165,21 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private View BuildHeader()
     {
+        var settingsButton = new Button
+        {
+            Text = "⚙",
+            FontSize = 18,
+            BackgroundColor = Colors.Transparent,
+            TextColor = Color.FromArgb("#D0C0FF"),
+            CornerRadius = 4,
+            Padding = new Thickness(8, 0),
+            HeightRequest = 36,
+            WidthRequest = 40,
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.End
+        };
+        settingsButton.Clicked += OnSettingsClicked;
+
         return new Grid
         {
             BackgroundColor = Color.FromArgb("#512BD4"),
@@ -163,6 +187,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             ColumnDefinitions =
             {
                 new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
                 new ColumnDefinition(GridLength.Auto),
             },
             Children =
@@ -182,9 +207,16 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     TextColor = Color.FromArgb("#D0C0FF"),
                     VerticalOptions = LayoutOptions.Center,
                     HorizontalOptions = LayoutOptions.End
-                }, column: 1)
+                }, column: 1),
+                CreateGridChild(settingsButton, column: 2)
             }
         };
+    }
+
+    private async void OnSettingsClicked(object? sender, EventArgs e)
+    {
+        var page = _settingsPageFactory();
+        await Navigation.PushAsync(page);
     }
 
     /// <summary>

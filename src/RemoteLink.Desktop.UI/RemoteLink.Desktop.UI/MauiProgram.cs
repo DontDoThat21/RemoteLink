@@ -72,8 +72,14 @@ public static class MauiProgram
         // System tray service (minimize to tray, context menu)
         builder.Services.AddSingleton<WindowsSystemTrayService>();
 
+        // Settings persistence
+        builder.Services.AddSingleton<Shared.Interfaces.IAppSettingsService, Shared.Services.AppSettingsService>();
+
         // Pages
         builder.Services.AddSingleton<MainPage>();
+        builder.Services.AddTransient<SettingsPage>();
+        builder.Services.AddSingleton<Func<SettingsPage>>(provider =>
+            () => provider.GetRequiredService<SettingsPage>());
 
         return builder.Build();
     }

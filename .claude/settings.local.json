@@ -4,7 +4,8 @@
       "Bash(dotnet sln:*)",
       "Bash(dotnet build:*)",
       "Bash(dotnet workload:*)",
-      "Bash(dotnet test:*)"
+      "Bash(dotnet test:*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }
