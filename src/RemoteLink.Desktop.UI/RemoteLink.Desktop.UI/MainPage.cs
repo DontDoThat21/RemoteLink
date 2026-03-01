@@ -22,11 +22,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly INetworkDiscovery _networkDiscovery;
     private readonly IInputHandler _inputHandler;
     private readonly IPerformanceMonitor _perfMonitor;
+    private readonly ISessionManager _sessionManager;
     private readonly RemoteDesktopClient _client;
     private readonly WindowsSystemTrayService _trayService;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
+    private IDispatcherTimer? _metricsTimer;
 
     // UI state — host side
     private string _currentPin = "------";
@@ -55,6 +57,15 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private Label? _copyIdFeedback;
     private Label? _copyPinFeedback;
 
+    // UI element references — connection status panel
+    private Label? _connectedClientsLabel;
+    private Label? _fpsLabel;
+    private Label? _bandwidthLabel;
+    private Label? _latencyLabel;
+    private Label? _qualityBadge;
+    private StackLayout? _sessionListLayout;
+    private Label? _noSessionsLabel;
+
     // UI element references — partner connection panel
     private Entry? _partnerIdEntry;
     private Entry? _partnerPinEntry;
@@ -70,6 +81,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         INetworkDiscovery networkDiscovery,
         IInputHandler inputHandler,
         IPerformanceMonitor perfMonitor,
+        ISessionManager sessionManager,
         RemoteDesktopClient client,
         WindowsSystemTrayService trayService)
     {
@@ -80,6 +92,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _networkDiscovery = networkDiscovery;
         _inputHandler = inputHandler;
         _perfMonitor = perfMonitor;
+        _sessionManager = sessionManager;
         _client = client;
         _trayService = trayService;
 
@@ -516,6 +529,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private View BuildConnectionPanel()
     {
+        // ── Status indicator + label row ──
         _statusIndicator = new BoxView
         {
             Color = Colors.Gray,
@@ -533,10 +547,116 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             VerticalOptions = LayoutOptions.Center
         };
 
+        _connectedClientsLabel = new Label
+        {
+            Text = "0 clients",
+            FontSize = 11,
+            TextColor = Color.FromArgb("#999999"),
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalOptions = LayoutOptions.End
+        };
+
+        var statusRow = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Auto),
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+            ColumnSpacing = 8,
+            Children =
+            {
+                _statusIndicator,
+                CreateGridChild(_connectionLabel, column: 1),
+                CreateGridChild(_connectedClientsLabel, column: 2),
+            }
+        };
+
+        // ── Metrics row: FPS | Bandwidth | Latency | Quality ──
+        _fpsLabel = new Label
+        {
+            Text = "-- fps",
+            FontSize = 12,
+            TextColor = Color.FromArgb("#999999"),
+            HorizontalTextAlignment = TextAlignment.Center
+        };
+
+        _bandwidthLabel = new Label
+        {
+            Text = "-- KB/s",
+            FontSize = 12,
+            TextColor = Color.FromArgb("#999999"),
+            HorizontalTextAlignment = TextAlignment.Center
+        };
+
+        _latencyLabel = new Label
+        {
+            Text = "-- ms",
+            FontSize = 12,
+            TextColor = Color.FromArgb("#999999"),
+            HorizontalTextAlignment = TextAlignment.Center
+        };
+
+        _qualityBadge = new Label
+        {
+            Text = "--",
+            FontSize = 11,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Colors.White,
+            BackgroundColor = Color.FromArgb("#CCCCCC"),
+            HorizontalTextAlignment = TextAlignment.Center,
+            VerticalTextAlignment = TextAlignment.Center,
+            Padding = new Thickness(8, 2),
+            HorizontalOptions = LayoutOptions.Center
+        };
+
+        var metricsRow = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Star),
+            },
+            ColumnSpacing = 6,
+            Children =
+            {
+                BuildMetricCell("FPS", _fpsLabel),
+                CreateGridChild(BuildMetricCell("Bandwidth", _bandwidthLabel), column: 1),
+                CreateGridChild(BuildMetricCell("Latency", _latencyLabel), column: 2),
+                CreateGridChild(BuildMetricCell("Quality", _qualityBadge), column: 3),
+            }
+        };
+
+        // ── Active sessions list ──
+        _noSessionsLabel = new Label
+        {
+            Text = "No active sessions",
+            FontSize = 12,
+            TextColor = Color.FromArgb("#AAAAAA"),
+            HorizontalOptions = LayoutOptions.Center,
+            Margin = new Thickness(0, 4)
+        };
+
+        _sessionListLayout = new StackLayout
+        {
+            Spacing = 4,
+            Children = { _noSessionsLabel }
+        };
+
+        var divider = new BoxView
+        {
+            Color = Color.FromArgb("#EEEEEE"),
+            HeightRequest = 1,
+            Margin = new Thickness(0, 4, 0, 2)
+        };
+
         return new Border
         {
             Margin = new Thickness(16, 4, 16, 4),
-            Padding = new Thickness(16),
+            Padding = new Thickness(16, 12),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
             BackgroundColor = Colors.White,
             Stroke = Color.FromArgb("#E0E0E0"),
@@ -544,28 +664,47 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             VerticalOptions = LayoutOptions.Fill,
             Content = new StackLayout
             {
-                Spacing = 12,
+                Spacing = 8,
                 Children =
                 {
                     new Label
                     {
                         Text = "Connection Status",
                         FontSize = 12,
+                        FontAttributes = FontAttributes.Bold,
                         TextColor = Color.FromArgb("#888888"),
                     },
-                    new HorizontalStackLayout
-                    {
-                        Spacing = 8,
-                        Children = { _statusIndicator, _connectionLabel }
-                    },
+                    statusRow,
+                    metricsRow,
+                    divider,
                     new Label
                     {
-                        Text = "Waiting for incoming connections...\nMobile clients on the same network will discover this host automatically.",
-                        FontSize = 12,
-                        TextColor = Color.FromArgb("#AAAAAA"),
-                        LineBreakMode = LineBreakMode.WordWrap
-                    }
+                        Text = "Active Sessions",
+                        FontSize = 11,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Color.FromArgb("#888888"),
+                    },
+                    _sessionListLayout,
                 }
+            }
+        };
+    }
+
+    private static View BuildMetricCell(string header, View valueView)
+    {
+        return new StackLayout
+        {
+            Spacing = 2,
+            Children =
+            {
+                new Label
+                {
+                    Text = header,
+                    FontSize = 9,
+                    TextColor = Color.FromArgb("#AAAAAA"),
+                    HorizontalTextAlignment = TextAlignment.Center
+                },
+                valueView,
             }
         };
     }
@@ -710,6 +849,158 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _pinExpiryTimer = null;
     }
 
+    // ── Metrics timer ──────────────────────────────────────────────────
+
+    private void StartMetricsTimer()
+    {
+        StopMetricsTimer();
+        _metricsTimer = Dispatcher.CreateTimer();
+        _metricsTimer.Interval = TimeSpan.FromSeconds(2);
+        _metricsTimer.Tick += (_, _) => RefreshConnectionMetrics();
+        _metricsTimer.Start();
+    }
+
+    private void StopMetricsTimer()
+    {
+        _metricsTimer?.Stop();
+        _metricsTimer = null;
+    }
+
+    private void RefreshConnectionMetrics()
+    {
+        var fps = _perfMonitor.GetCurrentFps();
+        var bandwidth = _perfMonitor.GetCurrentBandwidth();
+        var latency = _perfMonitor.GetAverageLatency();
+        var rating = ConnectionQuality.CalculateRating(fps, latency, bandwidth);
+
+        var bandwidthText = bandwidth < 1024
+            ? $"{bandwidth} B/s"
+            : bandwidth < 1024 * 1024
+                ? $"{bandwidth / 1024.0:F1} KB/s"
+                : $"{bandwidth / (1024.0 * 1024.0):F1} MB/s";
+
+        var (ratingText, ratingColor) = rating switch
+        {
+            QualityRating.Excellent => ("Excellent", Color.FromArgb("#4CAF50")),
+            QualityRating.Good => ("Good", Color.FromArgb("#8BC34A")),
+            QualityRating.Fair => ("Fair", Color.FromArgb("#FFA500")),
+            QualityRating.Poor => ("Poor", Color.FromArgb("#D32F2F")),
+            _ => ("--", Color.FromArgb("#CCCCCC"))
+        };
+
+        var sessions = _sessionManager.GetAllSessions()
+            .Where(s => s.Status == SessionStatus.Connected)
+            .ToList();
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            bool hasActiveConnections = _activeConnectionCount > 0;
+
+            if (_fpsLabel != null)
+            {
+                _fpsLabel.Text = hasActiveConnections ? $"{fps:F1} fps" : "-- fps";
+                _fpsLabel.TextColor = hasActiveConnections ? Color.FromArgb("#333333") : Color.FromArgb("#999999");
+            }
+
+            if (_bandwidthLabel != null)
+            {
+                _bandwidthLabel.Text = hasActiveConnections ? bandwidthText : "-- KB/s";
+                _bandwidthLabel.TextColor = hasActiveConnections ? Color.FromArgb("#333333") : Color.FromArgb("#999999");
+            }
+
+            if (_latencyLabel != null)
+            {
+                _latencyLabel.Text = hasActiveConnections ? $"{latency} ms" : "-- ms";
+                _latencyLabel.TextColor = hasActiveConnections ? Color.FromArgb("#333333") : Color.FromArgb("#999999");
+            }
+
+            if (_qualityBadge != null)
+            {
+                _qualityBadge.Text = hasActiveConnections ? ratingText : "--";
+                _qualityBadge.BackgroundColor = hasActiveConnections ? ratingColor : Color.FromArgb("#CCCCCC");
+            }
+
+            if (_connectedClientsLabel != null)
+            {
+                _connectedClientsLabel.Text = _activeConnectionCount == 1
+                    ? "1 client"
+                    : $"{_activeConnectionCount} clients";
+            }
+
+            RefreshSessionList(sessions);
+        });
+    }
+
+    private void RefreshSessionList(List<RemoteSession> activeSessions)
+    {
+        if (_sessionListLayout == null) return;
+
+        _sessionListLayout.Children.Clear();
+
+        if (activeSessions.Count == 0)
+        {
+            _noSessionsLabel ??= new Label
+            {
+                Text = "No active sessions",
+                FontSize = 12,
+                TextColor = Color.FromArgb("#AAAAAA"),
+                HorizontalOptions = LayoutOptions.Center,
+                Margin = new Thickness(0, 4)
+            };
+            _sessionListLayout.Children.Add(_noSessionsLabel);
+            return;
+        }
+
+        foreach (var session in activeSessions)
+        {
+            var duration = session.Duration;
+            var durationText = duration.TotalHours >= 1
+                ? $"{(int)duration.TotalHours}h {duration.Minutes:D2}m {duration.Seconds:D2}s"
+                : $"{duration.Minutes:D2}m {duration.Seconds:D2}s";
+
+            var sessionRow = new Grid
+            {
+                ColumnDefinitions =
+                {
+                    new ColumnDefinition(GridLength.Auto),
+                    new ColumnDefinition(GridLength.Star),
+                    new ColumnDefinition(GridLength.Auto),
+                },
+                ColumnSpacing = 8,
+                Padding = new Thickness(4, 3),
+                BackgroundColor = Color.FromArgb("#F8F8FF"),
+                Children =
+                {
+                    new BoxView
+                    {
+                        Color = Color.FromArgb("#4CAF50"),
+                        WidthRequest = 8,
+                        HeightRequest = 8,
+                        CornerRadius = 4,
+                        VerticalOptions = LayoutOptions.Center
+                    },
+                    CreateGridChild(new Label
+                    {
+                        Text = session.ClientDeviceName,
+                        FontSize = 12,
+                        TextColor = Color.FromArgb("#333333"),
+                        VerticalOptions = LayoutOptions.Center,
+                        LineBreakMode = LineBreakMode.TailTruncation
+                    }, column: 1),
+                    CreateGridChild(new Label
+                    {
+                        Text = durationText,
+                        FontSize = 11,
+                        TextColor = Color.FromArgb("#888888"),
+                        VerticalOptions = LayoutOptions.Center
+                    }, column: 2),
+                }
+            };
+
+            _sessionListLayout.Children.Add(sessionRow);
+        }
+    }
+
     // ── Host-side event handlers ───────────────────────────────────────
 
     private async void OnStartStopClicked(object? sender, EventArgs e)
@@ -756,6 +1047,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
             UpdateStatusBar("Running — Listening for connections", Color.FromArgb("#4CAF50"));
             _trayService.UpdateStatus("Running", 0);
+            StartMetricsTimer();
+            RefreshConnectionMetrics();
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -811,6 +1104,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             });
 
             _activeConnectionCount = 0;
+            StopMetricsTimer();
+            RefreshConnectionMetrics();
             UpdateStatusBar("Stopped", Colors.Gray);
             _trayService.UpdateStatus("Stopped", 0);
             _logger.LogInformation("Desktop host stopped from UI");
