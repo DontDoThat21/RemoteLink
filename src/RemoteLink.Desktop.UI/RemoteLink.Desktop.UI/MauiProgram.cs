@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Desktop.Services;
+using RemoteLink.Desktop.UI.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
@@ -67,6 +68,9 @@ public static class MauiProgram
             var discovery = provider.GetRequiredService<INetworkDiscovery>();
             return new RemoteDesktopClient(logger, discovery);
         });
+
+        // System tray service (minimize to tray, context menu)
+        builder.Services.AddSingleton<WindowsSystemTrayService>();
 
         // Pages
         builder.Services.AddSingleton<MainPage>();

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Desktop.Services;
+using RemoteLink.Desktop.UI.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
@@ -22,6 +23,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly IInputHandler _inputHandler;
     private readonly IPerformanceMonitor _perfMonitor;
     private readonly RemoteDesktopClient _client;
+    private readonly WindowsSystemTrayService _trayService;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
@@ -37,6 +39,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     // UI state — client (partner connection) side
     private bool _isConnecting;
+    private int _activeConnectionCount;
     private readonly List<DeviceInfo> _discoveredHosts = new();
 
     // UI element references — host panel
@@ -67,7 +70,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         INetworkDiscovery networkDiscovery,
         IInputHandler inputHandler,
         IPerformanceMonitor perfMonitor,
-        RemoteDesktopClient client)
+        RemoteDesktopClient client,
+        WindowsSystemTrayService trayService)
     {
         _logger = logger;
         _host = host;
@@ -77,6 +81,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _inputHandler = inputHandler;
         _perfMonitor = perfMonitor;
         _client = client;
+        _trayService = trayService;
 
         _deviceNumericId = GenerateNumericId(Environment.MachineName);
 
@@ -750,6 +755,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             });
 
             UpdateStatusBar("Running — Listening for connections", Color.FromArgb("#4CAF50"));
+            _trayService.UpdateStatus("Running", 0);
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -804,7 +810,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 }
             });
 
+            _activeConnectionCount = 0;
             UpdateStatusBar("Stopped", Colors.Gray);
+            _trayService.UpdateStatus("Stopped", 0);
             _logger.LogInformation("Desktop host stopped from UI");
         }
         catch (Exception ex)
@@ -861,6 +869,15 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private void OnConnectionStateChanged(object? sender, bool connected)
     {
+        if (connected)
+            _activeConnectionCount++;
+        else
+            _activeConnectionCount = Math.Max(0, _activeConnectionCount - 1);
+
+        _trayService.UpdateStatus(
+            _isRunning ? "Running" : "Stopped",
+            _activeConnectionCount);
+
         MainThread.BeginInvokeOnMainThread(() =>
         {
             if (connected)
