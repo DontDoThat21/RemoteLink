@@ -23,7 +23,7 @@ public class ChatPage : ContentPage
         _localName = Environment.MachineName;
 
         Title = "Chat";
-        BackgroundColor = Color.FromArgb("#F5F5F5");
+        BackgroundColor = ThemeColors.PageBackground;
 
         _messageList = new StackLayout
         {
@@ -42,15 +42,15 @@ public class ChatPage : ContentPage
             Placeholder = "Type a message...",
             HorizontalOptions = LayoutOptions.Fill,
             ReturnType = ReturnType.Send,
-            TextColor = Color.FromArgb("#333333"),
-            PlaceholderColor = Color.FromArgb("#AAAAAA"),
+            TextColor = ThemeColors.EntryText,
+            PlaceholderColor = ThemeColors.EntryPlaceholder,
         };
         _messageEntry.Completed += OnSendClicked;
 
         var sendButton = new Button
         {
             Text = "Send",
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 6,
             WidthRequest = 70,
@@ -67,7 +67,7 @@ public class ChatPage : ContentPage
             },
             ColumnSpacing = 8,
             Padding = new Thickness(12, 8),
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.ChatInputBackground,
             Children =
             {
                 _messageEntry,
@@ -123,7 +123,7 @@ public class ChatPage : ContentPage
             {
                 Text = "No messages yet. Say hello!",
                 FontSize = 13,
-                TextColor = Color.FromArgb("#AAAAAA"),
+                TextColor = ThemeColors.TextMuted,
                 HorizontalOptions = LayoutOptions.Center,
                 Margin = new Thickness(0, 20)
             });
@@ -144,8 +144,8 @@ public class ChatPage : ContentPage
         {
             Padding = new Thickness(10, 6),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
-            BackgroundColor = isLocal ? Color.FromArgb("#512BD4") : Colors.White,
-            Stroke = isLocal ? Colors.Transparent : Color.FromArgb("#E0E0E0"),
+            BackgroundColor = isLocal ? ThemeColors.Accent : ThemeColors.ChatBubbleRemote,
+            Stroke = isLocal ? Colors.Transparent : ThemeColors.ChatBubbleRemoteBorder,
             StrokeThickness = 1,
             MaximumWidthRequest = 300,
             Content = new StackLayout
@@ -158,19 +158,19 @@ public class ChatPage : ContentPage
                         Text = message.SenderName,
                         FontSize = 10,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = isLocal ? Color.FromArgb("#D0C0FF") : Color.FromArgb("#888888"),
+                        TextColor = isLocal ? ThemeColors.AccentText : ThemeColors.TextSecondary,
                     },
                     new Label
                     {
                         Text = message.Text,
                         FontSize = 13,
-                        TextColor = isLocal ? Colors.White : Color.FromArgb("#333333"),
+                        TextColor = isLocal ? Colors.White : ThemeColors.TextPrimary,
                     },
                     new Label
                     {
                         Text = message.Timestamp.ToLocalTime().ToString("HH:mm"),
                         FontSize = 9,
-                        TextColor = isLocal ? Color.FromArgb("#C0B0FF") : Color.FromArgb("#AAAAAA"),
+                        TextColor = isLocal ? Color.FromArgb("#C0B0FF") : ThemeColors.TextMuted,
                         HorizontalOptions = LayoutOptions.End,
                     }
                 }

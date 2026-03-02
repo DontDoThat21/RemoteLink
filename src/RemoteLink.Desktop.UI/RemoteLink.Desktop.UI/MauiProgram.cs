@@ -86,6 +86,9 @@ public static class MauiProgram
         builder.Services.AddTransient<ChatPage>();
         builder.Services.AddSingleton<Func<ChatPage>>(provider =>
             () => provider.GetRequiredService<ChatPage>());
+        builder.Services.AddTransient<RemoteViewerPage>();
+        builder.Services.AddSingleton<Func<RemoteViewerPage>>(provider =>
+            () => provider.GetRequiredService<RemoteViewerPage>());
 
         return builder.Build();
     }

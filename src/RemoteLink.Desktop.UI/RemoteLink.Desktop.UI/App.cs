@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using RemoteLink.Desktop.UI.Services;
+using RemoteLink.Shared.Interfaces;
 
 namespace RemoteLink.Desktop.UI;
 
@@ -7,7 +8,9 @@ public partial class App : Application
 {
     private readonly MainPage _mainPage;
     private readonly WindowsSystemTrayService _trayService;
+    private readonly IAppSettingsService _appSettings;
     private Window? _mainWindow;
+    private NavigationPage? _navPage;
     private bool _isQuitting;
 
     [DllImport("user32.dll")]
@@ -22,23 +25,49 @@ public partial class App : Application
     private const int SW_SHOW = 5;
     private const int SW_RESTORE = 9;
 
-    public App(MainPage mainPage, WindowsSystemTrayService trayService)
+    public App(MainPage mainPage, WindowsSystemTrayService trayService, IAppSettingsService appSettings)
     {
         _mainPage = mainPage;
         _trayService = trayService;
+        _appSettings = appSettings;
 
         _trayService.ShowWindowRequested += OnTrayShowRequested;
         _trayService.QuitRequested += OnTrayQuitRequested;
         _trayService.Initialize();
+
+        // Apply initial theme from settings
+        ThemeColors.ApplyTheme(_appSettings.Current.General.Theme);
+
+        // Re-apply theme when settings change
+        _appSettings.SettingsSaved += (_, _) =>
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+                ThemeColors.ApplyTheme(_appSettings.Current.General.Theme));
+        };
+
+        // Re-evaluate when OS theme changes (for System mode)
+        RequestedThemeChanged += (_, _) =>
+        {
+            if (_appSettings.Current.General.Theme == Shared.Models.ThemeMode.System)
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                    ThemeColors.ApplyTheme(Shared.Models.ThemeMode.System));
+            }
+        };
+
+        // Update nav bar colors when theme changes
+        ThemeColors.ThemeChanged += OnThemeChanged;
     }
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        _mainWindow = new Window(new NavigationPage(_mainPage)
+        _navPage = new NavigationPage(_mainPage)
         {
-            BarBackgroundColor = Color.FromArgb("#512BD4"),
-            BarTextColor = Colors.White
-        });
+            BarBackgroundColor = ThemeColors.NavBarBackground,
+            BarTextColor = ThemeColors.TextOnDark
+        };
+
+        _mainWindow = new Window(_navPage);
 
         _mainWindow.Title = "RemoteLink Desktop";
         _mainWindow.Width = 780;
@@ -50,6 +79,18 @@ public partial class App : Application
         _mainWindow.Destroying += OnWindowDestroying;
 
         return _mainWindow;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_navPage != null)
+            {
+                _navPage.BarBackgroundColor = ThemeColors.NavBarBackground;
+                _navPage.BarTextColor = ThemeColors.TextOnDark;
+            }
+        });
     }
 
     private void OnWindowDestroying(object? sender, EventArgs e)

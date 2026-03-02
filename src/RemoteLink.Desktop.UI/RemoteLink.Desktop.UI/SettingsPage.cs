@@ -18,6 +18,7 @@ public class SettingsPage : ContentPage
     private string _activeSection = "General";
 
     // ── General ──────────────────────────────────────────────────────────
+    private Picker? _themePicker;
     private Switch? _minimizeToTraySw;
     private Switch? _showConnectionNotifSw;
     private Switch? _confirmDisconnectSw;
@@ -63,7 +64,7 @@ public class SettingsPage : ContentPage
     {
         _settingsService = settingsService;
         Title = "Settings";
-        BackgroundColor = Color.FromArgb("#F5F5F5");
+        BackgroundColor = ThemeColors.PageBackground;
 
         Content = BuildLayout();
         PopulateControls();
@@ -78,7 +79,7 @@ public class SettingsPage : ContentPage
         // ── Left navigation sidebar ──
         var navStack = new StackLayout
         {
-            BackgroundColor = Color.FromArgb("#2D2D2D"),
+            BackgroundColor = ThemeColors.SettingsSidebarBackground,
             Padding = new Thickness(0, 8),
             Spacing = 2,
             WidthRequest = 150
@@ -88,7 +89,7 @@ public class SettingsPage : ContentPage
         {
             Text = "SETTINGS",
             FontSize = 10,
-            TextColor = Color.FromArgb("#888888"),
+            TextColor = ThemeColors.TextSecondary,
             FontAttributes = FontAttributes.Bold,
             Margin = new Thickness(14, 8, 0, 6)
         });
@@ -121,7 +122,7 @@ public class SettingsPage : ContentPage
         {
             Text = "",
             FontSize = 12,
-            TextColor = Color.FromArgb("#4CAF50"),
+            TextColor = ThemeColors.Success,
             VerticalOptions = LayoutOptions.Center,
             IsVisible = false
         };
@@ -130,7 +131,7 @@ public class SettingsPage : ContentPage
         {
             Text = "Save",
             FontSize = 14,
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 6,
             HeightRequest = 38,
@@ -143,8 +144,8 @@ public class SettingsPage : ContentPage
         {
             Text = "Reset Defaults",
             FontSize = 13,
-            BackgroundColor = Color.FromArgb("#E0E0E0"),
-            TextColor = Color.FromArgb("#333333"),
+            BackgroundColor = ThemeColors.ResetButtonBackground,
+            TextColor = ThemeColors.TextPrimary,
             CornerRadius = 6,
             HeightRequest = 38,
             WidthRequest = 120
@@ -153,7 +154,7 @@ public class SettingsPage : ContentPage
 
         var bottomBar = new Grid
         {
-            BackgroundColor = Color.FromArgb("#EEEEEE"),
+            BackgroundColor = ThemeColors.SettingsBottomBar,
             Padding = new Thickness(16, 8),
             ColumnDefinitions =
             {
@@ -204,7 +205,7 @@ public class SettingsPage : ContentPage
             Text = section,
             FontSize = 13,
             BackgroundColor = Colors.Transparent,
-            TextColor = Color.FromArgb("#CCCCCC"),
+            TextColor = ThemeColors.SettingsNavInactive,
             HorizontalOptions = LayoutOptions.Fill,
             CornerRadius = 0,
             Padding = new Thickness(16, 10),
@@ -234,11 +235,11 @@ public class SettingsPage : ContentPage
         foreach (var (key, btn) in _sectionButtons)
         {
             btn.BackgroundColor = key == section
-                ? Color.FromArgb("#512BD4")
+                ? ThemeColors.Accent
                 : Colors.Transparent;
             btn.TextColor = key == section
                 ? Colors.White
-                : Color.FromArgb("#CCCCCC");
+                : ThemeColors.SettingsNavInactive;
         }
     }
 
@@ -258,12 +259,25 @@ public class SettingsPage : ContentPage
 
     private View BuildGeneralPanel()
     {
+        _themePicker = new Picker
+        {
+            Title = "Theme",
+            BackgroundColor = ThemeColors.EntryBackground,
+            HeightRequest = 36
+        };
+        _themePicker.Items.Add("System");
+        _themePicker.Items.Add("Light");
+        _themePicker.Items.Add("Dark");
+
         _minimizeToTraySw       = new Switch();
         _showConnectionNotifSw  = new Switch();
         _confirmDisconnectSw    = new Switch();
 
         return BuildSection("General", new[]
         {
+            BuildPickerRow("Theme",
+                "Follow the OS dark/light setting, or force a specific theme.",
+                _themePicker),
             BuildSwitchRow("Minimise to tray on close",
                 "Hide the main window instead of quitting when the close button is pressed.",
                 _minimizeToTraySw),
@@ -335,7 +349,7 @@ public class SettingsPage : ContentPage
         _imageFormatPicker = new Picker
         {
             Title = "Format",
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.EntryBackground,
             HeightRequest = 36
         };
         _imageFormatPicker.Items.Add("JPEG");
@@ -385,10 +399,10 @@ public class SettingsPage : ContentPage
         _enableRecordingSw = new Switch();
         _outputDirEntry    = new Entry
         {
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.EntryBackground,
             HeightRequest   = 36,
             FontSize        = 13,
-            TextColor       = Color.FromArgb("#333333")
+            TextColor       = ThemeColors.TextPrimary
         };
         _autoDeleteEntry = BuildNumericEntry("0", 4);
 
@@ -441,13 +455,13 @@ public class SettingsPage : ContentPage
             Text = title,
             FontSize = 20,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#222222"),
+            TextColor = ThemeColors.TextPrimary,
             Margin = new Thickness(0, 0, 0, 16)
         });
 
         var separator = new BoxView
         {
-            Color = Color.FromArgb("#DDDDDD"),
+            Color = ThemeColors.SectionSeparator,
             HeightRequest = 1,
             HorizontalOptions = LayoutOptions.Fill,
             Margin = new Thickness(0, 0, 0, 20)
@@ -467,7 +481,7 @@ public class SettingsPage : ContentPage
             Text = label,
             FontSize = 14,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#222222"),
+            TextColor = ThemeColors.TextPrimary,
             VerticalOptions = LayoutOptions.Center
         };
 
@@ -475,7 +489,7 @@ public class SettingsPage : ContentPage
         {
             Text = description,
             FontSize = 11,
-            TextColor = Color.FromArgb("#888888"),
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 2, 0, 0)
         };
 
@@ -505,7 +519,7 @@ public class SettingsPage : ContentPage
 
         var border = new BoxView
         {
-            Color = Color.FromArgb("#EEEEEE"),
+            Color = ThemeColors.SeparatorLight,
             HeightRequest = 1,
             HorizontalOptions = LayoutOptions.Fill
         };
@@ -526,7 +540,7 @@ public class SettingsPage : ContentPage
             Text = label,
             FontSize = 14,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#222222"),
+            TextColor = ThemeColors.TextPrimary,
             VerticalOptions = LayoutOptions.Center
         };
 
@@ -534,7 +548,7 @@ public class SettingsPage : ContentPage
         {
             Text = description,
             FontSize = 11,
-            TextColor = Color.FromArgb("#888888"),
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 2, 0, 0)
         };
 
@@ -567,7 +581,7 @@ public class SettingsPage : ContentPage
 
         var border = new BoxView
         {
-            Color = Color.FromArgb("#EEEEEE"),
+            Color = ThemeColors.SeparatorLight,
             HeightRequest = 1,
             HorizontalOptions = LayoutOptions.Fill
         };
@@ -582,7 +596,7 @@ public class SettingsPage : ContentPage
             Text = label,
             FontSize = 14,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#222222"),
+            TextColor = ThemeColors.TextPrimary,
             VerticalOptions = LayoutOptions.Center
         };
 
@@ -590,7 +604,7 @@ public class SettingsPage : ContentPage
         {
             Text = description,
             FontSize = 11,
-            TextColor = Color.FromArgb("#888888"),
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 2, 0, 0)
         };
 
@@ -622,7 +636,7 @@ public class SettingsPage : ContentPage
 
         var border = new BoxView
         {
-            Color = Color.FromArgb("#EEEEEE"),
+            Color = ThemeColors.SeparatorLight,
             HeightRequest = 1,
             HorizontalOptions = LayoutOptions.Fill
         };
@@ -636,10 +650,10 @@ public class SettingsPage : ContentPage
             Text = defaultValue,
             MaxLength = maxLength,
             Keyboard = Keyboard.Numeric,
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.EntryBackground,
             HeightRequest = 36,
             FontSize = 13,
-            TextColor = Color.FromArgb("#333333")
+            TextColor = ThemeColors.TextPrimary
         };
 
     // ── Populate from model ───────────────────────────────────────────────
@@ -649,6 +663,7 @@ public class SettingsPage : ContentPage
         var s = _settingsService.Current;
 
         // General
+        if (_themePicker           != null) _themePicker.SelectedIndex       = (int)s.General.Theme;
         if (_minimizeToTraySw      != null) _minimizeToTraySw.IsToggled      = s.General.MinimizeToTray;
         if (_showConnectionNotifSw != null) _showConnectionNotifSw.IsToggled = s.General.ShowConnectionNotifications;
         if (_confirmDisconnectSw   != null) _confirmDisconnectSw.IsToggled   = s.General.ConfirmDisconnect;
@@ -695,6 +710,8 @@ public class SettingsPage : ContentPage
         var s = _settingsService.Current;
 
         // General
+        if (_themePicker != null && _themePicker.SelectedIndex >= 0)
+            s.General.Theme = (ThemeMode)_themePicker.SelectedIndex;
         s.General.MinimizeToTray                = _minimizeToTraySw?.IsToggled      ?? s.General.MinimizeToTray;
         s.General.ShowConnectionNotifications   = _showConnectionNotifSw?.IsToggled ?? s.General.ShowConnectionNotifications;
         s.General.ConfirmDisconnect             = _confirmDisconnectSw?.IsToggled   ?? s.General.ConfirmDisconnect;
@@ -755,11 +772,11 @@ public class SettingsPage : ContentPage
         try
         {
             await _settingsService.SaveAsync();
-            ShowFeedback("Settings saved.", Color.FromArgb("#4CAF50"));
+            ShowFeedback("Settings saved.", ThemeColors.Success);
         }
         catch (Exception ex)
         {
-            ShowFeedback($"Save failed: {ex.Message}", Color.FromArgb("#D32F2F"));
+            ShowFeedback($"Save failed: {ex.Message}", ThemeColors.Danger);
         }
     }
 
@@ -777,11 +794,11 @@ public class SettingsPage : ContentPage
         {
             await _settingsService.ResetAsync();
             PopulateControls();
-            ShowFeedback("Settings reset to defaults.", Color.FromArgb("#4CAF50"));
+            ShowFeedback("Settings reset to defaults.", ThemeColors.Success);
         }
         catch (Exception ex)
         {
-            ShowFeedback($"Reset failed: {ex.Message}", Color.FromArgb("#D32F2F"));
+            ShowFeedback($"Reset failed: {ex.Message}", ThemeColors.Danger);
         }
     }
 

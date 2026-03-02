@@ -40,6 +40,9 @@ public class AppSettings
 
         /// <summary>Confirm before disconnecting an active session.</summary>
         public bool ConfirmDisconnect { get; set; } = true;
+
+        /// <summary>UI theme mode: System (follow OS), Light, or Dark.</summary>
+        public ThemeMode Theme { get; set; } = ThemeMode.System;
     }
 
     /// <summary>Authentication and access-control settings.</summary>
@@ -132,6 +135,19 @@ public class AppSettings
         /// <summary>Start minimised to the system tray.</summary>
         public bool StartMinimized { get; set; } = false;
     }
+}
+
+/// <summary>UI theme mode.</summary>
+public enum ThemeMode
+{
+    /// <summary>Follow the OS dark/light setting.</summary>
+    System,
+
+    /// <summary>Always use the light theme.</summary>
+    Light,
+
+    /// <summary>Always use the dark theme.</summary>
+    Dark
 }
 
 /// <summary>Image encoding format used for screen-capture frames.</summary>

@@ -32,6 +32,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly IScreenCapture _screenCapture;
     private readonly IMessagingService _messaging;
     private readonly Func<ChatPage> _chatPageFactory;
+    private readonly Func<RemoteViewerPage> _viewerPageFactory;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
@@ -102,7 +103,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         ISessionRecorder sessionRecorder,
         IScreenCapture screenCapture,
         IMessagingService messaging,
-        Func<ChatPage> chatPageFactory)
+        Func<ChatPage> chatPageFactory,
+        Func<RemoteViewerPage> viewerPageFactory)
     {
         _logger = logger;
         _host = host;
@@ -121,11 +123,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _screenCapture = screenCapture;
         _messaging = messaging;
         _chatPageFactory = chatPageFactory;
+        _viewerPageFactory = viewerPageFactory;
 
         _deviceNumericId = GenerateNumericId(Environment.MachineName);
 
         Title = "RemoteLink Desktop";
-        BackgroundColor = Color.FromArgb("#F5F5F5");
+        BackgroundColor = ThemeColors.PageBackground;
 
         // Load settings asynchronously; UI is built immediately with defaults
         _ = Task.Run(async () => await _appSettings.LoadAsync());
@@ -144,6 +147,38 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         // Chat badge updates
         _messaging.MessageReceived += OnChatMessageReceived;
+
+        // Theme change — rebuild layout
+        ThemeColors.ThemeChanged += OnThemeChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            BackgroundColor = ThemeColors.PageBackground;
+            Content = BuildLayout();
+        });
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+
+        // When returning from the viewer page (after disconnect), reset connect UI
+        if (!_client.IsConnected && _isConnecting)
+        {
+            _isConnecting = false;
+            SetPartnerStatus("Disconnected", Colors.Gray);
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_connectButton != null)
+                {
+                    _connectButton.Text = "Connect";
+                    _connectButton.BackgroundColor = ThemeColors.Accent;
+                }
+            });
+        }
     }
 
     /// <summary>
@@ -193,7 +228,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Text = "⚙",
             FontSize = 18,
             BackgroundColor = Colors.Transparent,
-            TextColor = Color.FromArgb("#D0C0FF"),
+            TextColor = ThemeColors.AccentText,
             CornerRadius = 4,
             Padding = new Thickness(8, 0),
             HeightRequest = 36,
@@ -205,7 +240,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         return new Grid
         {
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.HeaderBackground,
             Padding = new Thickness(20, 16),
             ColumnDefinitions =
             {
@@ -227,7 +262,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 {
                     Text = "Desktop Host",
                     FontSize = 14,
-                    TextColor = Color.FromArgb("#D0C0FF"),
+                    TextColor = ThemeColors.AccentText,
                     VerticalOptions = LayoutOptions.Center,
                     HorizontalOptions = LayoutOptions.End
                 }, column: 1),
@@ -276,7 +311,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Text = _deviceNumericId,
             FontSize = 22,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#222222"),
+            TextColor = ThemeColors.TextPrimary,
             HorizontalOptions = LayoutOptions.Center,
             FontFamily = "OpenSansRegular"
         };
@@ -285,7 +320,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "",
             FontSize = 10,
-            TextColor = Color.FromArgb("#4CAF50"),
+            TextColor = ThemeColors.Success,
             HorizontalOptions = LayoutOptions.Center,
             IsVisible = false
         };
@@ -294,8 +329,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Copy",
             FontSize = 10,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 4,
             Padding = new Thickness(8, 2),
             HeightRequest = 26,
@@ -309,7 +344,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Text = FormatPinDisplay(),
             FontSize = 22,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4"),
+            TextColor = ThemeColors.Accent,
             HorizontalOptions = LayoutOptions.Center,
             CharacterSpacing = 4,
             FontFamily = "OpenSansRegular"
@@ -319,8 +354,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Show",
             FontSize = 10,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 4,
             Padding = new Thickness(8, 2),
             HeightRequest = 26,
@@ -332,7 +367,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "",
             FontSize = 10,
-            TextColor = Color.FromArgb("#4CAF50"),
+            TextColor = ThemeColors.Success,
             HorizontalOptions = LayoutOptions.Center,
             IsVisible = false
         };
@@ -341,8 +376,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Copy",
             FontSize = 10,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 4,
             Padding = new Thickness(8, 2),
             HeightRequest = 26,
@@ -362,7 +397,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "",
             FontSize = 10,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             HorizontalOptions = LayoutOptions.Center
         };
 
@@ -370,7 +405,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "",
             FontSize = 10,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             HorizontalOptions = LayoutOptions.Center
         };
 
@@ -386,8 +421,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Refresh PIN",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 4,
             Padding = new Thickness(10, 2),
             HeightRequest = 28,
@@ -397,7 +432,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         var divider = new BoxView
         {
-            Color = Color.FromArgb("#E8E0FF"),
+            Color = ThemeColors.Divider,
             HeightRequest = 1,
             Margin = new Thickness(0, 6, 0, 6)
         };
@@ -407,12 +442,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Margin = new Thickness(12, 12, 6, 4),
             Padding = new Thickness(14, 12),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#D8D0F0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             Shadow = new Shadow
             {
-                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Brush = new SolidColorBrush(ThemeColors.CardShadow),
                 Offset = new Point(0, 2),
                 Radius = 6
             },
@@ -426,11 +461,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         Text = "Allow Remote Control",
                         FontSize = 13,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#512BD4"),
+                        TextColor = ThemeColors.Accent,
                         HorizontalOptions = LayoutOptions.Center,
                         Margin = new Thickness(0, 0, 0, 6)
                     },
-                    new Label { Text = "Your ID", FontSize = 11, TextColor = Color.FromArgb("#888888"), HorizontalOptions = LayoutOptions.Center },
+                    new Label { Text = "Your ID", FontSize = 11, TextColor = ThemeColors.TextSecondary, HorizontalOptions = LayoutOptions.Center },
                     _deviceIdLabel,
                     new HorizontalStackLayout
                     {
@@ -439,7 +474,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         Children = { copyIdButton, _copyIdFeedback }
                     },
                     divider,
-                    new Label { Text = "Password", FontSize = 11, TextColor = Color.FromArgb("#888888"), HorizontalOptions = LayoutOptions.Center },
+                    new Label { Text = "Password", FontSize = 11, TextColor = ThemeColors.TextSecondary, HorizontalOptions = LayoutOptions.Center },
                     _pinLabel,
                     pinButtonRow,
                     _copyPinFeedback,
@@ -462,8 +497,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Title = "Select discovered host...",
             FontSize = 13,
             HorizontalOptions = LayoutOptions.Fill,
-            TextColor = Color.FromArgb("#333333"),
-            TitleColor = Color.FromArgb("#AAAAAA"),
+            TextColor = ThemeColors.TextPrimary,
+            TitleColor = ThemeColors.EntryPlaceholder,
         };
         _discoveredHostsPicker.SelectedIndexChanged += OnDiscoveredHostSelected;
 
@@ -475,8 +510,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Keyboard = Keyboard.Text,
             HorizontalOptions = LayoutOptions.Fill,
             ClearButtonVisibility = ClearButtonVisibility.WhileEditing,
-            TextColor = Color.FromArgb("#333333"),
-            PlaceholderColor = Color.FromArgb("#AAAAAA"),
+            TextColor = ThemeColors.TextPrimary,
+            PlaceholderColor = ThemeColors.EntryPlaceholder,
         };
 
         // ── Partner PIN entry ──
@@ -489,8 +524,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             IsPassword = true,
             HorizontalOptions = LayoutOptions.Fill,
             ClearButtonVisibility = ClearButtonVisibility.WhileEditing,
-            TextColor = Color.FromArgb("#333333"),
-            PlaceholderColor = Color.FromArgb("#AAAAAA"),
+            TextColor = ThemeColors.TextPrimary,
+            PlaceholderColor = ThemeColors.EntryPlaceholder,
         };
 
         // ── Connect button ──
@@ -498,7 +533,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Connect",
             FontSize = 14,
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 6,
             HeightRequest = 40,
@@ -511,7 +546,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "",
             FontSize = 11,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             HorizontalOptions = LayoutOptions.Center
         };
 
@@ -527,16 +562,16 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Margin = new Thickness(0, 2),
             Children =
             {
-                new BoxView { Color = Color.FromArgb("#E0E0E0"), HeightRequest = 1, VerticalOptions = LayoutOptions.Center },
+                new BoxView { Color = ThemeColors.SeparatorLight, HeightRequest = 1, VerticalOptions = LayoutOptions.Center },
                 CreateGridChild(new Label
                 {
                     Text = "or enter manually",
                     FontSize = 10,
-                    TextColor = Color.FromArgb("#BBBBBB"),
+                    TextColor = ThemeColors.PartnerSeparatorText,
                     Margin = new Thickness(8, 0),
                     VerticalOptions = LayoutOptions.Center,
                 }, column: 1),
-                CreateGridChild(new BoxView { Color = Color.FromArgb("#E0E0E0"), HeightRequest = 1, VerticalOptions = LayoutOptions.Center }, column: 2),
+                CreateGridChild(new BoxView { Color = ThemeColors.SeparatorLight, HeightRequest = 1, VerticalOptions = LayoutOptions.Center }, column: 2),
             }
         };
 
@@ -545,12 +580,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Margin = new Thickness(6, 12, 12, 4),
             Padding = new Thickness(14, 12),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#D8D0F0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             Shadow = new Shadow
             {
-                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Brush = new SolidColorBrush(ThemeColors.CardShadow),
                 Offset = new Point(0, 2),
                 Radius = 6
             },
@@ -564,16 +599,16 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         Text = "Control Remote Computer",
                         FontSize = 13,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#512BD4"),
+                        TextColor = ThemeColors.Accent,
                         HorizontalOptions = LayoutOptions.Center,
                         Margin = new Thickness(0, 0, 0, 4)
                     },
-                    new Label { Text = "Discovered Hosts", FontSize = 11, TextColor = Color.FromArgb("#888888") },
+                    new Label { Text = "Discovered Hosts", FontSize = 11, TextColor = ThemeColors.TextSecondary },
                     _discoveredHostsPicker,
                     orSeparator,
-                    new Label { Text = "Partner ID", FontSize = 11, TextColor = Color.FromArgb("#888888") },
+                    new Label { Text = "Partner ID", FontSize = 11, TextColor = ThemeColors.TextSecondary },
                     _partnerIdEntry,
-                    new Label { Text = "Password", FontSize = 11, TextColor = Color.FromArgb("#888888") },
+                    new Label { Text = "Password", FontSize = 11, TextColor = ThemeColors.TextSecondary },
                     _partnerPinEntry,
                     _connectButton,
                     _partnerStatusLabel,
@@ -598,7 +633,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = _connectionInfo,
             FontSize = 14,
-            TextColor = Color.FromArgb("#666666"),
+            TextColor = ThemeColors.ConnectionInfoText,
             VerticalOptions = LayoutOptions.Center
         };
 
@@ -606,7 +641,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "0 clients",
             FontSize = 11,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             VerticalOptions = LayoutOptions.Center,
             HorizontalOptions = LayoutOptions.End
         };
@@ -633,7 +668,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "-- fps",
             FontSize = 12,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             HorizontalTextAlignment = TextAlignment.Center
         };
 
@@ -641,7 +676,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "-- KB/s",
             FontSize = 12,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             HorizontalTextAlignment = TextAlignment.Center
         };
 
@@ -649,7 +684,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "-- ms",
             FontSize = 12,
-            TextColor = Color.FromArgb("#999999"),
+            TextColor = ThemeColors.MetricInactive,
             HorizontalTextAlignment = TextAlignment.Center
         };
 
@@ -659,7 +694,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             FontSize = 11,
             FontAttributes = FontAttributes.Bold,
             TextColor = Colors.White,
-            BackgroundColor = Color.FromArgb("#CCCCCC"),
+            BackgroundColor = ThemeColors.QualityInactive,
             HorizontalTextAlignment = TextAlignment.Center,
             VerticalTextAlignment = TextAlignment.Center,
             Padding = new Thickness(8, 2),
@@ -690,7 +725,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "No active sessions",
             FontSize = 12,
-            TextColor = Color.FromArgb("#AAAAAA"),
+            TextColor = ThemeColors.TextMuted,
             HorizontalOptions = LayoutOptions.Center,
             Margin = new Thickness(0, 4)
         };
@@ -703,7 +738,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         var divider = new BoxView
         {
-            Color = Color.FromArgb("#EEEEEE"),
+            Color = ThemeColors.SeparatorLight,
             HeightRequest = 1,
             Margin = new Thickness(0, 4, 0, 2)
         };
@@ -713,8 +748,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Margin = new Thickness(16, 4, 16, 4),
             Padding = new Thickness(16, 12),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.ConnectionPanelBorder,
             StrokeThickness = 1,
             VerticalOptions = LayoutOptions.Fill,
             Content = new StackLayout
@@ -727,7 +762,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         Text = "Connection Status",
                         FontSize = 12,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#888888"),
+                        TextColor = ThemeColors.TextSecondary,
                     },
                     statusRow,
                     metricsRow,
@@ -737,7 +772,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         Text = "Active Sessions",
                         FontSize = 11,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#888888"),
+                        TextColor = ThemeColors.TextSecondary,
                     },
                     _sessionListLayout,
                     BuildSessionToolbar(),
@@ -757,7 +792,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 {
                     Text = header,
                     FontSize = 9,
-                    TextColor = Color.FromArgb("#AAAAAA"),
+                    TextColor = ThemeColors.TextMuted,
                     HorizontalTextAlignment = TextAlignment.Center
                 },
                 valueView,
@@ -771,7 +806,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Start Host",
             FontSize = 16,
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 8,
             HeightRequest = 48,
@@ -795,7 +830,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         return new Grid
         {
-            BackgroundColor = Color.FromArgb("#333333"),
+            BackgroundColor = ThemeColors.StatusBarBackground,
             Padding = new Thickness(8, 6),
             ColumnDefinitions =
             {
@@ -809,7 +844,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 {
                     Text = "v1.0",
                     FontSize = 11,
-                    TextColor = Color.FromArgb("#999999"),
+                    TextColor = ThemeColors.MetricInactive,
                     VerticalOptions = LayoutOptions.Center,
                     HorizontalOptions = LayoutOptions.End
                 }, column: 1)
@@ -860,12 +895,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_pairing.IsPinExpired)
                 {
                     _pinExpiryLabel.Text = "PIN expired";
-                    _pinExpiryLabel.TextColor = Color.FromArgb("#D32F2F");
+                    _pinExpiryLabel.TextColor = ThemeColors.Danger;
                 }
                 else
                 {
                     _pinExpiryLabel.Text = "PIN active";
-                    _pinExpiryLabel.TextColor = Color.FromArgb("#4CAF50");
+                    _pinExpiryLabel.TextColor = ThemeColors.Success;
                 }
             }
 
@@ -875,15 +910,15 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_pairing.IsLockedOut)
                 {
                     _attemptsLabel.Text = "Locked out";
-                    _attemptsLabel.TextColor = Color.FromArgb("#D32F2F");
+                    _attemptsLabel.TextColor = ThemeColors.Danger;
                 }
                 else
                 {
                     int remaining = _pairing.AttemptsRemaining;
                     _attemptsLabel.Text = $"{remaining} attempts left";
                     _attemptsLabel.TextColor = remaining <= 2
-                        ? Color.FromArgb("#FFA500")
-                        : Color.FromArgb("#999999");
+                        ? ThemeColors.Warning
+                        : ThemeColors.MetricInactive;
                 }
             }
         });
@@ -937,11 +972,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         var (ratingText, ratingColor) = rating switch
         {
-            QualityRating.Excellent => ("Excellent", Color.FromArgb("#4CAF50")),
-            QualityRating.Good => ("Good", Color.FromArgb("#8BC34A")),
-            QualityRating.Fair => ("Fair", Color.FromArgb("#FFA500")),
-            QualityRating.Poor => ("Poor", Color.FromArgb("#D32F2F")),
-            _ => ("--", Color.FromArgb("#CCCCCC"))
+            QualityRating.Excellent => ("Excellent", ThemeColors.Success),
+            QualityRating.Good => ("Good", ThemeColors.QualityGood),
+            QualityRating.Fair => ("Fair", ThemeColors.Warning),
+            QualityRating.Poor => ("Poor", ThemeColors.Danger),
+            _ => ("--", ThemeColors.QualityInactive)
         };
 
         var sessions = _sessionManager.GetAllSessions()
@@ -955,25 +990,25 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (_fpsLabel != null)
             {
                 _fpsLabel.Text = hasActiveConnections ? $"{fps:F1} fps" : "-- fps";
-                _fpsLabel.TextColor = hasActiveConnections ? Color.FromArgb("#333333") : Color.FromArgb("#999999");
+                _fpsLabel.TextColor = hasActiveConnections ? ThemeColors.TextPrimary : ThemeColors.MetricInactive;
             }
 
             if (_bandwidthLabel != null)
             {
                 _bandwidthLabel.Text = hasActiveConnections ? bandwidthText : "-- KB/s";
-                _bandwidthLabel.TextColor = hasActiveConnections ? Color.FromArgb("#333333") : Color.FromArgb("#999999");
+                _bandwidthLabel.TextColor = hasActiveConnections ? ThemeColors.TextPrimary : ThemeColors.MetricInactive;
             }
 
             if (_latencyLabel != null)
             {
                 _latencyLabel.Text = hasActiveConnections ? $"{latency} ms" : "-- ms";
-                _latencyLabel.TextColor = hasActiveConnections ? Color.FromArgb("#333333") : Color.FromArgb("#999999");
+                _latencyLabel.TextColor = hasActiveConnections ? ThemeColors.TextPrimary : ThemeColors.MetricInactive;
             }
 
             if (_qualityBadge != null)
             {
                 _qualityBadge.Text = hasActiveConnections ? ratingText : "--";
-                _qualityBadge.BackgroundColor = hasActiveConnections ? ratingColor : Color.FromArgb("#CCCCCC");
+                _qualityBadge.BackgroundColor = hasActiveConnections ? ratingColor : ThemeColors.QualityInactive;
             }
 
             if (_connectedClientsLabel != null)
@@ -999,7 +1034,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             {
                 Text = "No active sessions",
                 FontSize = 12,
-                TextColor = Color.FromArgb("#AAAAAA"),
+                TextColor = ThemeColors.TextMuted,
                 HorizontalOptions = LayoutOptions.Center,
                 Margin = new Thickness(0, 4)
             };
@@ -1024,12 +1059,12 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 },
                 ColumnSpacing = 8,
                 Padding = new Thickness(4, 3),
-                BackgroundColor = Color.FromArgb("#F8F8FF"),
+                BackgroundColor = ThemeColors.SessionRowBackground,
                 Children =
                 {
                     new BoxView
                     {
-                        Color = Color.FromArgb("#4CAF50"),
+                        Color = ThemeColors.Success,
                         WidthRequest = 8,
                         HeightRequest = 8,
                         CornerRadius = 4,
@@ -1039,7 +1074,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     {
                         Text = session.ClientDeviceName,
                         FontSize = 12,
-                        TextColor = Color.FromArgb("#333333"),
+                        TextColor = ThemeColors.TextPrimary,
                         VerticalOptions = LayoutOptions.Center,
                         LineBreakMode = LineBreakMode.TailTruncation
                     }, column: 1),
@@ -1047,7 +1082,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     {
                         Text = durationText,
                         FontSize = 11,
-                        TextColor = Color.FromArgb("#888888"),
+                        TextColor = ThemeColors.TextSecondary,
                         VerticalOptions = LayoutOptions.Center
                     }, column: 2),
                 }
@@ -1072,7 +1107,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         try
         {
             _isRunning = true;
-            UpdateStatusBar("Starting...", Color.FromArgb("#FFA500"));
+            UpdateStatusBar("Starting...", ThemeColors.Warning);
 
             _currentPin = _pairing.GeneratePin();
             _pinVisible = false;
@@ -1101,7 +1136,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 catch (Exception ex) { _logger.LogWarning(ex, "Client discovery start failed"); }
             });
 
-            UpdateStatusBar("Running — Listening for connections", Color.FromArgb("#4CAF50"));
+            UpdateStatusBar("Running — Listening for connections", ThemeColors.Success);
             _trayService.UpdateStatus("Running", 0);
             StartMetricsTimer();
             RefreshConnectionMetrics();
@@ -1111,7 +1146,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_startStopButton != null)
                 {
                     _startStopButton.Text = "Stop Host";
-                    _startStopButton.BackgroundColor = Color.FromArgb("#D32F2F");
+                    _startStopButton.BackgroundColor = ThemeColors.Danger;
                 }
             });
 
@@ -1130,7 +1165,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     {
         try
         {
-            UpdateStatusBar("Stopping...", Color.FromArgb("#FFA500"));
+            UpdateStatusBar("Stopping...", ThemeColors.Warning);
 
             _hostCts?.Cancel();
             await _host.StopAsync(CancellationToken.None);
@@ -1155,7 +1190,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_startStopButton != null)
                 {
                     _startStopButton.Text = "Start Host";
-                    _startStopButton.BackgroundColor = Color.FromArgb("#512BD4");
+                    _startStopButton.BackgroundColor = ThemeColors.Accent;
                 }
             });
 
@@ -1234,13 +1269,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (connected)
             {
                 _connectionInfo = "Client connected — awaiting PIN pairing";
-                if (_statusIndicator != null) _statusIndicator.Color = Color.FromArgb("#FFA500");
+                if (_statusIndicator != null) _statusIndicator.Color = ThemeColors.Warning;
                 if (_connectionLabel != null) _connectionLabel.Text = _connectionInfo;
             }
             else
             {
                 _connectionInfo = "No active connections";
-                if (_statusIndicator != null) _statusIndicator.Color = _isRunning ? Color.FromArgb("#4CAF50") : Colors.Gray;
+                if (_statusIndicator != null) _statusIndicator.Color = _isRunning ? ThemeColors.Success : Colors.Gray;
                 if (_connectionLabel != null) _connectionLabel.Text = _connectionInfo;
                 UpdatePinMetadata();
             }
@@ -1335,13 +1370,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         if (string.IsNullOrEmpty(partnerId))
         {
-            SetPartnerStatus("Enter a Partner ID or select a discovered host", Color.FromArgb("#D32F2F"));
+            SetPartnerStatus("Enter a Partner ID or select a discovered host", ThemeColors.Danger);
             return;
         }
 
         if (string.IsNullOrEmpty(pin) || pin.Length != 6)
         {
-            SetPartnerStatus("Enter the 6-digit PIN from the remote host", Color.FromArgb("#D32F2F"));
+            SetPartnerStatus("Enter the 6-digit PIN from the remote host", ThemeColors.Danger);
             return;
         }
 
@@ -1349,19 +1384,19 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         var targetDevice = ResolvePartner(partnerId);
         if (targetDevice == null)
         {
-            SetPartnerStatus("Cannot resolve partner — use IP:Port format", Color.FromArgb("#D32F2F"));
+            SetPartnerStatus("Cannot resolve partner — use IP:Port format", ThemeColors.Danger);
             return;
         }
 
         _isConnecting = true;
-        SetPartnerStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", Color.FromArgb("#FFA500"));
+        SetPartnerStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", ThemeColors.Warning);
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
             if (_connectButton != null)
             {
                 _connectButton.Text = "Cancel";
-                _connectButton.BackgroundColor = Color.FromArgb("#D32F2F");
+                _connectButton.BackgroundColor = ThemeColors.Danger;
             }
         });
 
@@ -1369,14 +1404,18 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         if (success)
         {
-            SetPartnerStatus($"Connected to {targetDevice.DeviceName}", Color.FromArgb("#4CAF50"));
-            MainThread.BeginInvokeOnMainThread(() =>
+            SetPartnerStatus($"Connected to {targetDevice.DeviceName}", ThemeColors.Success);
+            MainThread.BeginInvokeOnMainThread(async () =>
             {
                 if (_connectButton != null)
                 {
                     _connectButton.Text = "Disconnect";
-                    _connectButton.BackgroundColor = Color.FromArgb("#D32F2F");
+                    _connectButton.BackgroundColor = ThemeColors.Danger;
                 }
+
+                // Open the remote viewer page
+                var viewerPage = _viewerPageFactory();
+                await Navigation.PushAsync(viewerPage);
             });
         }
         else
@@ -1387,7 +1426,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_connectButton != null)
                 {
                     _connectButton.Text = "Connect";
-                    _connectButton.BackgroundColor = Color.FromArgb("#512BD4");
+                    _connectButton.BackgroundColor = ThemeColors.Accent;
                 }
             });
             // Status is set by PairingFailed event handler
@@ -1405,7 +1444,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (_connectButton != null)
             {
                 _connectButton.Text = "Connect";
-                _connectButton.BackgroundColor = Color.FromArgb("#512BD4");
+                _connectButton.BackgroundColor = ThemeColors.Accent;
             }
         });
     }
@@ -1423,9 +1462,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         var color = state switch
         {
-            ClientConnectionState.Connected => Color.FromArgb("#4CAF50"),
+            ClientConnectionState.Connected => ThemeColors.Success,
             ClientConnectionState.Disconnected => Colors.Gray,
-            _ => Color.FromArgb("#FFA500")
+            _ => ThemeColors.Warning
         };
 
         if (!string.IsNullOrEmpty(text))
@@ -1439,7 +1478,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_connectButton != null)
                 {
                     _connectButton.Text = "Connect";
-                    _connectButton.BackgroundColor = Color.FromArgb("#512BD4");
+                    _connectButton.BackgroundColor = ThemeColors.Accent;
                 }
             });
         }
@@ -1447,7 +1486,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private void OnClientPairingFailed(object? sender, string reason)
     {
-        SetPartnerStatus(reason, Color.FromArgb("#D32F2F"));
+        SetPartnerStatus(reason, ThemeColors.Danger);
     }
 
     /// <summary>
@@ -1522,8 +1561,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "📁 Files",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 5,
             Padding = new Thickness(10, 4),
             HeightRequest = 32,
@@ -1534,8 +1573,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "💬 Chat",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 5,
             Padding = new Thickness(10, 4),
             HeightRequest = 32,
@@ -1546,8 +1585,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "⏺ Record",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 5,
             Padding = new Thickness(10, 4),
             HeightRequest = 32,
@@ -1558,8 +1597,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "📊 Quality",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 5,
             Padding = new Thickness(10, 4),
             HeightRequest = 32,
@@ -1570,8 +1609,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "🖥 Monitor",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#E8E0FF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 5,
             Padding = new Thickness(10, 4),
             HeightRequest = 32,
@@ -1582,8 +1621,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             Text = "✕ Disconnect",
             FontSize = 11,
-            BackgroundColor = Color.FromArgb("#FFEAEA"),
-            TextColor = Color.FromArgb("#D32F2F"),
+            BackgroundColor = ThemeColors.DisconnectTint,
+            TextColor = ThemeColors.Danger,
             CornerRadius = 5,
             Padding = new Thickness(10, 4),
             HeightRequest = 32,
@@ -1605,8 +1644,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             Margin = new Thickness(0, 6, 0, 0),
             Padding = new Thickness(8, 6),
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 6 },
-            BackgroundColor = Color.FromArgb("#F8F5FF"),
-            Stroke = Color.FromArgb("#E0D8F8"),
+            BackgroundColor = ThemeColors.ToolbarBackground,
+            Stroke = ThemeColors.ToolbarBorder,
             StrokeThickness = 1,
             IsVisible = false,
             Content = new StackLayout
@@ -1619,7 +1658,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                         Text = "Session Actions",
                         FontSize = 10,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#888888"),
+                        TextColor = ThemeColors.TextSecondary,
                     },
                     buttonRow
                 }
@@ -1689,8 +1728,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (_recordButton != null)
             {
                 _recordButton.Text = "⏺ Record";
-                _recordButton.BackgroundColor = Color.FromArgb("#E8E0FF");
-                _recordButton.TextColor = Color.FromArgb("#512BD4");
+                _recordButton.BackgroundColor = ThemeColors.SecondaryButtonBackground;
+                _recordButton.TextColor = ThemeColors.Accent;
             }
             _logger.LogInformation("Session recording stopped from toolbar");
         }
@@ -1707,7 +1746,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 if (_recordButton != null)
                 {
                     _recordButton.Text = "⏹ Stop Rec";
-                    _recordButton.BackgroundColor = Color.FromArgb("#D32F2F");
+                    _recordButton.BackgroundColor = ThemeColors.Danger;
                     _recordButton.TextColor = Colors.White;
                 }
                 _logger.LogInformation("Session recording started: {Path}", path);
