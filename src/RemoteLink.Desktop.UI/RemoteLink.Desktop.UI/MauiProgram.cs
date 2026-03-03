@@ -75,6 +75,9 @@ public static class MauiProgram
         // System tray service (minimize to tray, context menu)
         builder.Services.AddSingleton<WindowsSystemTrayService>();
 
+        // Startup task service (auto-start with Windows, MSIX + registry)
+        builder.Services.AddSingleton<StartupTaskService>();
+
         // Settings persistence
         builder.Services.AddSingleton<Shared.Interfaces.IAppSettingsService, Shared.Services.AppSettingsService>();
 

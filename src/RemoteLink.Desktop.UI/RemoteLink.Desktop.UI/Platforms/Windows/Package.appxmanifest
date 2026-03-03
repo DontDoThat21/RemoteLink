@@ -14,12 +14,12 @@
   <Properties>
     <DisplayName>RemoteLink Desktop</DisplayName>
     <PublisherDisplayName>RemoteLink</PublisherDisplayName>
-    <Description>Free, open-source remote desktop solution for local networks.</Description>
-    <Logo>Resources\AppIcon\appicon.svg</Logo>
+    <Description>Free, open-source remote desktop solution for local networks. A TeamViewer alternative.</Description>
+    <Logo>Platforms\Windows\Assets\StoreLogo.png</Logo>
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -34,15 +34,22 @@
       <uap:VisualElements
         DisplayName="RemoteLink Desktop"
         Description="Remote desktop host and client"
-        Square150x150Logo="Resources\AppIcon\appicon.svg"
-        Square44x44Logo="Resources\AppIcon\appicon.svg"
+        Square150x150Logo="Platforms\Windows\Assets\Square150x150Logo.png"
+        Square44x44Logo="Platforms\Windows\Assets\Square44x44Logo.png"
         BackgroundColor="#512BD4">
-        <uap:DefaultTile Wide310x150Logo="Resources\AppIcon\appicon.svg"
-                         ShortName="RemoteLink" />
+        <uap:DefaultTile Wide310x150Logo="Platforms\Windows\Assets\Wide310x150Logo.png"
+                         Square71x71Logo="Platforms\Windows\Assets\SmallTile.png"
+                         Square310x310Logo="Platforms\Windows\Assets\LargeTile.png"
+                         ShortName="RemoteLink">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+            <uap:ShowOn Tile="wide310x150Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
       </uap:VisualElements>
 
-      <!-- Allow auto-start via startup task -->
       <Extensions>
+        <!-- Auto-start with Windows (startup task) -->
         <desktop:Extension Category="windows.startupTask"
                            Executable="$targetnametoken$.exe"
                            EntryPoint="Windows.FullTrustApplication">

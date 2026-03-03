@@ -5,7 +5,8 @@
       "Bash(dotnet build:*)",
       "Bash(dotnet workload:*)",
       "Bash(dotnet test:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(powershell:*)"
     ]
   }
 }

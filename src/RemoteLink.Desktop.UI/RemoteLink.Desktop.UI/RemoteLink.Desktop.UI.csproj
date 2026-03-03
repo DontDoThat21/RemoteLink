@@ -15,16 +15,31 @@
 
     <OutputType>Exe</OutputType>
 
-    <!-- Unpackaged desktop app (no MSIX) -->
-    <WindowsPackageType>None</WindowsPackageType>
+    <!--
+      MSIX Packaging mode (default).
+      To build as unpackaged (no installer), pass /p:WindowsPackageType=None
+      e.g.  dotnet build /p:WindowsPackageType=None
+    -->
+    <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">MSIX</WindowsPackageType>
 
     <!-- Display Version -->
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
 
     <!-- Application Properties -->
     <ApplicationTitle>RemoteLink Desktop</ApplicationTitle>
     <ApplicationId>com.remotelink.desktop</ApplicationId>
+
+    <!-- MSIX Signing — use the development self-signed certificate -->
+    <PackageCertificateThumbprint Condition="'$(WindowsPackageType)' == 'MSIX' And '$(PackageCertificateThumbprint)' == ''"></PackageCertificateThumbprint>
+    <AppxPackageSigningEnabled Condition="'$(WindowsPackageType)' == 'MSIX'">true</AppxPackageSigningEnabled>
+
+    <!-- Generate .appinstaller file for sideloading updates -->
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+
+    <!-- MSIX bundle/package properties -->
+    <AppxBundle>Never</AppxBundle>
+    <AppxPackageDir>$(MSBuildProjectDirectory)\..\..\..\..\publish\msix\</AppxPackageDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -46,6 +61,11 @@
     <MauiImage Include="Resources\Images\*" />
     <MauiFont Include="Resources\Fonts\*" />
     <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Include MSIX logo assets when building as packaged -->
+  <ItemGroup Condition="'$(WindowsPackageType)' == 'MSIX'">
+    <Content Include="Platforms\Windows\Assets\**\*.png" />
   </ItemGroup>
 
 </Project>

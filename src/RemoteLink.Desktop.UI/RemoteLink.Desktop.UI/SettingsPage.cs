@@ -1,3 +1,4 @@
+using RemoteLink.Desktop.UI.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 
@@ -11,6 +12,7 @@ namespace RemoteLink.Desktop.UI;
 public class SettingsPage : ContentPage
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly StartupTaskService _startupTaskService;
 
     // Track the active section for highlighting
     private readonly Dictionary<string, Button> _sectionButtons = new();
@@ -60,9 +62,10 @@ public class SettingsPage : ContentPage
     // ── Status feedback ──────────────────────────────────────────────────
     private Label? _feedbackLabel;
 
-    public SettingsPage(IAppSettingsService settingsService)
+    public SettingsPage(IAppSettingsService settingsService, StartupTaskService startupTaskService)
     {
         _settingsService = settingsService;
+        _startupTaskService = startupTaskService;
         Title = "Settings";
         BackgroundColor = ThemeColors.PageBackground;
 
@@ -772,6 +775,16 @@ public class SettingsPage : ContentPage
         try
         {
             await _settingsService.SaveAsync();
+
+            // Apply auto-start with Windows setting
+            var launchOnStartup = _settingsService.Current.Startup.LaunchOnWindowsStartup;
+            var success = await _startupTaskService.SetEnabledAsync(launchOnStartup);
+            if (!success && launchOnStartup)
+            {
+                ShowFeedback("Settings saved, but auto-start registration failed.", ThemeColors.Warning);
+                return;
+            }
+
             ShowFeedback("Settings saved.", ThemeColors.Success);
         }
         catch (Exception ex)
