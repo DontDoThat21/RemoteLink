@@ -12,6 +12,7 @@ public partial class App : Application
     private Window? _mainWindow;
     private NavigationPage? _navPage;
     private bool _isQuitting;
+    private readonly bool _startMinimized;
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -30,6 +31,11 @@ public partial class App : Application
         _mainPage = mainPage;
         _trayService = trayService;
         _appSettings = appSettings;
+
+        // Check for --minimized command-line flag (used by auto-start / startup task)
+        var args = Environment.GetCommandLineArgs();
+        _startMinimized = args.Any(a => a.Equals("--minimized", StringComparison.OrdinalIgnoreCase))
+                       || _appSettings.Current.Startup.StartMinimized;
 
         _trayService.ShowWindowRequested += OnTrayShowRequested;
         _trayService.QuitRequested += OnTrayQuitRequested;
@@ -77,6 +83,20 @@ public partial class App : Application
 
         // Intercept window close to minimize to tray instead
         _mainWindow.Destroying += OnWindowDestroying;
+
+        // If --minimized flag or StartMinimized setting, hide to tray after window renders
+        if (_startMinimized)
+        {
+            _mainWindow.Created += (_, _) =>
+            {
+                // Delay slightly to let the native window initialize
+                MainThread.BeginInvokeOnMainThread(async () =>
+                {
+                    await Task.Delay(200);
+                    HideMainWindow();
+                });
+            };
+        }
 
         return _mainWindow;
     }

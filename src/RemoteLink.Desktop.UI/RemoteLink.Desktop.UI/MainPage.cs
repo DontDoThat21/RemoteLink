@@ -161,7 +161,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         });
     }
 
-    protected override void OnAppearing()
+    private bool _autoStartChecked;
+
+    protected override async void OnAppearing()
     {
         base.OnAppearing();
 
@@ -178,6 +180,25 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     _connectButton.BackgroundColor = ThemeColors.Accent;
                 }
             });
+        }
+
+        // Auto-start host on first appearance if setting is enabled
+        if (!_autoStartChecked)
+        {
+            _autoStartChecked = true;
+            try
+            {
+                await _appSettings.LoadAsync();
+                if (_appSettings.Current.Startup.StartHostAutomatically && !_isRunning)
+                {
+                    _logger.LogInformation("Auto-starting host (StartHostAutomatically setting)");
+                    await StartHostAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to auto-start host");
+            }
         }
     }
 
