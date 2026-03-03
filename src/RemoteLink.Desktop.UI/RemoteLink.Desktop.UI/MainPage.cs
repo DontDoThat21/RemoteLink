@@ -516,6 +516,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     _copyPinFeedback,
                     pinMetaRow,
                     refreshButton,
+                    _qrCodeImage,
                 }
             }
         };
@@ -912,6 +913,54 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (_pinVisibilityButton != null)
                 _pinVisibilityButton.Text = _pinVisible ? "Hide" : "Show";
         });
+        RefreshQrCode();
+    }
+
+    private void RefreshQrCode()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_qrCodeImage == null) return;
+
+            if (_currentPin == "------" || !_isRunning)
+            {
+                _qrCodeImage.IsVisible = false;
+                _qrCodeImage.Source = null;
+                return;
+            }
+
+            try
+            {
+                var localIp = GetLocalIPAddress();
+                var payload = $"remotelink://connect?host={localIp}:12346&pin={_currentPin}";
+
+                using var qrGenerator = new QRCodeGenerator();
+                using var qrCodeData = qrGenerator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M);
+                using var qrCode = new PngByteQRCode(qrCodeData);
+                var pngBytes = qrCode.GetGraphic(4);
+
+                _qrCodeImage.Source = ImageSource.FromStream(() => new MemoryStream(pngBytes));
+                _qrCodeImage.IsVisible = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate QR code");
+                _qrCodeImage.IsVisible = false;
+            }
+        });
+    }
+
+    private static string GetLocalIPAddress()
+    {
+        try
+        {
+            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            socket.Connect("8.8.8.8", 80);
+            if (socket.LocalEndPoint is IPEndPoint endPoint)
+                return endPoint.Address.ToString();
+        }
+        catch { }
+        return "127.0.0.1";
     }
 
     private void UpdatePinMetadata()

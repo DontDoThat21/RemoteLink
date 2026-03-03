@@ -2,10 +2,12 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Web;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
+using ZXing.Net.Maui;
 using DeviceInfo = RemoteLink.Shared.Models.DeviceInfo;
 using DeviceType = RemoteLink.Shared.Models.DeviceType;
 
@@ -56,6 +58,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     // UI references — manual connect card (to hide when connected)
     private Border _manualConnectCard = null!;
+    private View _scanQrButton = null!;
     private View _discoveredSection = null!;
 
     // Bindable properties
@@ -223,6 +226,10 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         // ── Manual connection panel ────────────────────────────────────
         _manualConnectCard = BuildManualConnectCard();
         root.Add(_manualConnectCard);
+
+        // ── Scan QR Code button ──────────────────────────────────────
+        _scanQrButton = BuildScanQrButton();
+        root.Add(_scanQrButton);
 
         // ── Discovered hosts (quick connect) ───────────────────────────
         _discoveredSection = BuildDiscoveredHostsSection();
@@ -475,6 +482,76 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         return $"{digits[..3]} {digits[3..6]} {digits[6..]}";
     }
 
+    // ── QR code scanner ────────────────────────────────────────────────
+
+    private View BuildScanQrButton()
+    {
+        var button = new Button
+        {
+            Text = "\ud83d\udcf7  Scan QR Code",
+            FontSize = 15,
+            FontAttributes = FontAttributes.Bold,
+            BackgroundColor = Color.FromArgb("#7C4DFF"),
+            TextColor = Colors.White,
+            CornerRadius = 8,
+            HeightRequest = 48,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+        button.Clicked += OnScanQrClicked;
+        return button;
+    }
+
+    private async void OnScanQrClicked(object? sender, EventArgs e)
+    {
+        var scannerPage = new QrScannerPage();
+        scannerPage.QrCodeScanned += OnQrCodeScanned;
+        await Navigation.PushModalAsync(scannerPage);
+    }
+
+    private void OnQrCodeScanned(object? sender, string qrData)
+    {
+        MainThread.BeginInvokeOnMainThread(async () =>
+        {
+            // Close the scanner
+            await Navigation.PopModalAsync();
+
+            // Parse: remotelink://connect?host=IP:PORT&pin=PIN
+            if (TryParseQrPayload(qrData, out var host, out var pin))
+            {
+                _partnerIdEntry.Text = host;
+                _pinEntry.Text = pin;
+                SetManualStatus("QR code scanned — tap Connect", Color.FromArgb("#2E7D32"));
+            }
+            else
+            {
+                SetManualStatus("Invalid QR code format.", Color.FromArgb("#C62828"));
+            }
+        });
+    }
+
+    private static bool TryParseQrPayload(string data, out string host, out string pin)
+    {
+        host = "";
+        pin = "";
+
+        try
+        {
+            if (!data.StartsWith("remotelink://connect", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var uri = new Uri(data);
+            var query = HttpUtility.ParseQueryString(uri.Query);
+            host = query["host"] ?? "";
+            pin = query["pin"] ?? "";
+
+            return !string.IsNullOrWhiteSpace(host) && pin.Length == 6;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     // ── Discovered hosts section ───────────────────────────────────────
 
     private View BuildDiscoveredHostsSection()
@@ -690,6 +767,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _connectedBanner.IsVisible = true;
                     _remoteViewer.IsVisible = true;
                     _manualConnectCard.IsVisible = false;
+                    _scanQrButton.IsVisible = false;
                     _discoveredSection.IsVisible = false;
                     StatusMessage = $"Connected to {hostName}";
                     break;
@@ -698,6 +776,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _connectedBanner.IsVisible = false;
                     _remoteViewer.IsVisible = false;
                     _manualConnectCard.IsVisible = true;
+                    _scanQrButton.IsVisible = true;
                     _discoveredSection.IsVisible = true;
                     _isManualConnecting = false;
                     SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);

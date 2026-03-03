@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
+using ZXing.Net.Maui.Controls;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
 using DeviceInfo = RemoteLink.Shared.Models.DeviceInfo;
@@ -14,6 +15,7 @@ public static class MauiProgram
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
+            .UseBarcodeReader()
             .ConfigureFonts(fonts =>
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
