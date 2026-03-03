@@ -2,6 +2,8 @@ using System.ComponentModel;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
 using Microsoft.Maui.Controls;
+using DeviceInfo = RemoteLink.Shared.Models.DeviceInfo;
+using DeviceType = RemoteLink.Shared.Models.DeviceType;
 
 namespace RemoteLink.Mobile;
 
@@ -145,7 +147,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         {
             BackgroundColor   = Colors.Black,
             HeightRequest     = 240,
-            HorizontalOptions = LayoutOptions.FillAndExpand,
+            HorizontalOptions = LayoutOptions.Fill,
             Aspect            = Aspect.AspectFit,
             IsVisible         = false
         };
@@ -197,13 +199,12 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         // Remove the "no hosts" placeholder once we have at least one
         _hostListContainer.Children.Remove(_noHostsLabel);
 
-        var card = new Frame
+        var card = new Border
         {
             BackgroundColor  = Colors.White,
-            BorderColor      = Color.FromArgb("#DADCE0"),
-            CornerRadius     = 8,
+            Stroke           = Color.FromArgb("#DADCE0"),
+            StrokeShape      = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
             Padding          = new Thickness(12),
-            HasShadow        = true,
             AutomationId     = $"host-{device.DeviceId}"
         };
 
@@ -245,14 +246,14 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
     private void RemoveHostCard(DeviceInfo device)
     {
         var toRemove = _hostListContainer.Children
-            .OfType<Frame>()
+            .OfType<Border>()
             .FirstOrDefault(f => f.AutomationId == $"host-{device.DeviceId}");
 
         if (toRemove != null)
             _hostListContainer.Children.Remove(toRemove);
 
         // Re-add "no hosts" placeholder if the list is now empty
-        if (!_hostListContainer.Children.OfType<Frame>().Any())
+        if (!_hostListContainer.Children.OfType<Border>().Any())
             _hostListContainer.Children.Add(_noHostsLabel);
     }
 
@@ -268,7 +269,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (_client?.IsConnected == true &&
             _client.ConnectedHost?.DeviceId == host.DeviceId)
         {
-            await DisplayAlert("Already Connected",
+            await DisplayAlertAsync("Already Connected",
                 $"You are already connected to {host.DeviceName}.", "OK");
             return;
         }
@@ -287,7 +288,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
 
         if (_client is null)
         {
-            await DisplayAlert("Not Ready", "Discovery service is not running.", "OK");
+            await DisplayAlertAsync("Not Ready", "Discovery service is not running.", "OK");
             return;
         }
 
@@ -302,7 +303,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
         if (!success)
         {
             // PairingFailed event will have already set StatusMessage
-            await DisplayAlert("Connection Failed", StatusMessage, "OK");
+            await DisplayAlertAsync("Connection Failed", StatusMessage, "OK");
         }
     }
 

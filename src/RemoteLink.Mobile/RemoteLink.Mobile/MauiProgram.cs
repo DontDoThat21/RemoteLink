@@ -1,4 +1,9 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
+using RemoteLink.Shared.Interfaces;
+using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Services;
+using DeviceInfo = RemoteLink.Shared.Models.DeviceInfo;
+using DeviceType = RemoteLink.Shared.Models.DeviceType;
 
 namespace RemoteLink.Mobile;
 
@@ -12,30 +17,43 @@ public static class MauiProgram
             .ConfigureFonts(fonts =>
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
+                fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
             });
 
-        // Configure logging
+        // Logging
         builder.Services.AddLogging();
         builder.Logging.AddDebug();
 
-        // Configure network discovery service
-        builder.Services.AddSingleton<RemoteLink.Shared.Interfaces.INetworkDiscovery>(provider =>
+        // Network discovery service
+        builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
-            var localDevice = new RemoteLink.Shared.Models.DeviceInfo
+            var localDevice = new DeviceInfo
             {
                 DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
                 DeviceName = Environment.MachineName + " Mobile",
-                Type = RemoteLink.Shared.Models.DeviceType.Mobile,
+                Type = DeviceType.Mobile,
                 Port = 12347
             };
-            return new RemoteLink.Shared.Services.UdpNetworkDiscovery(localDevice);
+            return new UdpNetworkDiscovery(localDevice);
         });
 
-        // Configure the remote desktop client service
-        builder.Services.AddSingleton<Services.RemoteDesktopClient>();
+        // Remote desktop client (singleton shared across all pages)
+        builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
+        {
+            var logger = provider.GetRequiredService<ILogger<RemoteDesktopClient>>();
+            var discovery = provider.GetRequiredService<INetworkDiscovery>();
+            return new RemoteDesktopClient(logger, discovery);
+        });
 
-        // Configure pages
-        builder.Services.AddSingleton<MainPage>();
+        // Shell
+        builder.Services.AddSingleton<AppShell>();
+
+        // Pages — all tabs
+        builder.Services.AddTransient<ConnectPage>();
+        builder.Services.AddTransient<DevicesPage>();
+        builder.Services.AddTransient<FilesPage>();
+        builder.Services.AddTransient<MobileChatPage>();
+        builder.Services.AddTransient<MobileSettingsPage>();
 
         return builder.Build();
     }

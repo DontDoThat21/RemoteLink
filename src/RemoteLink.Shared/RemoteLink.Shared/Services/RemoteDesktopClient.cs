@@ -64,6 +64,9 @@ public class RemoteDesktopClient
     /// <summary><c>true</c> when fully authenticated and connected to a host.</summary>
     public bool IsConnected => ConnectionState == ClientConnectionState.Connected;
 
+    /// <summary><c>true</c> when discovery has been started.</summary>
+    public bool IsStarted => _isStarted;
+
     /// <summary>Session token returned by the host on successful pairing.</summary>
     public string? SessionToken { get; private set; }
 
