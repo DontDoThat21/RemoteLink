@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
@@ -10,7 +12,7 @@ using DeviceType = RemoteLink.Shared.Models.DeviceType;
 namespace RemoteLink.Mobile;
 
 /// <summary>
-/// Connect tab: discovery status, discovered host quick-connect list,
+/// Connect tab: manual Partner ID + PIN entry, discovered host quick-connect,
 /// remote desktop viewer with gesture-based input when connected.
 /// </summary>
 public class ConnectPage : ContentPage, INotifyPropertyChanged
@@ -30,18 +32,31 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private bool _isDiscovering;
     private string _statusMessage = "Initializing...";
     private readonly List<DeviceInfo> _availableHosts = new();
+    private bool _isManualConnecting;
 
     // Throttle frame rendering
     private volatile bool _frameRenderBusy;
 
-    // UI references
+    // UI references — manual connect
+    private Entry _partnerIdEntry = null!;
+    private Entry _pinEntry = null!;
+    private Button _manualConnectButton = null!;
+    private Label _manualStatusLabel = null!;
+
+    // UI references — discovered hosts
     private StackLayout _hostListContainer = null!;
     private Label _noHostsLabel = null!;
+
+    // UI references — connection / viewer
     private StackLayout _connectedBanner = null!;
     private Label _connectedHostLabel = null!;
     private Image _remoteViewer = null!;
     private Label _statusLabel = null!;
     private ActivityIndicator _activityIndicator = null!;
+
+    // UI references — manual connect card (to hide when connected)
+    private Border _manualConnectCard = null!;
+    private View _discoveredSection = null!;
 
     // Bindable properties
     public bool IsDiscovering
@@ -79,6 +94,15 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        // Reset manual connect UI when returning from a disconnected state
+        if (!_client.IsConnected && _isManualConnecting)
+        {
+            _isManualConnecting = false;
+            SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
+            _manualStatusLabel.Text = "";
+            _manualStatusLabel.IsVisible = false;
+        }
 
         if (!_client.IsStarted)
         {
@@ -196,14 +220,305 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         });
         root.Add(_remoteViewer);
 
-        // Discovered hosts (quick connect)
-        root.Add(new Label
+        // ── Manual connection panel ────────────────────────────────────
+        _manualConnectCard = BuildManualConnectCard();
+        root.Add(_manualConnectCard);
+
+        // ── Discovered hosts (quick connect) ───────────────────────────
+        _discoveredSection = BuildDiscoveredHostsSection();
+        root.Add(_discoveredSection);
+
+        return root;
+    }
+
+    // ── Manual connection card ──────────────────────────────────────────
+
+    private Border BuildManualConnectCard()
+    {
+        var card = new Border
+        {
+            BackgroundColor = Color.FromArgb("#F8F6FF"),
+            Stroke = Color.FromArgb("#512BD4"),
+            StrokeThickness = 1.5,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(16),
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+
+        var stack = new StackLayout { Spacing = 10 };
+
+        // Section header
+        stack.Add(new Label
+        {
+            Text = "Connect to Remote Host",
+            FontSize = 17,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Color.FromArgb("#512BD4")
+        });
+
+        stack.Add(new Label
+        {
+            Text = "Enter the Partner ID and PIN displayed on the desktop host.",
+            FontSize = 12,
+            TextColor = Colors.Gray,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        // Partner ID entry
+        stack.Add(new Label
+        {
+            Text = "Partner ID",
+            FontSize = 13,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Color.FromArgb("#333333")
+        });
+
+        _partnerIdEntry = new Entry
+        {
+            Placeholder = "IP address, IP:Port, or 9-digit ID",
+            FontSize = 15,
+            Keyboard = Keyboard.Text,
+            BackgroundColor = Colors.White,
+            HeightRequest = 44,
+            ClearButtonVisibility = ClearButtonVisibility.WhileEditing
+        };
+        _partnerIdEntry.TextChanged += OnManualEntryChanged;
+        stack.Add(_partnerIdEntry);
+
+        // PIN entry
+        stack.Add(new Label
+        {
+            Text = "PIN",
+            FontSize = 13,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Color.FromArgb("#333333"),
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+
+        _pinEntry = new Entry
+        {
+            Placeholder = "6-digit PIN",
+            FontSize = 15,
+            Keyboard = Keyboard.Numeric,
+            MaxLength = 6,
+            IsPassword = true,
+            BackgroundColor = Colors.White,
+            HeightRequest = 44
+        };
+        _pinEntry.TextChanged += OnManualEntryChanged;
+        stack.Add(_pinEntry);
+
+        // Connect button
+        _manualConnectButton = new Button
+        {
+            Text = "Connect",
+            FontSize = 16,
+            FontAttributes = FontAttributes.Bold,
+            BackgroundColor = Color.FromArgb("#512BD4"),
+            TextColor = Colors.White,
+            CornerRadius = 8,
+            HeightRequest = 48,
+            IsEnabled = false,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+        _manualConnectButton.Clicked += OnManualConnectClicked;
+        stack.Add(_manualConnectButton);
+
+        // Status label (for feedback)
+        _manualStatusLabel = new Label
+        {
+            FontSize = 13,
+            HorizontalTextAlignment = TextAlignment.Center,
+            IsVisible = false,
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+        stack.Add(_manualStatusLabel);
+
+        card.Content = stack;
+        return card;
+    }
+
+    private void OnManualEntryChanged(object? sender, TextChangedEventArgs e)
+    {
+        var hasId = !string.IsNullOrWhiteSpace(_partnerIdEntry?.Text);
+        var hasPin = (_pinEntry?.Text?.Length ?? 0) == 6;
+
+        if (_manualConnectButton != null)
+            _manualConnectButton.IsEnabled = hasId && hasPin && !_isManualConnecting;
+    }
+
+    private async void OnManualConnectClicked(object? sender, EventArgs e)
+    {
+        var partnerId = _partnerIdEntry?.Text?.Trim();
+        var pin = _pinEntry?.Text?.Trim();
+
+        if (string.IsNullOrWhiteSpace(partnerId) || string.IsNullOrWhiteSpace(pin))
+            return;
+
+        // Resolve the partner ID to a DeviceInfo
+        var targetDevice = ResolvePartner(partnerId);
+        if (targetDevice == null)
+        {
+            SetManualStatus("Invalid Partner ID. Use IP, IP:Port, or 9-digit ID.", Color.FromArgb("#C62828"));
+            return;
+        }
+
+        _isManualConnecting = true;
+        SetManualConnectButtonState("Connecting...", Color.FromArgb("#999999"), false);
+        SetManualStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", Color.FromArgb("#FF8F00"));
+        StatusMessage = $"Connecting to {targetDevice.DeviceName}...";
+        IsDiscovering = true;
+
+        var success = await _client.ConnectToHostAsync(targetDevice, pin);
+
+        IsDiscovering = false;
+
+        if (success)
+        {
+            SetManualStatus("Connected!", Color.FromArgb("#2E7D32"));
+            // Button stays disabled while connected; will reset on disconnect via OnAppearing
+        }
+        else
+        {
+            _isManualConnecting = false;
+            SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
+            SetManualStatus("Connection failed. Check Partner ID and PIN.", Color.FromArgb("#C62828"));
+            OnManualEntryChanged(null, null!); // Re-evaluate button enabled state
+        }
+    }
+
+    private void SetManualConnectButtonState(string text, Color bgColor, bool enabled)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_manualConnectButton != null)
+            {
+                _manualConnectButton.Text = text;
+                _manualConnectButton.BackgroundColor = bgColor;
+                _manualConnectButton.IsEnabled = enabled;
+            }
+        });
+    }
+
+    private void SetManualStatus(string message, Color color)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (_manualStatusLabel != null)
+            {
+                _manualStatusLabel.Text = message;
+                _manualStatusLabel.TextColor = color;
+                _manualStatusLabel.IsVisible = true;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Resolves a Partner ID string into a DeviceInfo.
+    /// Accepts: 9-digit numeric ID (matched against discovered hosts),
+    /// IP:Port (e.g. "192.168.1.5:12346"), or plain IP (defaults to port 12346).
+    /// </summary>
+    private DeviceInfo? ResolvePartner(string partnerId)
+    {
+        var stripped = partnerId.Replace(" ", "");
+
+        // Try to match against discovered hosts by numeric ID
+        foreach (var host in _availableHosts)
+        {
+            var hostNumericId = GenerateNumericId(host.DeviceName).Replace(" ", "");
+            if (hostNumericId == stripped)
+                return host;
+        }
+
+        // Try IP:Port format
+        if (partnerId.Contains(':'))
+        {
+            var parts = partnerId.Split(':', 2);
+            if (parts.Length == 2 && int.TryParse(parts[1], out int port) && port is > 0 and <= 65535)
+            {
+                return new DeviceInfo
+                {
+                    DeviceId = $"manual_{parts[0]}_{port}",
+                    DeviceName = parts[0],
+                    IPAddress = parts[0],
+                    Port = port,
+                    Type = DeviceType.Desktop
+                };
+            }
+        }
+
+        // Try plain IP (use default port 12346)
+        if (System.Net.IPAddress.TryParse(partnerId, out _))
+        {
+            return new DeviceInfo
+            {
+                DeviceId = $"manual_{partnerId}_12346",
+                DeviceName = partnerId,
+                IPAddress = partnerId,
+                Port = 12346,
+                Type = DeviceType.Desktop
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Generates a stable 9-digit numeric ID from a machine name (same algorithm as Desktop UI).
+    /// </summary>
+    private static string GenerateNumericId(string machineName)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(machineName + "RemoteLink"));
+        long value = Math.Abs(BitConverter.ToInt64(hash, 0));
+        long id = (value % 900_000_000) + 100_000_000;
+        var digits = id.ToString();
+        return $"{digits[..3]} {digits[3..6]} {digits[6..]}";
+    }
+
+    // ── Discovered hosts section ───────────────────────────────────────
+
+    private View BuildDiscoveredHostsSection()
+    {
+        var section = new StackLayout { Spacing = 8, Margin = new Thickness(0, 8, 0, 0) };
+
+        // Separator
+        section.Add(new StackLayout
+        {
+            Orientation = StackOrientation.Horizontal,
+            Spacing = 8,
+            Children =
+            {
+                new BoxView
+                {
+                    Color = Color.FromArgb("#E0E0E0"),
+                    HeightRequest = 1,
+                    VerticalOptions = LayoutOptions.Center,
+                    HorizontalOptions = LayoutOptions.Fill
+                },
+                new Label
+                {
+                    Text = "or quick connect",
+                    FontSize = 12,
+                    TextColor = Colors.Gray,
+                    VerticalOptions = LayoutOptions.Center
+                },
+                new BoxView
+                {
+                    Color = Color.FromArgb("#E0E0E0"),
+                    HeightRequest = 1,
+                    VerticalOptions = LayoutOptions.Center,
+                    HorizontalOptions = LayoutOptions.Fill
+                }
+            }
+        });
+
+        section.Add(new Label
         {
             Text = "Discovered Hosts",
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
             TextColor = Colors.DarkGray,
-            Margin = new Thickness(0, 8, 0, 0)
+            Margin = new Thickness(0, 4, 0, 0)
         });
 
         _noHostsLabel = new Label
@@ -216,9 +531,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         _hostListContainer = new StackLayout { Spacing = 8 };
         _hostListContainer.Add(_noHostsLabel);
-        root.Add(_hostListContainer);
+        section.Add(_hostListContainer);
 
-        return root;
+        return section;
     }
 
     // ── Host cards ─────────────────────────────────────────────────────
@@ -236,32 +551,43 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             AutomationId = $"host-{device.DeviceId}"
         };
 
-        var nameLabel = new Label
+        var grid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+            VerticalOptions = LayoutOptions.Center
+        };
+
+        var infoStack = new StackLayout { Spacing = 2 };
+        infoStack.Add(new Label
         {
             Text = device.DeviceName,
             FontSize = 15,
             FontAttributes = FontAttributes.Bold,
             TextColor = Colors.Black
-        };
-        var addrLabel = new Label
+        });
+        infoStack.Add(new Label
         {
             Text = $"{device.IPAddress}:{device.Port}",
             FontSize = 12,
             TextColor = Colors.Gray
-        };
+        });
+
         var connectLabel = new Label
         {
-            Text = "Tap to connect",
-            FontSize = 12,
+            Text = "Connect >",
+            FontSize = 13,
             TextColor = Color.FromArgb("#512BD4"),
-            HorizontalOptions = LayoutOptions.End
+            VerticalOptions = LayoutOptions.Center
         };
+        Grid.SetColumn(connectLabel, 1);
 
-        var cardContent = new StackLayout { Spacing = 2 };
-        cardContent.Add(nameLabel);
-        cardContent.Add(addrLabel);
-        cardContent.Add(connectLabel);
-        card.Content = cardContent;
+        grid.Add(infoStack);
+        grid.Add(connectLabel);
+        card.Content = grid;
 
         var tap = new TapGestureRecognizer();
         tap.Tapped += async (_, _) => await OnHostCardTappedAsync(device);
@@ -283,7 +609,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             _hostListContainer.Add(_noHostsLabel);
     }
 
-    // ── Connection flow ────────────────────────────────────────────────
+    // ── Connection flow (discovered host tap) ──────────────────────────
 
     private async Task OnHostCardTappedAsync(DeviceInfo host)
     {
@@ -363,12 +689,20 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _connectedHostLabel.Text = $"Connected to {hostName}";
                     _connectedBanner.IsVisible = true;
                     _remoteViewer.IsVisible = true;
+                    _manualConnectCard.IsVisible = false;
+                    _discoveredSection.IsVisible = false;
                     StatusMessage = $"Connected to {hostName}";
                     break;
 
                 case ClientConnectionState.Disconnected:
                     _connectedBanner.IsVisible = false;
                     _remoteViewer.IsVisible = false;
+                    _manualConnectCard.IsVisible = true;
+                    _discoveredSection.IsVisible = true;
+                    _isManualConnecting = false;
+                    SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
+                    _manualStatusLabel.IsVisible = false;
+                    OnManualEntryChanged(null, null!);
                     if (StatusMessage.StartsWith("Connected"))
                         StatusMessage = "Disconnected. Scanning for hosts...";
                     break;

@@ -1,8 +1,11 @@
 using System.ComponentModel;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using QRCoder;
 using RemoteLink.Desktop.Services;
 using RemoteLink.Desktop.UI.Services;
 using RemoteLink.Shared.Interfaces;
@@ -64,6 +67,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private Label? _attemptsLabel;
     private Label? _copyIdFeedback;
     private Label? _copyPinFeedback;
+    private Image? _qrCodeImage;
 
     // UI element references — connection status panel
     private Label? _connectedClientsLabel;
@@ -450,6 +454,17 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             HorizontalOptions = LayoutOptions.Center
         };
         refreshButton.Clicked += OnRefreshPinClicked;
+
+        // ── QR code image ──
+        _qrCodeImage = new Image
+        {
+            WidthRequest = 140,
+            HeightRequest = 140,
+            HorizontalOptions = LayoutOptions.Center,
+            Aspect = Aspect.AspectFit,
+            IsVisible = false,
+            Margin = new Thickness(0, 6, 0, 0)
+        };
 
         var divider = new BoxView
         {
