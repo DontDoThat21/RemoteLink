@@ -39,6 +39,9 @@ public static class MauiProgram
             return new UdpNetworkDiscovery(localDevice);
         });
 
+        // Saved devices address book
+        builder.Services.AddSingleton<ISavedDevicesService, SavedDevicesService>();
+
         // Remote desktop client (singleton shared across all pages)
         builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
         {
