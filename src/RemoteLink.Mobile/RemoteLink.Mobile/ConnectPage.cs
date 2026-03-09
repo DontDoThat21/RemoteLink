@@ -76,6 +76,15 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private bool _suppressKeyCaptureTextChanged;
     private int _selectedQuality = 75;
     private string? _selectedMonitorId;
+    private readonly Dictionary<string, Button> _modifierButtons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _modifierKeyCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Ctrl"] = "Control",
+        ["Alt"] = "Menu",
+        ["Shift"] = "Shift",
+        ["Win"] = "LWin"
+    };
+    private readonly HashSet<string> _activeModifiers = new(StringComparer.OrdinalIgnoreCase);
 
     // Bindable properties
     public bool IsDiscovering
@@ -347,29 +356,67 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 Radius = 12,
                 Offset = new Point(0, 4)
             },
-            Content = new ScrollView
+            Content = new VerticalStackLayout
             {
-                Orientation = ScrollOrientation.Horizontal,
-                Content = new HorizontalStackLayout
+                Spacing = 6,
+                Children =
                 {
-                    Spacing = 6,
-                    Children =
+                    new Label
                     {
+                        Text = "Virtual keyboard",
+                        FontSize = 11,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Color.FromArgb("#6B5FB5")
+                    },
+                    BuildKeyRow(
+                        BuildModifierButton("Ctrl"),
+                        BuildModifierButton("Alt"),
+                        BuildModifierButton("Shift"),
+                        BuildModifierButton("Win"),
                         BuildSpecialKeyButton("Esc", async () => await SendKeyTapAsync("Escape")),
-                        BuildSpecialKeyButton("Tab", async () => await SendKeyTapAsync("Tab")),
+                        BuildSpecialKeyButton("Tab", async () => await SendKeyTapAsync("Tab"))),
+                    BuildKeyRow(
                         BuildSpecialKeyButton("Enter", async () => await SendKeyTapAsync("Return")),
                         BuildSpecialKeyButton("⌫", async () => await SendKeyTapAsync("Back")),
                         BuildSpecialKeyButton("↑", async () => await SendKeyTapAsync("Up")),
                         BuildSpecialKeyButton("↓", async () => await SendKeyTapAsync("Down")),
                         BuildSpecialKeyButton("←", async () => await SendKeyTapAsync("Left")),
-                        BuildSpecialKeyButton("→", async () => await SendKeyTapAsync("Right")),
+                        BuildSpecialKeyButton("→", async () => await SendKeyTapAsync("Right"))),
+                    BuildKeyRow(BuildFunctionKeys(1, 6).ToArray()),
+                    BuildKeyRow(BuildFunctionKeys(7, 6).ToArray()),
+                    BuildKeyRow(
                         BuildSpecialKeyButton("Alt+Tab", async () => await SendShortcutAsync(KeyboardShortcut.TaskSwitcher)),
                         BuildSpecialKeyButton("Win+D", async () => await SendShortcutAsync(KeyboardShortcut.ShowDesktop)),
-                        BuildSpecialKeyButton("Task Mgr", async () => await SendShortcutAsync(KeyboardShortcut.TaskManager))
-                    }
+                        BuildSpecialKeyButton("Task Mgr", async () => await SendShortcutAsync(KeyboardShortcut.TaskManager)))
                 }
             }
         };
+    }
+
+    private View BuildKeyRow(params View[] buttons)
+    {
+        var row = new HorizontalStackLayout
+        {
+            Spacing = 6
+        };
+
+        foreach (var button in buttons)
+            row.Add(button);
+
+        return new ScrollView
+        {
+            Orientation = ScrollOrientation.Horizontal,
+            Content = row
+        };
+    }
+
+    private IEnumerable<View> BuildFunctionKeys(int start, int count)
+    {
+        for (int i = start; i < start + count; i++)
+        {
+            int functionNumber = i;
+            yield return BuildSpecialKeyButton($"F{functionNumber}", async () => await SendKeyTapAsync($"F{functionNumber}"));
+        }
     }
 
     private Entry BuildKeyCaptureEntry()
@@ -426,6 +473,24 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         return button;
     }
 
+    private Button BuildModifierButton(string label)
+    {
+        var button = new Button
+        {
+            Text = label,
+            FontSize = 12,
+            BackgroundColor = Color.FromArgb("#EFEAFF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 14,
+            HeightRequest = 36,
+            Padding = new Thickness(12, 6)
+        };
+
+        _modifierButtons[label] = button;
+        button.Clicked += async (_, _) => await ToggleModifierAsync(label);
+        return button;
+    }
+
     private void UpdateSessionOverlayVisibility()
     {
         bool isConnected = _client.IsConnected;
@@ -440,6 +505,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             _isKeyboardVisible = false;
             _isSpecialKeysVisible = false;
+            _activeModifiers.Clear();
 
             if (_keyCaptureEntry != null)
             {
@@ -460,6 +526,18 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         if (_specialKeysToggleButton != null)
             _specialKeysToggleButton.BackgroundColor = _isSpecialKeysVisible ? Color.FromArgb("#7B1FA2") : Color.FromArgb("#512BD4");
+
+        UpdateModifierButtonStates();
+    }
+
+    private void UpdateModifierButtonStates()
+    {
+        foreach (var modifier in _modifierButtons)
+        {
+            bool isActive = _activeModifiers.Contains(modifier.Key);
+            modifier.Value.BackgroundColor = isActive ? Color.FromArgb("#2E7D32") : Color.FromArgb("#EFEAFF");
+            modifier.Value.TextColor = isActive ? Colors.White : Color.FromArgb("#512BD4");
+        }
     }
 
     private async void OnKeyboardToggleClicked(object? sender, EventArgs e)
@@ -604,11 +682,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         foreach (var ch in addedText)
         {
-            _ = _client.SendInputEventAsync(new InputEvent
-            {
-                Type = InputEventType.TextInput,
-                Text = ch.ToString()
-            });
+            _ = SendCapturedCharacterAsync(ch);
         }
 
         MainThread.BeginInvokeOnMainThread(() =>
@@ -636,18 +710,124 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             KeyCode = keyCode,
             IsPressed = false
         });
+
+        await ReleaseActiveModifiersAsync();
     }
 
-    private Task SendShortcutAsync(KeyboardShortcut shortcut)
+    private async Task SendShortcutAsync(KeyboardShortcut shortcut)
     {
         if (!_client.IsConnected)
-            return Task.CompletedTask;
+            return;
 
-        return _client.SendInputEventAsync(new InputEvent
+        await ReleaseActiveModifiersAsync();
+
+        await _client.SendInputEventAsync(new InputEvent
         {
             Type = InputEventType.KeyboardShortcut,
             Shortcut = shortcut
         });
+    }
+
+    private async Task ToggleModifierAsync(string label)
+    {
+        if (!_client.IsConnected || !_modifierKeyCodes.TryGetValue(label, out var keyCode))
+            return;
+
+        bool activating = !_activeModifiers.Contains(label);
+        if (activating)
+        {
+            _activeModifiers.Add(label);
+            await _client.SendInputEventAsync(new InputEvent
+            {
+                Type = InputEventType.KeyPress,
+                KeyCode = keyCode,
+                IsPressed = true
+            });
+            StatusMessage = $"{label} active for the next key.";
+        }
+        else
+        {
+            _activeModifiers.Remove(label);
+            await _client.SendInputEventAsync(new InputEvent
+            {
+                Type = InputEventType.KeyRelease,
+                KeyCode = keyCode,
+                IsPressed = false
+            });
+            StatusMessage = $"{label} released.";
+        }
+
+        MainThread.BeginInvokeOnMainThread(UpdateModifierButtonStates);
+    }
+
+    private async Task ReleaseActiveModifiersAsync()
+    {
+        if (!_client.IsConnected || _activeModifiers.Count == 0)
+            return;
+
+        foreach (var modifier in _activeModifiers.ToArray())
+        {
+            if (!_modifierKeyCodes.TryGetValue(modifier, out var keyCode))
+                continue;
+
+            await _client.SendInputEventAsync(new InputEvent
+            {
+                Type = InputEventType.KeyRelease,
+                KeyCode = keyCode,
+                IsPressed = false
+            });
+        }
+
+        _activeModifiers.Clear();
+        MainThread.BeginInvokeOnMainThread(UpdateModifierButtonStates);
+    }
+
+    private async Task SendCapturedCharacterAsync(char ch)
+    {
+        if (!_client.IsConnected)
+            return;
+
+        if (_activeModifiers.Count > 0 && TryMapCharacterToKeyCode(ch, out var keyCode))
+        {
+            await SendKeyTapAsync(keyCode);
+            return;
+        }
+
+        if (_activeModifiers.Count > 0)
+        {
+            StatusMessage = "Modifier keys apply to letters, digits, and space in the text overlay.";
+            await ReleaseActiveModifiersAsync();
+        }
+
+        await _client.SendInputEventAsync(new InputEvent
+        {
+            Type = InputEventType.TextInput,
+            Text = ch.ToString()
+        });
+    }
+
+    private static bool TryMapCharacterToKeyCode(char ch, out string keyCode)
+    {
+        if (char.IsLetter(ch))
+        {
+            keyCode = char.ToUpperInvariant(ch).ToString();
+            return true;
+        }
+
+        if (char.IsDigit(ch))
+        {
+            keyCode = $"D{ch}";
+            return true;
+        }
+
+        if (ch == ' ')
+        {
+            keyCode = "Space";
+            return true;
+        }
+
+        keyCode = string.Empty;
+        return false;
     }
 
     // ── Manual connection card ──────────────────────────────────────────
