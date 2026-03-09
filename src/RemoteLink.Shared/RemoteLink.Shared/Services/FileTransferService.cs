@@ -13,6 +13,7 @@ public class FileTransferService : IFileTransferService
     private readonly ILogger<FileTransferService> _logger;
     private readonly ICommunicationService _communicationService;
     private readonly ConcurrentDictionary<string, TransferState> _activeTransfers = new();
+    private readonly ConcurrentDictionary<string, FileTransferRequest> _pendingRequests = new();
     private const int ChunkSize = 64 * 1024; // 64 KB chunks
     private const long MaxFileSize = 2L * 1024 * 1024 * 1024; // 2 GB limit
 
@@ -85,6 +86,8 @@ public class FileTransferService : IFileTransferService
         if (string.IsNullOrWhiteSpace(savePath))
             throw new ArgumentException("Save path cannot be null or empty.", nameof(savePath));
 
+        _pendingRequests.TryRemove(transferId, out var request);
+
         var response = new FileTransferResponse
         {
             TransferId = transferId,
@@ -96,6 +99,7 @@ public class FileTransferService : IFileTransferService
         {
             TransferId = transferId,
             LocalPath = savePath,
+            TotalBytes = request?.FileSize ?? 0,
             Direction = FileTransferDirection.Download,
             StartTime = DateTime.UtcNow
         };
@@ -112,6 +116,8 @@ public class FileTransferService : IFileTransferService
     {
         if (string.IsNullOrWhiteSpace(transferId))
             throw new ArgumentException("Transfer ID cannot be null or empty.", nameof(transferId));
+
+        _pendingRequests.TryRemove(transferId, out _);
 
         var response = new FileTransferResponse
         {
@@ -172,6 +178,7 @@ public class FileTransferService : IFileTransferService
 
     private void OnFileTransferRequestReceived(object? sender, FileTransferRequest request)
     {
+        _pendingRequests[request.TransferId] = request;
         _logger.LogInformation("Received transfer request {TransferId} for {FileName} ({Size} bytes)", request.TransferId, request.FileName, request.FileSize);
         TransferRequested?.Invoke(this, request);
     }
@@ -188,6 +195,7 @@ public class FileTransferService : IFileTransferService
         }
         else if (!response.Accepted)
         {
+            _pendingRequests.TryRemove(response.TransferId, out _);
             _activeTransfers.TryRemove(response.TransferId, out _);
             var complete = new FileTransferComplete
             {
@@ -276,6 +284,7 @@ public class FileTransferService : IFileTransferService
     private void OnFileTransferCompleteReceived(object? sender, FileTransferComplete complete)
     {
         _logger.LogInformation("Transfer {TransferId} completed: Success={Success}", complete.TransferId, complete.Success);
+        _pendingRequests.TryRemove(complete.TransferId, out _);
         _activeTransfers.TryRemove(complete.TransferId, out _);
         TransferCompleted?.Invoke(this, complete);
     }

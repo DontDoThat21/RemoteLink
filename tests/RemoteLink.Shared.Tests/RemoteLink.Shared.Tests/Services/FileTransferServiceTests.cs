@@ -102,6 +102,30 @@ public class FileTransferServiceTests
     }
 
     [Fact]
+    public async Task AcceptTransferAsync_UsesRequestedFileSizeForProgress()
+    {
+        // Arrange
+        var transferId = "test-transfer-789";
+        var savePath = Path.Combine(_testFilesPath, "sized-download.dat");
+
+        _fakeCommunicationService.SimulateFileTransferRequestReceived(new FileTransferRequest
+        {
+            TransferId = transferId,
+            FileName = "archive.zip",
+            FileSize = 2048,
+            Direction = FileTransferDirection.Upload
+        });
+
+        // Act
+        await _service.AcceptTransferAsync(transferId, savePath);
+
+        // Assert
+        var progress = _service.GetProgress(transferId);
+        Assert.NotNull(progress);
+        Assert.Equal(2048, progress!.TotalBytes);
+    }
+
+    [Fact]
     public async Task InitiateTransferAsync_DetectsMimeTypeForPdf()
     {
         // Arrange

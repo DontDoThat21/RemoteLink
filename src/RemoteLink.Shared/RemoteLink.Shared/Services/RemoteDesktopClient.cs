@@ -67,6 +67,9 @@ public class RemoteDesktopClient
     /// <summary><c>true</c> when discovery has been started.</summary>
     public bool IsStarted => _isStarted;
 
+    /// <summary>The active communication service for the current connection, if any.</summary>
+    public ICommunicationService? CurrentCommunicationService => _communicationService;
+
     /// <summary>Session token returned by the host on successful pairing.</summary>
     public string? SessionToken { get; private set; }
 
