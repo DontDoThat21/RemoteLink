@@ -536,6 +536,72 @@ public class FilesPage : ContentPage
         }
     }
 
+    private async Task CancelTransferAsync(string transferId)
+    {
+        EnsureFileTransferService();
+        if (_fileTransferService is null)
+            return;
+
+        try
+        {
+            if (await _fileTransferService.CancelTransferAsync(transferId) && _transferItems.TryGetValue(transferId, out var item))
+            {
+                item.IsCompleted = true;
+                item.IsSuccessful = false;
+                item.Status = "Cancelled";
+                item.UpdatedAt = DateTime.UtcNow;
+                RefreshTransfers();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to cancel transfer {TransferId}", transferId);
+            await DisplayAlertAsync("Cancel Transfer Failed", ex.Message, "OK");
+        }
+    }
+
+    private async Task OpenTransferAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            await DisplayAlertAsync("File Not Found", "The transferred file could not be found on disk.", "OK");
+            return;
+        }
+
+        try
+        {
+            await Launcher.Default.OpenAsync(new OpenFileRequest(Path.GetFileName(path), new ReadOnlyFile(path)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open transferred file {Path}", path);
+            await DisplayAlertAsync("Open Failed", ex.Message, "OK");
+        }
+    }
+
+    private async Task ShareTransferAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            await DisplayAlertAsync("File Not Found", "The transferred file could not be found on disk.", "OK");
+            return;
+        }
+
+        try
+        {
+            await Share.Default.RequestAsync(new ShareFileRequest
+            {
+                Title = "Share transferred file",
+                File = new ShareFile(path)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to share transferred file {Path}", path);
+            await DisplayAlertAsync("Share Failed", ex.Message, "OK");
+        }
+    }
+
     private void RefreshIncomingRequests()
     {
         _incomingRequestsLayout.Children.Clear();
@@ -681,6 +747,51 @@ public class FilesPage : ContentPage
                     FontSize = 11,
                     TextColor = Colors.Gray,
                     LineBreakMode = LineBreakMode.CharacterWrap
+                });
+            }
+
+            if (!item.IsCompleted)
+            {
+                var cancelButton = new Button
+                {
+                    Text = "Cancel",
+                    BackgroundColor = Color.FromArgb("#FBE9E7"),
+                    TextColor = Color.FromArgb("#C62828"),
+                    CornerRadius = 8,
+                    HorizontalOptions = LayoutOptions.Start,
+                    Padding = new Thickness(14, 8)
+                };
+                cancelButton.Clicked += async (_, _) => await CancelTransferAsync(item.TransferId);
+                cardStack.Children.Add(cancelButton);
+            }
+            else if (item.IsSuccessful && !string.IsNullOrWhiteSpace(item.SavedPath) && File.Exists(item.SavedPath))
+            {
+                var openButton = new Button
+                {
+                    Text = "Open",
+                    BackgroundColor = Color.FromArgb("#E8F5E9"),
+                    TextColor = Color.FromArgb("#2E7D32"),
+                    CornerRadius = 8,
+                    HorizontalOptions = LayoutOptions.Fill,
+                    WidthRequest = 110
+                };
+                openButton.Clicked += async (_, _) => await OpenTransferAsync(item.SavedPath);
+
+                var shareButton = new Button
+                {
+                    Text = "Share",
+                    BackgroundColor = Color.FromArgb("#E3F2FD"),
+                    TextColor = Color.FromArgb("#1565C0"),
+                    CornerRadius = 8,
+                    HorizontalOptions = LayoutOptions.Fill,
+                    WidthRequest = 110
+                };
+                shareButton.Clicked += async (_, _) => await ShareTransferAsync(item.SavedPath);
+
+                cardStack.Children.Add(new HorizontalStackLayout
+                {
+                    Spacing = 8,
+                    Children = { openButton, shareButton }
                 });
             }
 
