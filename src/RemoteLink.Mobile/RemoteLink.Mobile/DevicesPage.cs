@@ -16,6 +16,7 @@ public class DevicesPage : ContentPage
     private readonly ILogger<DevicesPage> _logger;
     private readonly RemoteDesktopClient _client;
     private readonly ISavedDevicesService _savedDevices;
+    private readonly IConnectionHistoryService _connectionHistory;
     private readonly List<DeviceInfo> _devices = new();
 
     // UI references — address book
@@ -29,11 +30,15 @@ public class DevicesPage : ContentPage
 
     private bool _loaded;
 
-    public DevicesPage(ILogger<DevicesPage> logger, RemoteDesktopClient client, ISavedDevicesService savedDevices)
+    // Track connection start time for duration calculation
+    private DateTime? _connectionStartedAt;
+
+    public DevicesPage(ILogger<DevicesPage> logger, RemoteDesktopClient client, ISavedDevicesService savedDevices, IConnectionHistoryService connectionHistory)
     {
         _logger = logger;
         _client = client;
         _savedDevices = savedDevices;
+        _connectionHistory = connectionHistory;
 
         Title = "Devices";
         BackgroundColor = Colors.White;
@@ -81,6 +86,25 @@ public class DevicesPage : ContentPage
 
         // Connection status banner
         root.Add(BuildConnectionBanner());
+
+        // ── Recent Connections button ──
+        var historyButton = new Button
+        {
+            Text = "\ud83d\udd52  Recent Connections",
+            FontSize = 14,
+            BackgroundColor = Color.FromArgb("#F0EDFF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 8,
+            HeightRequest = 42,
+            HorizontalOptions = LayoutOptions.Fill
+        };
+        historyButton.Clicked += async (_, _) =>
+        {
+            var page = Handler?.MauiContext?.Services.GetService<RecentConnectionsPage>();
+            if (page != null)
+                await Navigation.PushAsync(page);
+        };
+        root.Add(historyButton);
 
         // ── Address Book section ──
         root.Add(new Label
@@ -391,11 +415,14 @@ public class DevicesPage : ContentPage
 
         if (success)
         {
+            _connectionStartedAt = DateTime.UtcNow;
             await _savedDevices.TouchLastConnectedAsync(saved.DeviceId);
+            await RecordConnectionAsync(deviceInfo, ConnectionOutcome.Success);
             Shell.Current.CurrentItem = Shell.Current.Items[0];
         }
         else
         {
+            await RecordConnectionAsync(deviceInfo, ConnectionOutcome.Failed);
             await DisplayAlertAsync("Connection Failed", "Could not connect. Check the PIN and try again.", "OK");
         }
     }
@@ -623,6 +650,8 @@ public class DevicesPage : ContentPage
 
         if (success)
         {
+            _connectionStartedAt = DateTime.UtcNow;
+
             // Auto-save device on successful connection if not already saved
             var existing = _savedDevices.FindByDeviceId(device.DeviceId);
             if (existing != null)
@@ -645,10 +674,12 @@ public class DevicesPage : ContentPage
                 await _savedDevices.AddOrUpdateAsync(saved);
             }
 
+            await RecordConnectionAsync(device, ConnectionOutcome.Success);
             Shell.Current.CurrentItem = Shell.Current.Items[0];
         }
         else
         {
+            await RecordConnectionAsync(device, ConnectionOutcome.Failed);
             await DisplayAlertAsync("Connection Failed", "Could not connect. Check the PIN and try again.", "OK");
         }
     }
@@ -684,12 +715,41 @@ public class DevicesPage : ContentPage
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
+            if (state == ClientConnectionState.Disconnected && _connectionStartedAt.HasValue)
+            {
+                // Update the last connection record with disconnect time and duration
+                var records = _connectionHistory.GetAll();
+                var lastRecord = records.FirstOrDefault();
+                if (lastRecord != null && lastRecord.Outcome == ConnectionOutcome.Success && lastRecord.DisconnectedAt == null)
+                {
+                    lastRecord.DisconnectedAt = DateTime.UtcNow;
+                    lastRecord.Duration = DateTime.UtcNow - _connectionStartedAt.Value;
+                    lastRecord.Outcome = ConnectionOutcome.Disconnected;
+                    _ = _connectionHistory.SaveAsync();
+                }
+                _connectionStartedAt = null;
+            }
+
             RefreshSavedDeviceList();
             RefreshDeviceList();
         });
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private async Task RecordConnectionAsync(DeviceInfo device, ConnectionOutcome outcome)
+    {
+        var record = new ConnectionRecord
+        {
+            DeviceName = device.DeviceName,
+            DeviceId = device.DeviceId,
+            IPAddress = device.IPAddress,
+            Port = device.Port,
+            ConnectedAt = DateTime.UtcNow,
+            Outcome = outcome
+        };
+        await _connectionHistory.AddAsync(record);
+    }
 
     private static string FormatRelativeTime(DateTime utcTime)
     {

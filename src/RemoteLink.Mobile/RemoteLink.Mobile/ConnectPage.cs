@@ -22,6 +22,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private readonly ILogger<ConnectPage> _logger;
     private readonly RemoteDesktopClient _client;
     private readonly INetworkDiscovery _networkDiscovery;
+    private readonly IConnectionHistoryService _connectionHistory;
 
     // Touch-to-mouse translation
     private readonly TouchToMouseTranslator _touchTranslator = new();
@@ -38,6 +39,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     // Throttle frame rendering
     private volatile bool _frameRenderBusy;
+
+    // Track connection start time for duration calculation
+    private DateTime? _connectionStartedAt;
 
     // UI references — manual connect
     private Entry _partnerIdEntry = null!;
@@ -74,11 +78,12 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         set { _statusMessage = value; OnPropertyChanged(); }
     }
 
-    public ConnectPage(ILogger<ConnectPage> logger, RemoteDesktopClient client, INetworkDiscovery networkDiscovery)
+    public ConnectPage(ILogger<ConnectPage> logger, RemoteDesktopClient client, INetworkDiscovery networkDiscovery, IConnectionHistoryService connectionHistory)
     {
         _logger = logger;
         _client = client;
         _networkDiscovery = networkDiscovery;
+        _connectionHistory = connectionHistory;
 
         Title = "Connect";
         BackgroundColor = Colors.White;
@@ -382,11 +387,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         if (success)
         {
+            _connectionStartedAt = DateTime.UtcNow;
+            await RecordConnectionAsync(targetDevice, ConnectionOutcome.Success);
             SetManualStatus("Connected!", Color.FromArgb("#2E7D32"));
             // Button stays disabled while connected; will reset on disconnect via OnAppearing
         }
         else
         {
+            await RecordConnectionAsync(targetDevice, ConnectionOutcome.Failed);
             _isManualConnecting = false;
             SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
             SetManualStatus("Connection failed. Check Partner ID and PIN.", Color.FromArgb("#C62828"));
@@ -715,8 +723,16 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         IsDiscovering = false;
 
-        if (!success)
+        if (success)
+        {
+            _connectionStartedAt = DateTime.UtcNow;
+            await RecordConnectionAsync(host, ConnectionOutcome.Success);
+        }
+        else
+        {
+            await RecordConnectionAsync(host, ConnectionOutcome.Failed);
             await DisplayAlertAsync("Connection Failed", StatusMessage, "OK");
+        }
     }
 
     private async Task DisconnectAsync()
@@ -773,6 +789,19 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     break;
 
                 case ClientConnectionState.Disconnected:
+                    if (_connectionStartedAt.HasValue)
+                    {
+                        var records = _connectionHistory.GetAll();
+                        var lastRecord = records.FirstOrDefault();
+                        if (lastRecord != null && lastRecord.Outcome == ConnectionOutcome.Success && lastRecord.DisconnectedAt == null)
+                        {
+                            lastRecord.DisconnectedAt = DateTime.UtcNow;
+                            lastRecord.Duration = DateTime.UtcNow - _connectionStartedAt.Value;
+                            lastRecord.Outcome = ConnectionOutcome.Disconnected;
+                            _ = _connectionHistory.SaveAsync();
+                        }
+                        _connectionStartedAt = null;
+                    }
                     _connectedBanner.IsVisible = false;
                     _remoteViewer.IsVisible = false;
                     _manualConnectCard.IsVisible = true;
@@ -924,6 +953,22 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         var events = _touchTranslator.Translate(gesture, _desktopWidth, _desktopHeight);
         foreach (var inputEvent in events)
             _ = _client.SendInputEventAsync(inputEvent);
+    }
+
+    // ── Connection history ─────────────────────────────────────────────
+
+    private async Task RecordConnectionAsync(DeviceInfo device, ConnectionOutcome outcome)
+    {
+        var record = new ConnectionRecord
+        {
+            DeviceName = device.DeviceName,
+            DeviceId = device.DeviceId,
+            IPAddress = device.IPAddress,
+            Port = device.Port,
+            ConnectedAt = DateTime.UtcNow,
+            Outcome = outcome
+        };
+        await _connectionHistory.AddAsync(record);
     }
 
     // ── INotifyPropertyChanged ─────────────────────────────────────────

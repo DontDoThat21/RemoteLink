@@ -22,6 +22,9 @@ public class AppShell : Shell
         tabBar.Items.Add(CreateTab<MobileSettingsPage>("Settings", "settings_icon", "Settings"));
 
         Items.Add(tabBar);
+
+        // Register routes for non-tab pages (navigated to via Navigation.PushAsync)
+        Routing.RegisterRoute("RecentConnections", typeof(RecentConnectionsPage));
     }
 
     private static ShellContent CreateTab<TPage>(string title, string icon, string route)

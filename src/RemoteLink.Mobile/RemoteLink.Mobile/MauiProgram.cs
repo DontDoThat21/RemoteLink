@@ -42,6 +42,9 @@ public static class MauiProgram
         // Saved devices address book
         builder.Services.AddSingleton<ISavedDevicesService, SavedDevicesService>();
 
+        // Connection history
+        builder.Services.AddSingleton<IConnectionHistoryService, ConnectionHistoryService>();
+
         // Remote desktop client (singleton shared across all pages)
         builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
         {
@@ -59,6 +62,7 @@ public static class MauiProgram
         builder.Services.AddTransient<FilesPage>();
         builder.Services.AddTransient<MobileChatPage>();
         builder.Services.AddTransient<MobileSettingsPage>();
+        builder.Services.AddTransient<RecentConnectionsPage>();
 
         return builder.Build();
     }
