@@ -507,6 +507,8 @@ public class FileTransferServiceTests
         public event EventHandler<PairingRequest>? PairingRequestReceived;
         public event EventHandler<PairingResponse>? PairingResponseReceived;
         public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
+        public event EventHandler<SessionControlRequest>? SessionControlRequestReceived;
+        public event EventHandler<SessionControlResponse>? SessionControlResponseReceived;
         public event EventHandler<ClipboardData>? ClipboardDataReceived;
         public event EventHandler<FileTransferRequest>? FileTransferRequestReceived;
         public event EventHandler<FileTransferResponse>? FileTransferResponseReceived;
@@ -528,6 +530,8 @@ public class FileTransferServiceTests
         public Task SendPairingRequestAsync(PairingRequest request) => Task.CompletedTask;
         public Task SendPairingResponseAsync(PairingResponse response) => Task.CompletedTask;
         public Task SendConnectionQualityAsync(ConnectionQuality quality) => Task.CompletedTask;
+        public Task SendSessionControlRequestAsync(SessionControlRequest request) => Task.CompletedTask;
+        public Task SendSessionControlResponseAsync(SessionControlResponse response) => Task.CompletedTask;
         public Task SendClipboardDataAsync(ClipboardData clipboardData) => Task.CompletedTask;
         public Task SendAudioDataAsync(AudioData audioData) => Task.CompletedTask;
 

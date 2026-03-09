@@ -17,6 +17,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     private readonly List<InputEvent> _sentInputEvents = new();
     private readonly List<PairingResponse> _sentPairingResponses = new();
     private readonly List<ConnectionQuality> _sentConnectionQuality = new();
+    private readonly List<SessionControlResponse> _sentSessionControlResponses = new();
     private readonly List<ClipboardData> _sentClipboardData = new();
     private readonly List<ChatMessage> _sentChatMessages = new();
     private readonly List<string> _sentMessageReadAcks = new();
@@ -36,6 +37,10 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public List<ConnectionQuality> SentConnectionQuality
     {
         get { lock (_lock) { return new List<ConnectionQuality>(_sentConnectionQuality); } }
+    }
+    public List<SessionControlResponse> SentSessionControlResponses
+    {
+        get { lock (_lock) { return new List<SessionControlResponse>(_sentSessionControlResponses); } }
     }
     public List<ClipboardData> SentClipboardData
     {
@@ -60,6 +65,8 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public event EventHandler<PairingRequest>? PairingRequestReceived;
     public event EventHandler<PairingResponse>? PairingResponseReceived;
     public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
+    public event EventHandler<SessionControlRequest>? SessionControlRequestReceived;
+    public event EventHandler<SessionControlResponse>? SessionControlResponseReceived;
     public event EventHandler<ClipboardData>? ClipboardDataReceived;
     public event EventHandler<AudioData>? AudioDataReceived;
     public event EventHandler<FileTransferRequest>? FileTransferRequestReceived;
@@ -101,6 +108,14 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public Task SendConnectionQualityAsync(ConnectionQuality quality)
     {
         lock (_lock) { _sentConnectionQuality.Add(quality); }
+        return Task.CompletedTask;
+    }
+
+    public Task SendSessionControlRequestAsync(SessionControlRequest request) => Task.CompletedTask;
+
+    public Task SendSessionControlResponseAsync(SessionControlResponse response)
+    {
+        lock (_lock) { _sentSessionControlResponses.Add(response); }
         return Task.CompletedTask;
     }
 
@@ -150,6 +165,9 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public void RaiseInputEventReceived(InputEvent inputEvent)
         => InputEventReceived?.Invoke(this, inputEvent);
 
+    public void RaiseSessionControlRequest(SessionControlRequest request)
+        => SessionControlRequestReceived?.Invoke(this, request);
+
     public void Dispose() { }
 }
 
@@ -159,6 +177,8 @@ internal sealed class FakeScreenCapture : IScreenCapture
     public bool IsCapturing { get; private set; }
     public int StartCallCount { get; private set; }
     public int StopCallCount { get; private set; }
+    public int LastQuality { get; private set; } = 75;
+    public string? SelectedMonitorId { get; private set; }
 
     public event EventHandler<ScreenData>? FrameCaptured;
 
@@ -182,7 +202,7 @@ internal sealed class FakeScreenCapture : IScreenCapture
     public Task<(int Width, int Height)> GetScreenDimensionsAsync()
         => Task.FromResult((1920, 1080));
 
-    public void SetQuality(int quality) { }
+    public void SetQuality(int quality) => LastQuality = quality;
 
     public Task<IReadOnlyList<MonitorInfo>> GetMonitorsAsync()
     {
@@ -200,10 +220,13 @@ internal sealed class FakeScreenCapture : IScreenCapture
     }
 
     public Task<bool> SelectMonitorAsync(string monitorId)
-        => Task.FromResult(true);
+    {
+        SelectedMonitorId = monitorId == "fake-monitor" ? monitorId : null;
+        return Task.FromResult(SelectedMonitorId != null);
+    }
 
     public string? GetSelectedMonitorId()
-        => null;
+        => SelectedMonitorId;
 
     /// <summary>Manually fire a <see cref="FrameCaptured"/> event.</summary>
     public void RaiseFrameCaptured(ScreenData data)
@@ -1152,6 +1175,92 @@ public class RemoteDesktopHostTests : IAsyncDisposable
 
         // Should not have sent more quality updates after disconnect
         Assert.Equal(countBeforeDisconnect, _comm.SentConnectionQuality.Count);
+    }
+
+    // ── Feature 6.8: Session toolbar controls ─────────────────────────────────
+
+    [Fact]
+    public async Task SessionControl_GetMonitors_ReturnsAvailableMonitors_WhenPaired()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-monitors",
+            Command = SessionControlCommand.GetMonitors
+        });
+
+        await Task.Delay(120);
+
+        Assert.Single(_comm.SentSessionControlResponses);
+        var response = _comm.SentSessionControlResponses[0];
+        Assert.True(response.Success);
+        Assert.NotNull(response.Monitors);
+        Assert.Single(response.Monitors!);
+        Assert.Equal("fake-monitor", response.Monitors[0].Id);
+    }
+
+    [Fact]
+    public async Task SessionControl_SelectMonitor_UpdatesCaptureAndResetsDeltaEncoder_WhenPaired()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-select-monitor",
+            Command = SessionControlCommand.SelectMonitor,
+            MonitorId = "fake-monitor"
+        });
+
+        await Task.Delay(120);
+
+        Assert.Equal("fake-monitor", _screen.SelectedMonitorId);
+        Assert.True(_deltaEncoder.ResetCalled);
+        Assert.Single(_comm.SentSessionControlResponses);
+        Assert.True(_comm.SentSessionControlResponses[0].Success);
+        Assert.Equal("fake-monitor", _comm.SentSessionControlResponses[0].SelectedMonitorId);
+    }
+
+    [Fact]
+    public async Task SessionControl_SetQuality_UpdatesScreenCapture_WhenPaired()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-quality",
+            Command = SessionControlCommand.SetQuality,
+            Quality = 65
+        });
+
+        await Task.Delay(120);
+
+        Assert.Equal(65, _screen.LastQuality);
+        Assert.Single(_comm.SentSessionControlResponses);
+        Assert.True(_comm.SentSessionControlResponses[0].Success);
+        Assert.Equal(65, _comm.SentSessionControlResponses[0].AppliedQuality);
+    }
+
+    [Fact]
+    public async Task SessionControl_IgnoredWithFailureResponse_WhenClientNotPaired()
+    {
+        await StartHostAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-unpaired",
+            Command = SessionControlCommand.SetQuality,
+            Quality = 50
+        });
+
+        await Task.Delay(120);
+
+        Assert.Single(_comm.SentSessionControlResponses);
+        Assert.False(_comm.SentSessionControlResponses[0].Success);
+        Assert.Equal("Client is not paired.", _comm.SentSessionControlResponses[0].ErrorMessage);
     }
 
     // ── IAsyncDisposable ───────────────────────────────────────────────────────

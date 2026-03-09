@@ -91,6 +91,28 @@ public interface ICommunicationService
     /// </summary>
     event EventHandler<ConnectionQuality> ConnectionQualityReceived;
 
+    // ── Session Controls ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Send a session control request to the connected peer.
+    /// </summary>
+    Task SendSessionControlRequestAsync(SessionControlRequest request);
+
+    /// <summary>
+    /// Send a session control response to the connected peer.
+    /// </summary>
+    Task SendSessionControlResponseAsync(SessionControlResponse response);
+
+    /// <summary>
+    /// Event fired when a session control request is received.
+    /// </summary>
+    event EventHandler<SessionControlRequest> SessionControlRequestReceived;
+
+    /// <summary>
+    /// Event fired when a session control response is received.
+    /// </summary>
+    event EventHandler<SessionControlResponse> SessionControlResponseReceived;
+
     // ── Clipboard Sync ────────────────────────────────────────────────────────
 
     /// <summary>

@@ -101,6 +101,9 @@ public class RemoteDesktopHost : BackgroundService
             // Wire connection state: start/stop screen capture based on client presence
             _communication.ConnectionStateChanged += OnConnectionStateChanged;
 
+            // Wire mobile session toolbar controls (monitor selection / quality changes)
+            _communication.SessionControlRequestReceived += OnSessionControlRequestReceived;
+
             // Wire clipboard sync: send local changes to client, apply remote changes locally
             _clipboardService.ClipboardChanged += OnClipboardChanged;
             _communication.ClipboardDataReceived += OnClipboardDataReceived;
@@ -154,6 +157,7 @@ public class RemoteDesktopHost : BackgroundService
             _communication.PairingRequestReceived -= OnPairingRequestReceived;
             _communication.InputEventReceived -= OnInputEventReceived;
             _communication.ConnectionStateChanged -= OnConnectionStateChanged;
+            _communication.SessionControlRequestReceived -= OnSessionControlRequestReceived;
             _clipboardService.ClipboardChanged -= OnClipboardChanged;
             _communication.ClipboardDataReceived -= OnClipboardDataReceived;
             _audioCapture.AudioCaptured -= OnAudioCaptured;
@@ -260,6 +264,113 @@ public class RemoteDesktopHost : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error processing pairing request");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Handles monitor and quality control requests from the paired client.
+    /// </summary>
+    private void OnSessionControlRequestReceived(object? sender, SessionControlRequest request)
+    {
+        _ = Task.Run(async () =>
+        {
+            if (!_clientPaired)
+            {
+                await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                {
+                    RequestId = request.RequestId,
+                    Command = request.Command,
+                    Success = false,
+                    ErrorMessage = "Client is not paired."
+                });
+                return;
+            }
+
+            try
+            {
+                switch (request.Command)
+                {
+                    case SessionControlCommand.GetMonitors:
+                    {
+                        var monitors = await _screenCapture.GetMonitorsAsync();
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            Monitors = monitors.ToList(),
+                            SelectedMonitorId = _screenCapture.GetSelectedMonitorId()
+                        });
+                        break;
+                    }
+
+                    case SessionControlCommand.SelectMonitor:
+                    {
+                        if (string.IsNullOrWhiteSpace(request.MonitorId))
+                        {
+                            await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                            {
+                                RequestId = request.RequestId,
+                                Command = request.Command,
+                                Success = false,
+                                ErrorMessage = "Monitor ID is required."
+                            });
+                            break;
+                        }
+
+                        bool selected = await _screenCapture.SelectMonitorAsync(request.MonitorId);
+                        if (selected)
+                            _deltaEncoder.Reset();
+
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = selected,
+                            ErrorMessage = selected ? null : "Monitor not found.",
+                            SelectedMonitorId = selected ? request.MonitorId : _screenCapture.GetSelectedMonitorId()
+                        });
+                        break;
+                    }
+
+                    case SessionControlCommand.SetQuality:
+                    {
+                        int quality = Math.Clamp(request.Quality ?? 75, 0, 100);
+                        _screenCapture.SetQuality(quality);
+
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            AppliedQuality = quality
+                        });
+                        break;
+                    }
+
+                    default:
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = false,
+                            ErrorMessage = $"Unsupported session control command: {request.Command}"
+                        });
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to process session control request {Command}", request.Command);
+
+                await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                {
+                    RequestId = request.RequestId,
+                    Command = request.Command,
+                    Success = false,
+                    ErrorMessage = ex.Message
+                });
             }
         });
     }

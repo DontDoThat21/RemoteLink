@@ -59,11 +59,23 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private Image _remoteViewer = null!;
     private Label _statusLabel = null!;
     private ActivityIndicator _activityIndicator = null!;
+    private Border _sessionToolbar = null!;
+    private Border _specialKeysBar = null!;
+    private Entry _keyCaptureEntry = null!;
+    private Button _keyboardToggleButton = null!;
+    private Button _specialKeysToggleButton = null!;
 
     // UI references — manual connect card (to hide when connected)
     private Border _manualConnectCard = null!;
     private View _scanQrButton = null!;
     private View _discoveredSection = null!;
+
+    // Session toolbar state
+    private bool _isKeyboardVisible;
+    private bool _isSpecialKeysVisible;
+    private bool _suppressKeyCaptureTextChanged;
+    private int _selectedQuality = 75;
+    private string? _selectedMonitorId;
 
     // Bindable properties
     public bool IsDiscovering
@@ -88,7 +100,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         Title = "Connect";
         BackgroundColor = Colors.White;
 
-        Content = new ScrollView { Content = BuildLayout() };
+        Content = BuildLayout();
 
         // Subscribe to client events
         _client.DeviceDiscovered += OnDeviceDiscovered;
@@ -136,7 +148,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     {
         var root = new StackLayout
         {
-            Padding = new Thickness(16),
+            Padding = new Thickness(16, 16, 16, 120),
             Spacing = 12
         };
 
@@ -240,7 +252,402 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         _discoveredSection = BuildDiscoveredHostsSection();
         root.Add(_discoveredSection);
 
-        return root;
+        _sessionToolbar = BuildSessionToolbar();
+        _specialKeysBar = BuildSpecialKeysBar();
+        _keyCaptureEntry = BuildKeyCaptureEntry();
+        UpdateSessionOverlayVisibility();
+
+        var overlay = new VerticalStackLayout
+        {
+            Spacing = 8,
+            Padding = new Thickness(16, 0, 16, 16),
+            VerticalOptions = LayoutOptions.End,
+            HorizontalOptions = LayoutOptions.Fill,
+            Children = { _specialKeysBar, _sessionToolbar, _keyCaptureEntry }
+        };
+
+        var layout = new Grid();
+        layout.Add(new ScrollView { Content = root });
+        layout.Add(overlay);
+        return layout;
+    }
+
+    private Border BuildSessionToolbar()
+    {
+        _keyboardToggleButton = BuildSessionActionButton("⌨ Keyboard", OnKeyboardToggleClicked);
+        _specialKeysToggleButton = BuildSessionActionButton("⌥ Keys", OnSpecialKeysToggleClicked);
+
+        var qualityButton = BuildSessionActionButton("📊 Quality", OnQualityClicked);
+        var monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
+        var disconnectButton = BuildSessionActionButton("✕ Disconnect", OnToolbarDisconnectClicked, Color.FromArgb("#C62828"));
+        disconnectButton.TextColor = Colors.White;
+
+        return new Border
+        {
+            IsVisible = false,
+            BackgroundColor = Color.FromArgb("#F8F6FF"),
+            Stroke = Color.FromArgb("#D7CCFF"),
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 18 },
+            Padding = new Thickness(12, 10),
+            Shadow = new Shadow
+            {
+                Brush = Brush.Black,
+                Opacity = 0.12f,
+                Radius = 16,
+                Offset = new Point(0, 6)
+            },
+            Content = new VerticalStackLayout
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new Label
+                    {
+                        Text = "Session Actions",
+                        FontSize = 11,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Color.FromArgb("#6B5FB5")
+                    },
+                    new ScrollView
+                    {
+                        Orientation = ScrollOrientation.Horizontal,
+                        Content = new HorizontalStackLayout
+                        {
+                            Spacing = 8,
+                            Children =
+                            {
+                                _keyboardToggleButton,
+                                _specialKeysToggleButton,
+                                qualityButton,
+                                monitorButton,
+                                disconnectButton
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    private Border BuildSpecialKeysBar()
+    {
+        return new Border
+        {
+            IsVisible = false,
+            BackgroundColor = Colors.White,
+            Stroke = Color.FromArgb("#E0E0E0"),
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
+            Padding = new Thickness(10, 8),
+            Shadow = new Shadow
+            {
+                Brush = Brush.Black,
+                Opacity = 0.10f,
+                Radius = 12,
+                Offset = new Point(0, 4)
+            },
+            Content = new ScrollView
+            {
+                Orientation = ScrollOrientation.Horizontal,
+                Content = new HorizontalStackLayout
+                {
+                    Spacing = 6,
+                    Children =
+                    {
+                        BuildSpecialKeyButton("Esc", async () => await SendKeyTapAsync("Escape")),
+                        BuildSpecialKeyButton("Tab", async () => await SendKeyTapAsync("Tab")),
+                        BuildSpecialKeyButton("Enter", async () => await SendKeyTapAsync("Return")),
+                        BuildSpecialKeyButton("⌫", async () => await SendKeyTapAsync("Back")),
+                        BuildSpecialKeyButton("↑", async () => await SendKeyTapAsync("Up")),
+                        BuildSpecialKeyButton("↓", async () => await SendKeyTapAsync("Down")),
+                        BuildSpecialKeyButton("←", async () => await SendKeyTapAsync("Left")),
+                        BuildSpecialKeyButton("→", async () => await SendKeyTapAsync("Right")),
+                        BuildSpecialKeyButton("Alt+Tab", async () => await SendShortcutAsync(KeyboardShortcut.TaskSwitcher)),
+                        BuildSpecialKeyButton("Win+D", async () => await SendShortcutAsync(KeyboardShortcut.ShowDesktop)),
+                        BuildSpecialKeyButton("Task Mgr", async () => await SendShortcutAsync(KeyboardShortcut.TaskManager))
+                    }
+                }
+            }
+        };
+    }
+
+    private Entry BuildKeyCaptureEntry()
+    {
+        var entry = new Entry
+        {
+            Opacity = 0.01,
+            WidthRequest = 1,
+            HeightRequest = 1,
+            HorizontalOptions = LayoutOptions.End,
+            VerticalOptions = LayoutOptions.End,
+            BackgroundColor = Colors.Transparent,
+            TextColor = Colors.Transparent,
+            Placeholder = string.Empty,
+            Keyboard = Keyboard.Text
+        };
+
+        entry.TextChanged += OnKeyCaptureTextChanged;
+        return entry;
+    }
+
+    private Button BuildSessionActionButton(string text, EventHandler clicked, Color? backgroundColor = null)
+    {
+        var button = new Button
+        {
+            Text = text,
+            FontSize = 13,
+            FontAttributes = FontAttributes.Bold,
+            BackgroundColor = backgroundColor ?? Color.FromArgb("#512BD4"),
+            TextColor = Colors.White,
+            CornerRadius = 20,
+            HeightRequest = 40,
+            Padding = new Thickness(14, 8)
+        };
+
+        button.Clicked += clicked;
+        return button;
+    }
+
+    private Button BuildSpecialKeyButton(string text, Func<Task> onClick)
+    {
+        var button = new Button
+        {
+            Text = text,
+            FontSize = 12,
+            BackgroundColor = Color.FromArgb("#EFEAFF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 14,
+            HeightRequest = 36,
+            Padding = new Thickness(12, 6)
+        };
+
+        button.Clicked += async (_, _) => await onClick();
+        return button;
+    }
+
+    private void UpdateSessionOverlayVisibility()
+    {
+        bool isConnected = _client.IsConnected;
+
+        if (_sessionToolbar != null)
+            _sessionToolbar.IsVisible = isConnected;
+
+        if (_specialKeysBar != null)
+            _specialKeysBar.IsVisible = isConnected && _isSpecialKeysVisible;
+
+        if (!isConnected)
+        {
+            _isKeyboardVisible = false;
+            _isSpecialKeysVisible = false;
+
+            if (_keyCaptureEntry != null)
+            {
+                _suppressKeyCaptureTextChanged = true;
+                _keyCaptureEntry.Text = string.Empty;
+                _suppressKeyCaptureTextChanged = false;
+                _keyCaptureEntry.Unfocus();
+            }
+        }
+
+        UpdateSessionActionButtonStates();
+    }
+
+    private void UpdateSessionActionButtonStates()
+    {
+        if (_keyboardToggleButton != null)
+            _keyboardToggleButton.BackgroundColor = _isKeyboardVisible ? Color.FromArgb("#2E7D32") : Color.FromArgb("#512BD4");
+
+        if (_specialKeysToggleButton != null)
+            _specialKeysToggleButton.BackgroundColor = _isSpecialKeysVisible ? Color.FromArgb("#7B1FA2") : Color.FromArgb("#512BD4");
+    }
+
+    private async void OnKeyboardToggleClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        _isKeyboardVisible = !_isKeyboardVisible;
+        if (_isKeyboardVisible)
+        {
+            _isSpecialKeysVisible = true;
+            UpdateSessionOverlayVisibility();
+            StatusMessage = "Keyboard ready — type to send text to the remote host.";
+
+            await Task.Delay(50);
+            MainThread.BeginInvokeOnMainThread(() => _keyCaptureEntry.Focus());
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => _keyCaptureEntry.Unfocus());
+            StatusMessage = "Keyboard hidden.";
+            UpdateSessionOverlayVisibility();
+        }
+    }
+
+    private void OnSpecialKeysToggleClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        _isSpecialKeysVisible = !_isSpecialKeysVisible;
+        UpdateSessionOverlayVisibility();
+        StatusMessage = _isSpecialKeysVisible
+            ? "Special keys bar shown."
+            : "Special keys bar hidden.";
+    }
+
+    private async void OnQualityClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        try
+        {
+            var presets = new[]
+            {
+                (Label: "Low (50%)", Quality: 50),
+                (Label: "Medium (65%)", Quality: 65),
+                (Label: "High (75%)", Quality: 75),
+                (Label: "Ultra (85%)", Quality: 85)
+            };
+
+            var options = presets
+                .Select(p => p.Quality == _selectedQuality ? $"{p.Label} ✓" : p.Label)
+                .ToArray();
+
+            var choice = await DisplayActionSheetAsync("Display Quality", "Cancel", null, options);
+            if (string.IsNullOrWhiteSpace(choice) || choice == "Cancel")
+                return;
+
+            int index = Array.IndexOf(options, choice);
+            if (index < 0)
+                return;
+
+            _selectedQuality = await _client.SetRemoteQualityAsync(presets[index].Quality);
+            StatusMessage = $"Remote quality set to {_selectedQuality}% ({presets[index].Label}).";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to set remote quality");
+            await DisplayAlertAsync("Quality", $"Failed to set remote quality: {ex.Message}", "OK");
+        }
+    }
+
+    private async void OnMonitorClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        try
+        {
+            var (monitors, selectedMonitorId) = await _client.GetRemoteMonitorsAsync();
+            if (monitors.Count == 0)
+            {
+                await DisplayAlertAsync("Monitors", "No monitors found on the remote host.", "OK");
+                return;
+            }
+
+            _selectedMonitorId = selectedMonitorId;
+
+            var options = monitors
+                .Select(m => $"{m.Name} ({m.Width}×{m.Height}){(m.IsPrimary ? " [Primary]" : string.Empty)}{(m.Id == _selectedMonitorId ? " ✓" : string.Empty)}")
+                .ToArray();
+
+            var choice = await DisplayActionSheetAsync("Monitor Selector", "Cancel", null, options);
+            if (string.IsNullOrWhiteSpace(choice) || choice == "Cancel")
+                return;
+
+            int index = Array.IndexOf(options, choice);
+            if (index < 0)
+                return;
+
+            var selectedMonitor = monitors[index];
+            _selectedMonitorId = await _client.SelectRemoteMonitorAsync(selectedMonitor.Id);
+            StatusMessage = $"Remote monitor switched to {selectedMonitor.Name}.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to switch remote monitor");
+            await DisplayAlertAsync("Monitor", $"Failed to switch remote monitor: {ex.Message}", "OK");
+        }
+    }
+
+    private async void OnToolbarDisconnectClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        bool confirm = await DisplayAlertAsync(
+            "Disconnect",
+            $"End the session with {_client.ConnectedHost?.DeviceName ?? "the remote host"}?",
+            "Disconnect",
+            "Cancel");
+
+        if (confirm)
+            await DisconnectAsync();
+    }
+
+    private void OnKeyCaptureTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (_suppressKeyCaptureTextChanged || !_client.IsConnected) return;
+
+        var newText = e.NewTextValue ?? string.Empty;
+        var oldText = e.OldTextValue ?? string.Empty;
+
+        if (string.IsNullOrEmpty(newText))
+        {
+            if (!string.IsNullOrEmpty(oldText))
+                _ = SendKeyTapAsync("Back");
+
+            return;
+        }
+
+        var addedText = newText.Length > oldText.Length
+            ? newText[oldText.Length..]
+            : newText;
+
+        foreach (var ch in addedText)
+        {
+            _ = _client.SendInputEventAsync(new InputEvent
+            {
+                Type = InputEventType.TextInput,
+                Text = ch.ToString()
+            });
+        }
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _suppressKeyCaptureTextChanged = true;
+            _keyCaptureEntry.Text = string.Empty;
+            _suppressKeyCaptureTextChanged = false;
+        });
+    }
+
+    private async Task SendKeyTapAsync(string keyCode)
+    {
+        if (!_client.IsConnected) return;
+
+        await _client.SendInputEventAsync(new InputEvent
+        {
+            Type = InputEventType.KeyPress,
+            KeyCode = keyCode,
+            IsPressed = true
+        });
+
+        await _client.SendInputEventAsync(new InputEvent
+        {
+            Type = InputEventType.KeyRelease,
+            KeyCode = keyCode,
+            IsPressed = false
+        });
+    }
+
+    private Task SendShortcutAsync(KeyboardShortcut shortcut)
+    {
+        if (!_client.IsConnected)
+            return Task.CompletedTask;
+
+        return _client.SendInputEventAsync(new InputEvent
+        {
+            Type = InputEventType.KeyboardShortcut,
+            Shortcut = shortcut
+        });
     }
 
     // ── Manual connection card ──────────────────────────────────────────
@@ -786,6 +1193,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _scanQrButton.IsVisible = false;
                     _discoveredSection.IsVisible = false;
                     StatusMessage = $"Connected to {hostName}";
+                    UpdateSessionOverlayVisibility();
                     break;
 
                 case ClientConnectionState.Disconnected:
@@ -811,6 +1219,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
                     _manualStatusLabel.IsVisible = false;
                     OnManualEntryChanged(null, null!);
+                    _selectedMonitorId = null;
+                    _selectedQuality = 75;
+                    UpdateSessionOverlayVisibility();
                     if (StatusMessage.StartsWith("Connected"))
                         StatusMessage = "Disconnected. Scanning for hosts...";
                     break;

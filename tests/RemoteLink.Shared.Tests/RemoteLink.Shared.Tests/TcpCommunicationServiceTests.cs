@@ -319,6 +319,103 @@ public class TcpCommunicationServiceTests : IAsyncDisposable
         Assert.True((received.Timestamp - timestamp).Duration() < TimeSpan.FromSeconds(1));
     }
 
+    [Fact]
+    public async Task SendSessionControlRequestAsync_IsReceived_ByConnectedPeer()
+    {
+        using var server = new TcpCommunicationService();
+        using var client = new TcpCommunicationService();
+
+        var tcs = new TaskCompletionSource<SessionControlRequest>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        server.SessionControlRequestReceived += (_, request) => tcs.TrySetResult(request);
+
+        await server.StartAsync(_port);
+
+        var device = new DeviceInfo
+        {
+            DeviceId = "h", DeviceName = "H",
+            IPAddress = "127.0.0.1", Port = _port,
+            Type = DeviceType.Desktop
+        };
+        await client.ConnectToDeviceAsync(device);
+
+        await Task.Delay(100);
+
+        await client.SendSessionControlRequestAsync(new SessionControlRequest
+        {
+            RequestId = "req-1",
+            Command = SessionControlCommand.SelectMonitor,
+            MonitorId = "display-2"
+        });
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await client.StopAsync();
+        await server.StopAsync();
+
+        Assert.Equal("req-1", received.RequestId);
+        Assert.Equal(SessionControlCommand.SelectMonitor, received.Command);
+        Assert.Equal("display-2", received.MonitorId);
+    }
+
+    [Fact]
+    public async Task SendSessionControlResponseAsync_IsReceived_ByConnectedPeer()
+    {
+        using var server = new TcpCommunicationService();
+        using var client = new TcpCommunicationService();
+
+        var tcs = new TaskCompletionSource<SessionControlResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        client.SessionControlResponseReceived += (_, response) => tcs.TrySetResult(response);
+
+        await server.StartAsync(_port);
+
+        var device = new DeviceInfo
+        {
+            DeviceId = "h", DeviceName = "H",
+            IPAddress = "127.0.0.1", Port = _port,
+            Type = DeviceType.Desktop
+        };
+        await client.ConnectToDeviceAsync(device);
+
+        await Task.Delay(100);
+
+        await server.SendSessionControlResponseAsync(new SessionControlResponse
+        {
+            RequestId = "req-2",
+            Command = SessionControlCommand.GetMonitors,
+            Success = true,
+            SelectedMonitorId = "display-1",
+            Monitors = new List<MonitorInfo>
+            {
+                new()
+                {
+                    Id = "display-1",
+                    Name = "Display 1",
+                    IsPrimary = true,
+                    Width = 1920,
+                    Height = 1080,
+                    Left = 0,
+                    Top = 0
+                }
+            }
+        });
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await client.StopAsync();
+        await server.StopAsync();
+
+        Assert.Equal("req-2", received.RequestId);
+        Assert.True(received.Success);
+        Assert.Equal(SessionControlCommand.GetMonitors, received.Command);
+        Assert.Equal("display-1", received.SelectedMonitorId);
+        Assert.Single(received.Monitors!);
+        Assert.Equal("Display 1", received.Monitors![0].Name);
+    }
+
     // ── Dispose ───────────────────────────────────────────────────────────────
 
     public async ValueTask DisposeAsync()

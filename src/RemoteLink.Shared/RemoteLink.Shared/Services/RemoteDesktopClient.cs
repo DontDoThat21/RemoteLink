@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RemoteLink.Shared.Interfaces;
@@ -35,6 +36,7 @@ public class RemoteDesktopClient
     private ICommunicationService? _communicationService;
     private bool _isStarted;
     private TaskCompletionSource<PairingResponse>? _pairingTcs;
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<SessionControlResponse>> _pendingSessionControlRequests = new();
 
     // ── Public events ─────────────────────────────────────────────────────────
 
@@ -179,6 +181,7 @@ public class RemoteDesktopClient
         comm.ScreenDataReceived += OnScreenDataReceived;
         comm.ConnectionStateChanged += OnCommConnectionStateChanged;
         comm.PairingResponseReceived += OnPairingResponseReceived;
+        comm.SessionControlResponseReceived += OnSessionControlResponseReceived;
 
         bool tcpConnected;
         try
@@ -278,6 +281,7 @@ public class RemoteDesktopClient
 
         _pairingTcs?.TrySetCanceled();
         _pairingTcs = null;
+        CancelPendingSessionControlRequests();
 
         SessionToken = null;
         ConnectedHost = null;
@@ -306,6 +310,54 @@ public class RemoteDesktopClient
         }
     }
 
+    /// <summary>
+    /// Fetch the list of monitors currently available on the remote host.
+    /// </summary>
+    public async Task<(IReadOnlyList<MonitorInfo> Monitors, string? SelectedMonitorId)> GetRemoteMonitorsAsync(
+        CancellationToken ct = default)
+    {
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.GetMonitors,
+            configure: null,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to retrieve remote monitors.");
+        return (response.Monitors ?? new List<MonitorInfo>(), response.SelectedMonitorId);
+    }
+
+    /// <summary>
+    /// Select a monitor on the remote host.
+    /// </summary>
+    public async Task<string?> SelectRemoteMonitorAsync(string monitorId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(monitorId))
+            throw new ArgumentException("Monitor ID is required.", nameof(monitorId));
+
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.SelectMonitor,
+            request => request.MonitorId = monitorId,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to switch remote monitor.");
+        return response.SelectedMonitorId;
+    }
+
+    /// <summary>
+    /// Set the remote host capture quality.
+    /// </summary>
+    public async Task<int> SetRemoteQualityAsync(int quality, CancellationToken ct = default)
+    {
+        var clamped = Math.Clamp(quality, 0, 100);
+
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.SetQuality,
+            request => request.Quality = clamped,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to set remote quality.");
+        return response.AppliedQuality ?? clamped;
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private void SetState(ClientConnectionState state)
@@ -320,6 +372,7 @@ public class RemoteDesktopClient
         if (!connected && ConnectionState == ClientConnectionState.Connected)
         {
             _logger.LogWarning("Lost TCP connection to {Host}", ConnectedHost?.DeviceName);
+            CancelPendingSessionControlRequests();
             SetState(ClientConnectionState.Disconnected);
             ServiceStatusChanged?.Invoke(this, "Disconnected from host.");
         }
@@ -328,6 +381,12 @@ public class RemoteDesktopClient
     private void OnPairingResponseReceived(object? sender, PairingResponse response)
     {
         _pairingTcs?.TrySetResult(response);
+    }
+
+    private void OnSessionControlResponseReceived(object? sender, SessionControlResponse response)
+    {
+        if (_pendingSessionControlRequests.TryRemove(response.RequestId, out var tcs))
+            tcs.TrySetResult(response);
     }
 
     private void OnScreenDataReceived(object? sender, ScreenData screenData)
@@ -354,10 +413,63 @@ public class RemoteDesktopClient
         }
     }
 
-    private static async Task CleanupCommAsync(ICommunicationService comm)
+    private async Task CleanupCommAsync(ICommunicationService comm)
     {
+        comm.ScreenDataReceived -= OnScreenDataReceived;
+        comm.ConnectionStateChanged -= OnCommConnectionStateChanged;
+        comm.PairingResponseReceived -= OnPairingResponseReceived;
+        comm.SessionControlResponseReceived -= OnSessionControlResponseReceived;
+
         try { await comm.DisconnectAsync(); } catch { /* ignore */ }
         if (comm is IDisposable d) d.Dispose();
+    }
+
+    private async Task<SessionControlResponse> SendSessionControlRequestAsync(
+        SessionControlCommand command,
+        Action<SessionControlRequest>? configure,
+        CancellationToken ct)
+    {
+        var comm = _communicationService;
+        if (comm is null || !IsConnected)
+            throw new InvalidOperationException("The client is not connected to a host.");
+
+        var request = new SessionControlRequest { Command = command };
+        configure?.Invoke(request);
+
+        var tcs = new TaskCompletionSource<SessionControlResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _pendingSessionControlRequests[request.RequestId] = tcs;
+
+        try
+        {
+            await comm.SendSessionControlRequestAsync(request);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+            return await tcs.Task.WaitAsync(timeoutCts.Token);
+        }
+        catch
+        {
+            _pendingSessionControlRequests.TryRemove(request.RequestId, out _);
+            throw;
+        }
+    }
+
+    private void CancelPendingSessionControlRequests()
+    {
+        foreach (var pending in _pendingSessionControlRequests)
+        {
+            if (_pendingSessionControlRequests.TryRemove(pending.Key, out var tcs))
+                tcs.TrySetCanceled();
+        }
+    }
+
+    private static void EnsureSuccessfulSessionControlResponse(SessionControlResponse response, string fallbackMessage)
+    {
+        if (!response.Success)
+            throw new InvalidOperationException(response.ErrorMessage ?? fallbackMessage);
     }
 
     private static string FormatFailureReason(PairingFailureReason? reason, string? message)

@@ -36,6 +36,8 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private const string MsgTypePairingRequest = "PairingRequest";
     private const string MsgTypePairingResponse = "PairingResponse";
     private const string MsgTypeConnectionQuality = "ConnectionQuality";
+    private const string MsgTypeSessionControlRequest = "SessionControlRequest";
+    private const string MsgTypeSessionControlResponse = "SessionControlResponse";
     private const string MsgTypeClipboard = "ClipboardData";
     private const string MsgTypeFileTransferRequest = "FileTransferRequest";
     private const string MsgTypeFileTransferResponse = "FileTransferResponse";
@@ -96,6 +98,12 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public event EventHandler<ConnectionQuality>? ConnectionQualityReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<SessionControlRequest>? SessionControlRequestReceived;
+
+    /// <inheritdoc/>
+    public event EventHandler<SessionControlResponse>? SessionControlResponseReceived;
 
     /// <inheritdoc/>
     public event EventHandler<ClipboardData>? ClipboardDataReceived;
@@ -343,6 +351,28 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     }
 
     /// <inheritdoc/>
+    public async Task SendSessionControlRequestAsync(SessionControlRequest request)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeSessionControlRequest,
+            Payload = Encode(request)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendSessionControlResponseAsync(SessionControlResponse response)
+    {
+        var msg = new NetworkMessage
+        {
+            MessageType = MsgTypeSessionControlResponse,
+            Payload = Encode(response)
+        };
+        await SendMessageAsync(msg);
+    }
+
+    /// <inheritdoc/>
     public async Task SendClipboardDataAsync(ClipboardData clipboardData)
     {
         var msg = new NetworkMessage
@@ -565,6 +595,16 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 case MsgTypeConnectionQuality:
                     var cq = Decode<ConnectionQuality>(msg.Payload);
                     if (cq != null) ConnectionQualityReceived?.Invoke(this, cq);
+                    break;
+
+                case MsgTypeSessionControlRequest:
+                    var scr = Decode<SessionControlRequest>(msg.Payload);
+                    if (scr != null) SessionControlRequestReceived?.Invoke(this, scr);
+                    break;
+
+                case MsgTypeSessionControlResponse:
+                    var scresp = Decode<SessionControlResponse>(msg.Payload);
+                    if (scresp != null) SessionControlResponseReceived?.Invoke(this, scresp);
                     break;
 
                 case MsgTypeClipboard:
