@@ -1,3 +1,5 @@
+using RemoteLink.Mobile.Services;
+
 namespace RemoteLink.Mobile;
 
 /// <summary>
@@ -5,8 +7,13 @@ namespace RemoteLink.Mobile;
 /// </summary>
 public class AppShell : Shell
 {
-    public AppShell()
+    private readonly MobileChatSession _chatSession;
+    private readonly ShellContent _chatTab;
+
+    public AppShell(MobileChatSession chatSession)
     {
+        _chatSession = chatSession;
+
         // Shell styling
         Shell.SetFlyoutBehavior(this, FlyoutBehavior.Disabled);
         Shell.SetTabBarBackgroundColor(this, Color.FromArgb("#FFFFFF"));
@@ -18,13 +25,28 @@ public class AppShell : Shell
         tabBar.Items.Add(CreateTab<ConnectPage>("Connect", "connect_icon", "Connect"));
         tabBar.Items.Add(CreateTab<DevicesPage>("Devices", "devices_icon", "Devices"));
         tabBar.Items.Add(CreateTab<FilesPage>("Files", "files_icon", "Files"));
-        tabBar.Items.Add(CreateTab<MobileChatPage>("Chat", "chat_icon", "Chat"));
+        _chatTab = CreateTab<MobileChatPage>("Chat", "chat_icon", "Chat");
+        tabBar.Items.Add(_chatTab);
         tabBar.Items.Add(CreateTab<MobileSettingsPage>("Settings", "settings_icon", "Settings"));
 
         Items.Add(tabBar);
 
         // Register routes for non-tab pages (navigated to via Navigation.PushAsync)
         Routing.RegisterRoute("RecentConnections", typeof(RecentConnectionsPage));
+
+        _chatSession.UnreadCountChanged += OnUnreadCountChanged;
+        UpdateChatTabTitle();
+    }
+
+    private void OnUnreadCountChanged(object? sender, int unreadCount)
+    {
+        MainThread.BeginInvokeOnMainThread(UpdateChatTabTitle);
+    }
+
+    private void UpdateChatTabTitle()
+    {
+        var unreadCount = _chatSession.UnreadCount;
+        _chatTab.Title = unreadCount > 0 ? $"Chat ({unreadCount})" : "Chat";
     }
 
     private static ShellContent CreateTab<TPage>(string title, string icon, string route)

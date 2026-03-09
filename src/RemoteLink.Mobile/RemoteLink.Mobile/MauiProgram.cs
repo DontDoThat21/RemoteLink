@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using RemoteLink.Mobile.Services;
 using RemoteLink.Shared.Interfaces;
 using ZXing.Net.Maui.Controls;
 using RemoteLink.Shared.Models;
@@ -52,6 +53,8 @@ public static class MauiProgram
             var discovery = provider.GetRequiredService<INetworkDiscovery>();
             return new RemoteDesktopClient(logger, discovery);
         });
+
+        builder.Services.AddSingleton<MobileChatSession>();
 
         // Shell
         builder.Services.AddSingleton<AppShell>();
