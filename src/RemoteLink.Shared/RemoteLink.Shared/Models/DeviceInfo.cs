@@ -20,6 +20,9 @@ public class DeviceInfo
     public int? RelayServerPort { get; set; }
     public bool SupportsSecureTunnel { get; set; }
     public bool RequiresSecureTunnel { get; set; }
+    public bool SupportsPresentationMode { get; set; }
+    public bool PresentationSessionActive { get; set; }
+    public int? PresentationPort { get; set; }
     public DeviceType Type { get; set; }
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; }

@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-03-10 (session 58)
+> **Last updated:** 2026-03-10 (session 59)
 
 ## Legend
 - ✅ Complete & Tested
@@ -139,8 +139,8 @@
 
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
-| 9.1 | Meeting / presentation mode | 📋 | Share screen to multiple viewers (read-only broadcast) |
-| 9.2 | Whiteboard / screen annotation | 📋 | Draw arrows, rectangles, text on shared screen in real-time |
+| 9.1 | Meeting / presentation mode | ✅ | Shared `PresentationSessionHost`/`PresentationSessionClient`: TLS-aware multi-viewer read-only broadcast with join PIN, view-only permissions, screen + quality fan-out, and new Shared regression coverage |
+| 9.2 | Whiteboard / screen annotation | 🔧 | Shared annotation groundwork started: `PresentationAnnotation*` models, `PresentationAnnotationBoard`, and presentation transport broadcast/receive support for real-time overlay sync |
 | 9.3 | Remote reboot & auto-reconnect | 📋 | Reboot remote machine and automatically re-establish session |
 | 9.4 | Remote system information panel | 📋 | View remote OS, CPU, RAM, disk, network info without full desktop |
 | 9.5 | Remote command / script execution | 📋 | Run CLI commands or scripts on remote host from client |
@@ -214,6 +214,7 @@
 > Session 55 (2026-03-10): Feature 8.2 — Two-factor authentication (TOTP) completed. Added shared `TotpAuthenticator` for Base32 secret generation, RFC 6238 TOTP code generation/verification, and `otpauth://` provisioning URIs for authenticator apps. Extended `IUserAccountService` / `UserAccountService` with TOTP setup, enable/disable flows, password+code login enforcement, unattended-access requirement checks, and persisted 2FA state on account profiles/sessions. Validation: added 8 Shared tests across TOTP utility and account-service login/enrollment flows; targeted Shared tests passed, and workspace build succeeded.
 > Session 57 (2026-03-10): Features 8.5, 8.6, and 8.7 — confirmed complete and updated status. Feature 8.5 was already implemented in code via `SessionPermissionSet`, account-managed device permission persistence, pairing-response permission snapshots, and `RemoteDesktopHost` enforcement for input/clipboard/file-transfer/audio/session-control operations. Feature 8.6 was completed by adding account-backed `ConnectionAuditLogEntry`/`ConnectionAuditActionEntry` models, `IUserAccountService`/`UserAccountService` audit log storage and retrieval APIs, host-side audit capture for accepted/rejected connections plus session actions, and regression coverage in `UserAccountServiceTests` and `RemoteDesktopHostTests`. Feature 8.7 was already implemented via `AppSettings.Security.IdleDisconnectMinutes`, host activity tracking, automatic idle disconnect with persisted disconnect reason, desktop settings UI wiring, and host regression tests. Validation: `dotnet test tests/RemoteLink.Shared.Tests/RemoteLink.Shared.Tests/RemoteLink.Shared.Tests.csproj --filter UserAccountServiceTests -v minimal` passed (20/20), `dotnet test src/RemoteLink.Desktop/tests/RemoteLink.Desktop.Tests/RemoteLink.Desktop.Tests.csproj --filter RemoteDesktopHostTests -v minimal` passed (46/46), and `dotnet build RemoteLink.sln -v minimal` succeeded.
 > Session 58 (2026-03-10): Feature 8.8 — Remote device lock on disconnect completed. `RemoteDesktopHost` now honors `AppSettings.Security.LockOnSessionEnd` by sending `KeyboardShortcut.LockWorkstation` through the host input handler whenever a paired remote session disconnects, while leaving pre-pair disconnects untouched. Added host regression coverage for the enabled/paired and pre-pair disconnect paths, and updated the feature tracker status to complete.
+> Session 59 (2026-03-10): Feature 9.1 — Meeting / presentation mode confirmed complete and tested. Existing Shared `PresentationSessionHost`/`PresentationSessionClient` support multi-viewer read-only presentation sessions with PIN-gated joins, TLS-capable transport, view-only permissions, and screen/connection-quality broadcast fan-out; added `PresentationSessionTests` covering multi-viewer frame delivery and invalid-PIN rejection. Feature 9.2 — Whiteboard / screen annotation started with new `PresentationAnnotation*` models, `PresentationAnnotationBoard` state service, and presentation transport support for broadcasting/receiving real-time annotation messages; Shared regression coverage added for annotation transport and board state changes.
 ---
 
 *This document is automatically updated as features are completed and tested.*

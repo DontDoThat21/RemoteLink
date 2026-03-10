@@ -36,6 +36,7 @@ public class RemoteDesktopClient
     private readonly INatTraversalService? _natTraversalService;
     private readonly DeviceInfo? _localDevice;
     private ICommunicationService? _communicationService;
+    private PresentationSessionClient? _presentationSessionClient;
     private bool _isStarted;
     private TaskCompletionSource<PairingResponse>? _pairingTcs;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<SessionControlResponse>> _pendingSessionControlRequests = new();
@@ -82,6 +83,9 @@ public class RemoteDesktopClient
 
     /// <summary>The effective permission set granted by the connected host.</summary>
     public SessionPermissionSet? CurrentSessionPermissions { get; private set; }
+
+    /// <summary><c>true</c> when the current connection is a read-only presentation session.</summary>
+    public bool IsPresentationSession { get; private set; }
 
     /// <summary>Session token returned by the host on successful pairing.</summary>
     public string? SessionToken { get; private set; }
@@ -262,6 +266,7 @@ public class RemoteDesktopClient
             {
                 SessionToken = response.SessionToken;
                 CurrentSessionPermissions = response.SessionPermissions?.Clone() ?? SessionPermissionSet.CreateFullAccess();
+                IsPresentationSession = false;
                 SetState(ClientConnectionState.Connected);
                 ServiceStatusChanged?.Invoke(this, $"Connected to {host.DeviceName}");
                 _logger.LogInformation("Paired with {Host}, token={Token}",
@@ -278,6 +283,62 @@ public class RemoteDesktopClient
                 return false;
             }
         }
+
+    /// <summary>
+    /// Connects to a host's presentation stream using the current host PIN.
+    /// </summary>
+    public async Task<bool> ConnectToPresentationAsync(DeviceInfo host, string pin, CancellationToken ct = default)
+    {
+        await DisconnectAsync();
+
+        ConnectedHost = host;
+        SetState(ClientConnectionState.Connecting);
+        ServiceStatusChanged?.Invoke(this, $"Joining presentation on {host.DeviceName}...");
+
+        var presentationClient = new PresentationSessionClient();
+        _presentationSessionClient = presentationClient;
+        presentationClient.ScreenDataReceived += OnPresentationScreenDataReceived;
+        presentationClient.ConnectionQualityReceived += OnPresentationConnectionQualityReceived;
+        presentationClient.ConnectionStateChanged += OnPresentationConnectionStateChanged;
+
+        try
+        {
+            var response = await presentationClient.ConnectAsync(
+                host,
+                pin,
+                BuildDeviceId(),
+                BuildDeviceName(),
+                ct);
+
+            if (!response.Success)
+            {
+                PairingFailed?.Invoke(this, response.Message);
+                await CleanupPresentationClientAsync(presentationClient);
+                SetState(ClientConnectionState.Disconnected);
+                return false;
+            }
+
+            SessionToken = response.SessionId;
+            CurrentSessionPermissions = response.SessionPermissions?.Clone() ?? SessionPermissionSet.CreateViewOnly();
+            IsPresentationSession = true;
+            SetState(ClientConnectionState.Connected);
+            ServiceStatusChanged?.Invoke(this, $"Viewing presentation on {host.DeviceName}");
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            PairingFailed?.Invoke(this, "Joining the presentation timed out.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to join presentation on {Host}", host.DeviceName);
+            PairingFailed?.Invoke(this, $"Presentation join failed: {ex.Message}");
+        }
+
+        await CleanupPresentationClientAsync(presentationClient);
+        SetState(ClientConnectionState.Disconnected);
+        return false;
+    }
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Pairing timed out connecting to {Host}", host.DeviceName);
@@ -305,11 +366,16 @@ public class RemoteDesktopClient
         if (comm != null)
             await CleanupCommAsync(comm);
 
+        var presentationClient = Interlocked.Exchange(ref _presentationSessionClient, null);
+        if (presentationClient != null)
+            await CleanupPresentationClientAsync(presentationClient);
+
         _pairingTcs?.TrySetCanceled();
         _pairingTcs = null;
         CancelPendingSessionControlRequests();
         CurrentConnectionQuality = null;
         CurrentSessionPermissions = null;
+        IsPresentationSession = false;
 
         SessionToken = null;
         ConnectedHost = null;
@@ -498,13 +564,25 @@ public class RemoteDesktopClient
     private void OnCommConnectionStateChanged(object? sender, bool connected)
     {
         // The TCP layer dropped unexpectedly while we thought we were connected
-        if (!connected && ConnectionState == ClientConnectionState.Connected)
+        if (!connected && ConnectionState == ClientConnectionState.Connected && !IsPresentationSession)
         {
             _logger.LogWarning("Lost TCP connection to {Host}", ConnectedHost?.DeviceName);
             CancelPendingSessionControlRequests();
             CurrentConnectionQuality = null;
             SetState(ClientConnectionState.Disconnected);
             ServiceStatusChanged?.Invoke(this, "Disconnected from host.");
+        }
+    }
+
+    private void OnPresentationConnectionStateChanged(object? sender, bool connected)
+    {
+        if (!connected && ConnectionState == ClientConnectionState.Connected && IsPresentationSession)
+        {
+            CurrentConnectionQuality = null;
+            CurrentSessionPermissions = null;
+            IsPresentationSession = false;
+            SetState(ClientConnectionState.Disconnected);
+            ServiceStatusChanged?.Invoke(this, "Presentation ended.");
         }
     }
 
@@ -528,6 +606,17 @@ public class RemoteDesktopClient
     private void OnScreenDataReceived(object? sender, ScreenData screenData)
     {
         ScreenDataReceived?.Invoke(this, screenData);
+    }
+
+    private void OnPresentationScreenDataReceived(object? sender, ScreenData screenData)
+    {
+        ScreenDataReceived?.Invoke(this, screenData);
+    }
+
+    private void OnPresentationConnectionQualityReceived(object? sender, ConnectionQuality quality)
+    {
+        CurrentConnectionQuality = quality;
+        ConnectionQualityUpdated?.Invoke(this, quality);
     }
 
     private void OnDeviceDiscovered(object? sender, DeviceInfo device)
@@ -559,6 +648,23 @@ public class RemoteDesktopClient
 
         try { await comm.DisconnectAsync(); } catch { /* ignore */ }
         if (comm is IDisposable d) d.Dispose();
+    }
+
+    private async Task CleanupPresentationClientAsync(PresentationSessionClient presentationClient)
+    {
+        presentationClient.ScreenDataReceived -= OnPresentationScreenDataReceived;
+        presentationClient.ConnectionQualityReceived -= OnPresentationConnectionQualityReceived;
+        presentationClient.ConnectionStateChanged -= OnPresentationConnectionStateChanged;
+
+        try
+        {
+            await presentationClient.DisconnectAsync();
+        }
+        catch
+        {
+        }
+
+        await presentationClient.DisposeAsync();
     }
 
     private async Task<SessionControlResponse> SendSessionControlRequestAsync(

@@ -151,7 +151,10 @@ public class UdpNetworkDiscovery : INetworkDiscovery
                                   (!string.Equals(existingDevice?.InternetDeviceId, device.InternetDeviceId, StringComparison.Ordinal) ||
                                    existingDevice?.SupportsRelay != device.SupportsRelay ||
                                    !string.Equals(existingDevice?.RelayServerHost, device.RelayServerHost, StringComparison.OrdinalIgnoreCase) ||
-                                   existingDevice?.RelayServerPort != device.RelayServerPort);
+                                   existingDevice?.RelayServerPort != device.RelayServerPort ||
+                                   existingDevice?.SupportsPresentationMode != device.SupportsPresentationMode ||
+                                   existingDevice?.PresentationSessionActive != device.PresentationSessionActive ||
+                                   existingDevice?.PresentationPort != device.PresentationPort);
             _discoveredDevices[device.DeviceId] = device;
             
             if (isNewDevice || metadataChanged)

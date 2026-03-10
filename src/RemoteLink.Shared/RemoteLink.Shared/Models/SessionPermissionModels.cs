@@ -34,6 +34,15 @@ public sealed class SessionPermissionSet
 
     public static SessionPermissionSet CreateFullAccess() => new();
 
+    public static SessionPermissionSet CreateViewOnly(bool allowAudioStreaming = false) => new()
+    {
+        AllowRemoteInput = false,
+        AllowClipboardSync = false,
+        AllowFileTransfer = false,
+        AllowAudioStreaming = allowAudioStreaming,
+        AllowSessionControl = false
+    };
+
     public SessionPermissionSet Clone()
     {
         return new SessionPermissionSet
