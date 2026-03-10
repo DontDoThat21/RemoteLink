@@ -99,23 +99,6 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
         return Task.CompletedTask;
     }
 
-internal sealed class FakeAppSettingsService : IAppSettingsService
-{
-    public AppSettings Current { get; } = new();
-
-    public event EventHandler? SettingsSaved;
-
-    public Task LoadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-
-    public Task SaveAsync(CancellationToken cancellationToken = default)
-    {
-        SettingsSaved?.Invoke(this, EventArgs.Empty);
-        return Task.CompletedTask;
-    }
-
-    public Task ResetAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-}
-
     public Task SendInputEventAsync(InputEvent inputEvent)
     {
         lock (_lock) { _sentInputEvents.Add(inputEvent); }
@@ -197,6 +180,23 @@ internal sealed class FakeAppSettingsService : IAppSettingsService
         => ClipboardDataReceived?.Invoke(this, clipboardData);
 
     public void Dispose() { }
+}
+
+internal sealed class FakeAppSettingsService : IAppSettingsService
+{
+    public AppSettings Current { get; } = new();
+
+    public event EventHandler? SettingsSaved;
+
+    public Task LoadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task SaveAsync(CancellationToken cancellationToken = default)
+    {
+        SettingsSaved?.Invoke(this, EventArgs.Empty);
+        return Task.CompletedTask;
+    }
+
+    public Task ResetAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
 internal sealed class FakeConnectionRequestNotificationPublisher : IConnectionRequestNotificationPublisher

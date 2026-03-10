@@ -609,6 +609,18 @@ public class RemoteDesktopClient
             throw new InvalidOperationException(response.ErrorMessage ?? fallbackMessage);
     }
 
+    private void EnsureSessionPermission(Func<SessionPermissionSet, bool> predicate, string message)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+
+        var permissions = CurrentSessionPermissions;
+        if (permissions is null)
+            return;
+
+        if (!predicate(permissions))
+            throw new InvalidOperationException(message);
+    }
+
     private static string FormatFailureReason(PairingFailureReason? reason, string? message)
     {
         return reason switch

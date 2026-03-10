@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Services;
 
 namespace RemoteLink.Desktop.Services;
 
@@ -407,6 +408,12 @@ public class RemoteDesktopHost : BackgroundService
                             : "Pairing rejected because the supplied PIN was invalid.");
                 }
             }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing pairing request");
+            }
+        });
+    }
 
     private async Task<SessionPermissionSet> ResolveSessionPermissionsAsync(PairingRequest request)
     {
@@ -422,12 +429,6 @@ public class RemoteDesktopHost : BackgroundService
             _logger.LogWarning(ex, "Failed to resolve session permissions for client '{ClientId}'", request.ClientDeviceId);
             return SessionPermissionSet.CreateFullAccess();
         }
-    }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error processing pairing request");
-            }
-        });
     }
 
     private async Task<bool> IsBlockedDeviceAsync(PairingRequest request)
