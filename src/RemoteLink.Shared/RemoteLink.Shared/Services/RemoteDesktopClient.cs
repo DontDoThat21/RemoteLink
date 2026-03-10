@@ -80,6 +80,9 @@ public class RemoteDesktopClient
     /// <summary>The latest connection quality metrics received from the connected host.</summary>
     public ConnectionQuality? CurrentConnectionQuality { get; private set; }
 
+    /// <summary>The effective permission set granted by the connected host.</summary>
+    public SessionPermissionSet? CurrentSessionPermissions { get; private set; }
+
     /// <summary>Session token returned by the host on successful pairing.</summary>
     public string? SessionToken { get; private set; }
 
@@ -258,6 +261,7 @@ public class RemoteDesktopClient
             if (response.Success)
             {
                 SessionToken = response.SessionToken;
+                CurrentSessionPermissions = response.SessionPermissions?.Clone() ?? SessionPermissionSet.CreateFullAccess();
                 SetState(ClientConnectionState.Connected);
                 ServiceStatusChanged?.Invoke(this, $"Connected to {host.DeviceName}");
                 _logger.LogInformation("Paired with {Host}, token={Token}",
@@ -305,6 +309,7 @@ public class RemoteDesktopClient
         _pairingTcs = null;
         CancelPendingSessionControlRequests();
         CurrentConnectionQuality = null;
+        CurrentSessionPermissions = null;
 
         SessionToken = null;
         ConnectedHost = null;
@@ -322,6 +327,7 @@ public class RemoteDesktopClient
     public async Task SendInputEventAsync(InputEvent inputEvent)
     {
         if (_communicationService is null || !IsConnected) return;
+        if (CurrentSessionPermissions?.AllowRemoteInput == false) return;
 
         try
         {
@@ -339,6 +345,10 @@ public class RemoteDesktopClient
     public async Task<(IReadOnlyList<MonitorInfo> Monitors, string? SelectedMonitorId)> GetRemoteMonitorsAsync(
         CancellationToken ct = default)
     {
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
         var response = await SendSessionControlRequestAsync(
             SessionControlCommand.GetMonitors,
             configure: null,
@@ -356,6 +366,10 @@ public class RemoteDesktopClient
         if (string.IsNullOrWhiteSpace(monitorId))
             throw new ArgumentException("Monitor ID is required.", nameof(monitorId));
 
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
         var response = await SendSessionControlRequestAsync(
             SessionControlCommand.SelectMonitor,
             request => request.MonitorId = monitorId,
@@ -370,6 +384,10 @@ public class RemoteDesktopClient
     /// </summary>
     public async Task<int> SetRemoteQualityAsync(int quality, CancellationToken ct = default)
     {
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
         var clamped = Math.Clamp(quality, 0, 100);
 
         var response = await SendSessionControlRequestAsync(
@@ -386,6 +404,10 @@ public class RemoteDesktopClient
     /// </summary>
     public async Task<ScreenDataFormat> SetRemoteImageFormatAsync(ScreenDataFormat format, CancellationToken ct = default)
     {
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
         var response = await SendSessionControlRequestAsync(
             SessionControlCommand.SetImageFormat,
             request => request.ImageFormat = format,
@@ -400,6 +422,10 @@ public class RemoteDesktopClient
     /// </summary>
     public async Task<bool> SetRemoteAudioEnabledAsync(bool enabled, CancellationToken ct = default)
     {
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl && permissions.AllowAudioStreaming,
+            "The host has disabled remote audio controls for this session.");
+
         var response = await SendSessionControlRequestAsync(
             SessionControlCommand.SetAudioEnabled,
             request => request.AudioEnabled = enabled,

@@ -319,14 +319,17 @@ public class FilesPage : ContentPage
     private void UpdateConnectionUi()
     {
         var isConnected = _client.IsConnected;
+        var fileTransferAllowed = _client.CurrentSessionPermissions?.AllowFileTransfer != false;
         var hostName = _client.ConnectedHost?.DeviceName ?? "desktop host";
 
-        _connectionLabel.Text = isConnected
-            ? $"Connected to {hostName}. File transfer is ready."
-            : "Connect to a desktop host first to send or receive files.";
+        _connectionLabel.Text = !isConnected
+            ? "Connect to a desktop host first to send or receive files."
+            : fileTransferAllowed
+                ? $"Connected to {hostName}. File transfer is ready."
+                : $"Connected to {hostName}. File transfer is disabled for this session.";
 
-        _sendButton.IsEnabled = isConnected;
-        _sendButton.BackgroundColor = isConnected ? ThemeColors.Accent : ThemeColors.NeutralButtonBackground;
+        _sendButton.IsEnabled = isConnected && fileTransferAllowed;
+        _sendButton.BackgroundColor = _sendButton.IsEnabled ? ThemeColors.Accent : ThemeColors.NeutralButtonBackground;
         _savePathLabel.Text = $"Incoming files are saved to: {GetReceiveDirectory()}";
 
         if (!isConnected)
@@ -348,6 +351,12 @@ public class FilesPage : ContentPage
         if (!_client.IsConnected)
         {
             await DisplayAlertAsync("No Connection", "Connect to a desktop host before sending files.", "OK");
+            return;
+        }
+
+        if (_client.CurrentSessionPermissions?.AllowFileTransfer == false)
+        {
+            await DisplayAlertAsync("Unavailable", "The host has disabled file transfer for this session.", "OK");
             return;
         }
 

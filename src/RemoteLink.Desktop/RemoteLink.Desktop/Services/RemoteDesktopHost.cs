@@ -45,6 +45,7 @@ public class RemoteDesktopHost : BackgroundService
     /// Reset to false when the client disconnects.
     /// </summary>
     private volatile bool _clientPaired;
+    private SessionPermissionSet _currentPermissions = SessionPermissionSet.CreateFullAccess();
 
     /// <summary>
     /// The active session for the currently connected/paired client, or null when no client is connected.
@@ -275,11 +276,13 @@ public class RemoteDesktopHost : BackgroundService
                 }
 
                 var trustedDevice = await IsTrustedDeviceAsync(request);
+                var sessionPermissions = await ResolveSessionPermissionsAsync(request);
                 bool valid = trustedDevice || _pairing.ValidatePin(request.Pin);
 
                 if (valid)
                 {
                     _clientPaired = true;
+                    _currentPermissions = sessionPermissions;
 
                     await RegisterManagedClientDeviceAsync(request);
 
@@ -291,6 +294,7 @@ public class RemoteDesktopHost : BackgroundService
                         clientDeviceName: request.ClientDeviceName);
 
                     var token = _currentSession.SessionId;
+                    _currentSession.Permissions = _currentPermissions.Clone();
 
                     // Transition session to Connected state
                     _sessionManager.OnConnected(_currentSession.SessionId);
@@ -299,6 +303,7 @@ public class RemoteDesktopHost : BackgroundService
                     {
                         Success = true,
                         SessionToken = token,
+                        SessionPermissions = _currentPermissions.Clone(),
                         Message = trustedDevice
                             ? "Trusted device accepted without PIN."
                             : "Pairing accepted."
@@ -318,10 +323,11 @@ public class RemoteDesktopHost : BackgroundService
                     _ = _screenCapture.StartCaptureAsync();
 
                     // Start clipboard monitoring for bidirectional sync
-                    _ = _clipboardService.StartAsync();
+                    if (_currentPermissions.AllowClipboardSync)
+                        _ = _clipboardService.StartAsync();
 
                     // Start audio capture and streaming when enabled for the session
-                    if (_audioStreamingEnabled)
+                    if (_currentPermissions.AllowAudioStreaming && _audioStreamingEnabled)
                         _ = _audioCapture.StartAsync();
 
                     // Start session recording (creates recordings/ directory if needed)
@@ -356,6 +362,22 @@ public class RemoteDesktopHost : BackgroundService
                         reason);
                 }
             }
+
+    private async Task<SessionPermissionSet> ResolveSessionPermissionsAsync(PairingRequest request)
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+            return SessionPermissionSet.CreateFullAccess();
+
+        try
+        {
+            return await _userAccountService.GetDeviceSessionPermissionsAsync(request.ClientDeviceId, request.ClientInternetDeviceId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve session permissions for client '{ClientId}'", request.ClientDeviceId);
+            return SessionPermissionSet.CreateFullAccess();
+        }
+    }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error processing pairing request");
@@ -475,6 +497,18 @@ public class RemoteDesktopHost : BackgroundService
                     Command = request.Command,
                     Success = false,
                     ErrorMessage = "Client is not paired."
+                });
+                return;
+            }
+
+            if (!IsSessionControlAllowed(request.Command))
+            {
+                await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                {
+                    RequestId = request.RequestId,
+                    Command = request.Command,
+                    Success = false,
+                    ErrorMessage = "This action is not allowed for the current session."
                 });
                 return;
             }
@@ -641,6 +675,7 @@ public class RemoteDesktopHost : BackgroundService
             _perfMonitor.Reset();
             _preferredImageFormat = ScreenDataFormat.Raw;
             _audioStreamingEnabled = true;
+            _currentPermissions = SessionPermissionSet.CreateFullAccess();
             Interlocked.Exchange(ref _lastFrameSentAtUtcMs, 0);
 
             // Clear chat messages
@@ -889,7 +924,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private void OnInputEventReceived(object? sender, InputEvent inputEvent)
     {
-        if (!_clientPaired) return;
+        if (!_clientPaired || !_currentPermissions.AllowRemoteInput) return;
 
         _ = Task.Run(async () =>
         {
@@ -910,7 +945,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private void OnClipboardChanged(object? sender, ClipboardChangedEventArgs e)
     {
-        if (!_communication.IsConnected || !_clientPaired) return;
+        if (!_communication.IsConnected || !_clientPaired || !_currentPermissions.AllowClipboardSync) return;
 
         _ = Task.Run(async () =>
         {
@@ -944,7 +979,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private void OnClipboardDataReceived(object? sender, ClipboardData clipboardData)
     {
-        if (!_clientPaired) return;
+        if (!_clientPaired || !_currentPermissions.AllowClipboardSync) return;
 
         _ = Task.Run(async () =>
         {
@@ -966,6 +1001,14 @@ public class RemoteDesktopHost : BackgroundService
                         _logger.LogDebug("Received clipboard data with no content");
                         break;
                 }
+
+    private bool IsSessionControlAllowed(SessionControlCommand command)
+    {
+        if (!_currentPermissions.AllowSessionControl)
+            return false;
+
+        return command != SessionControlCommand.SetAudioEnabled || _currentPermissions.AllowAudioStreaming;
+    }
             }
             catch (Exception ex)
             {

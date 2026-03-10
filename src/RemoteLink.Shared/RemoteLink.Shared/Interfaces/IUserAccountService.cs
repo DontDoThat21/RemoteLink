@@ -55,6 +55,12 @@ public interface IUserAccountService
     /// <summary>Returns whether a device is blocked from pairing with the host.</summary>
     Task<bool> IsDeviceBlockedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default);
 
+    /// <summary>Sets the default per-session permission set for a managed device.</summary>
+    Task SetDeviceSessionPermissionsAsync(string deviceIdentifier, SessionPermissionSet permissions, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns the effective per-session permission set for a managed device.</summary>
+    Task<SessionPermissionSet> GetDeviceSessionPermissionsAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default);
+
     /// <summary>Replaces the synced saved-device snapshot for the signed-in account.</summary>
     Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default);
 

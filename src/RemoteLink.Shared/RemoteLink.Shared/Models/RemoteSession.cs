@@ -23,6 +23,11 @@ public class RemoteSession
     /// <summary>Human-readable name of the client device.</summary>
     public string ClientDeviceName { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Effective permission set granted to the client for this session.
+    /// </summary>
+    public SessionPermissionSet Permissions { get; set; } = SessionPermissionSet.CreateFullAccess();
+
     // ── Timing ────────────────────────────────────────────────────────────────
 
     /// <summary>UTC timestamp when this session record was created (Pending state).</summary>

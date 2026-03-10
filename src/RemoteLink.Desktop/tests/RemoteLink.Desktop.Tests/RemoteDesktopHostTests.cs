@@ -169,6 +169,9 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public void RaiseSessionControlRequest(SessionControlRequest request)
         => SessionControlRequestReceived?.Invoke(this, request);
 
+    public void RaiseClipboardDataReceived(ClipboardData clipboardData)
+        => ClipboardDataReceived?.Invoke(this, clipboardData);
+
     public void Dispose() { }
 }
 
@@ -436,6 +439,18 @@ internal sealed class FakeUserAccountService : IUserAccountService
     public Task<IReadOnlyList<AccountManagedDevice>> GetManagedDevicesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AccountManagedDevice>>(ManagedDevices.AsReadOnly());
     public Task SetDeviceTrustAsync(string deviceIdentifier, bool isTrusted, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task SetDeviceBlockedAsync(string deviceIdentifier, bool isBlocked, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task SetDeviceSessionPermissionsAsync(string deviceIdentifier, SessionPermissionSet permissions, CancellationToken cancellationToken = default)
+    {
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(deviceIdentifier);
+        foreach (var device in _managedDevices.Where(device =>
+                     string.Equals(device.DeviceId, deviceIdentifier, StringComparison.OrdinalIgnoreCase) ||
+                     (normalizedInternetId is not null && string.Equals(device.InternetDeviceId, normalizedInternetId, StringComparison.Ordinal))))
+        {
+            device.SessionPermissions = permissions.Clone();
+        }
+
+        return Task.CompletedTask;
+    }
 
     public Task<bool> IsDeviceTrustedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
     {
@@ -451,6 +466,16 @@ internal sealed class FakeUserAccountService : IUserAccountService
         return Task.FromResult(
             (!string.IsNullOrWhiteSpace(deviceIdentifier) && _blockedDeviceIds.Contains(deviceIdentifier)) ||
             (normalizedInternetId is not null && _blockedDeviceIds.Contains(normalizedInternetId)));
+    }
+
+    public Task<SessionPermissionSet> GetDeviceSessionPermissionsAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
+    {
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(internetDeviceId);
+        var device = _managedDevices.FirstOrDefault(candidate =>
+            (!string.IsNullOrWhiteSpace(deviceIdentifier) && string.Equals(candidate.DeviceId, deviceIdentifier, StringComparison.OrdinalIgnoreCase)) ||
+            (normalizedInternetId is not null && string.Equals(candidate.InternetDeviceId, normalizedInternetId, StringComparison.Ordinal)));
+
+        return Task.FromResult(device?.SessionPermissions?.Clone() ?? SessionPermissionSet.CreateFullAccess());
     }
 
     public Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -690,13 +715,29 @@ internal sealed class FakeClipboardService : IClipboardService
         => Task.FromResult<string?>(null);
 
     public Task SetTextAsync(string text, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+    {
+        LastText = text;
+        SetTextCallCount++;
+        return Task.CompletedTask;
+    }
 
     public Task<byte[]?> GetImageAsync(CancellationToken cancellationToken = default)
         => Task.FromResult<byte[]?>(null);
 
     public Task SetImageAsync(byte[] pngData, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+    {
+        LastImage = pngData;
+        SetImageCallCount++;
+        return Task.CompletedTask;
+    }
+
+    public int SetTextCallCount { get; private set; }
+    public int SetImageCallCount { get; private set; }
+    public string? LastText { get; private set; }
+    public byte[]? LastImage { get; private set; }
+
+    public void RaiseClipboardChanged(ClipboardChangedEventArgs args)
+        => ClipboardChanged?.Invoke(this, args);
 }
 
 /// <summary>In-memory fake for <see cref="IAudioCaptureService"/> used in host tests.</summary>
@@ -727,6 +768,9 @@ internal sealed class FakeAudioCaptureService : IAudioCaptureService
     {
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
     }
+
+    public void RaiseAudioCaptured(AudioData audioData)
+        => AudioCaptured?.Invoke(this, audioData);
 }
 
 /// <summary>In-memory fake for <see cref="IMessagingService"/> used in host tests.</summary>
@@ -1200,6 +1244,163 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         Assert.Contains("blocked", response.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, _pairing.ValidatePinCallCount);
         Assert.False(_screen.IsCapturing);
+    }
+
+    [Fact]
+    public async Task PairingResponse_IncludesEffectiveSessionPermissions()
+    {
+        _userAccount.SignIn();
+        await _userAccount.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "test-client",
+            DeviceName = "TestDevice",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+        await _userAccount.SetDeviceSessionPermissionsAsync("test-client", new SessionPermissionSet
+        {
+            AllowRemoteInput = false,
+            AllowClipboardSync = false,
+            AllowFileTransfer = false,
+            AllowAudioStreaming = false,
+            AllowSessionControl = false
+        });
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        var response = Assert.Single(_comm.SentPairingResponses);
+        Assert.NotNull(response.SessionPermissions);
+        Assert.False(response.SessionPermissions!.AllowRemoteInput);
+        Assert.False(response.SessionPermissions.AllowClipboardSync);
+        Assert.False(response.SessionPermissions.AllowFileTransfer);
+
+        var session = Assert.Single(_sessionManager.CreatedSessions);
+        Assert.False(session.Permissions.AllowRemoteInput);
+        Assert.False(session.Permissions.AllowClipboardSync);
+    }
+
+    [Fact]
+    public async Task InputEvents_AreIgnored_WhenSessionIsViewOnly()
+    {
+        _userAccount.SignIn();
+        await _userAccount.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "test-client",
+            DeviceName = "TestDevice",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+        await _userAccount.SetDeviceSessionPermissionsAsync("test-client", new SessionPermissionSet
+        {
+            AllowRemoteInput = false
+        });
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseInputEventReceived(new InputEvent { Type = InputEventType.MouseMove, X = 100, Y = 200 });
+        await Task.Delay(120);
+
+        Assert.Empty(_input.ReceivedEvents);
+    }
+
+    [Fact]
+    public async Task ClipboardSync_IsNotStarted_WhenClipboardPermissionDisabled()
+    {
+        _userAccount.SignIn();
+        await _userAccount.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "test-client",
+            DeviceName = "TestDevice",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+        await _userAccount.SetDeviceSessionPermissionsAsync("test-client", new SessionPermissionSet
+        {
+            AllowClipboardSync = false
+        });
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _clipboard.RaiseClipboardChanged(new ClipboardChangedEventArgs
+        {
+            ContentType = ClipboardContentType.Text,
+            Text = "blocked"
+        });
+        _comm.RaiseClipboardDataReceived(new ClipboardData
+        {
+            ContentType = ClipboardContentType.Text,
+            Text = "remote text"
+        });
+        await Task.Delay(120);
+
+        Assert.Equal(0, _clipboard.StartCallCount);
+        Assert.Empty(_comm.SentClipboardData);
+        Assert.Equal(0, _clipboard.SetTextCallCount);
+    }
+
+    [Fact]
+    public async Task AudioCapture_IsNotStarted_WhenAudioPermissionDisabled()
+    {
+        _userAccount.SignIn();
+        await _userAccount.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "test-client",
+            DeviceName = "TestDevice",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+        await _userAccount.SetDeviceSessionPermissionsAsync("test-client", new SessionPermissionSet
+        {
+            AllowAudioStreaming = false
+        });
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _audioCapture.RaiseAudioCaptured(new AudioData { Data = new byte[] { 1, 2, 3 }, DurationMs = 20, SampleRate = 48000, Channels = 2, BitsPerSample = 16 });
+        await Task.Delay(120);
+
+        Assert.Equal(0, _audioCapture.StartCallCount);
+    }
+
+    [Fact]
+    public async Task SessionControl_IsRejected_WhenPermissionDisabled()
+    {
+        _userAccount.SignIn();
+        await _userAccount.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "test-client",
+            DeviceName = "TestDevice",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+        await _userAccount.SetDeviceSessionPermissionsAsync("test-client", new SessionPermissionSet
+        {
+            AllowSessionControl = false
+        });
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = Guid.NewGuid().ToString(),
+            Command = SessionControlCommand.SetQuality,
+            Quality = 50
+        });
+        await Task.Delay(120);
+
+        var response = Assert.Single(_comm.SentSessionControlResponses);
+        Assert.False(response.Success);
+        Assert.Contains("not allowed", response.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

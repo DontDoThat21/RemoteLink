@@ -24,6 +24,12 @@ public class RemoteDesktopClientTests
     {
         public bool IsConnected { get; private set; }
         public SessionControlRequest? LastSessionControlRequest { get; private set; }
+        public PairingResponse PairingResponseToSend { get; set; } = new()
+        {
+            Success = true,
+            SessionToken = "session-token"
+        };
+        public List<InputEvent> SentInputEvents { get; } = new();
 
         public event EventHandler<ScreenData>? ScreenDataReceived;
         public event EventHandler<InputEvent>? InputEventReceived;
@@ -63,15 +69,15 @@ public class RemoteDesktopClientTests
         }
 
         public Task SendScreenDataAsync(ScreenData screenData) => Task.CompletedTask;
-        public Task SendInputEventAsync(InputEvent inputEvent) => Task.CompletedTask;
+        public Task SendInputEventAsync(InputEvent inputEvent)
+        {
+            SentInputEvents.Add(inputEvent);
+            return Task.CompletedTask;
+        }
 
         public Task SendPairingRequestAsync(PairingRequest request)
         {
-            PairingResponseReceived?.Invoke(this, new PairingResponse
-            {
-                Success = true,
-                SessionToken = "session-token"
-            });
+            PairingResponseReceived?.Invoke(this, PairingResponseToSend);
             return Task.CompletedTask;
         }
 
@@ -208,6 +214,76 @@ public class RemoteDesktopClientTests
         Assert.Equal(22, client.CurrentConnectionQuality!.Fps);
         Assert.Equal(82, client.CurrentConnectionQuality.Latency);
         Assert.Equal(1_750_000, client.CurrentConnectionQuality.Bandwidth);
+    }
+
+    [Fact]
+    public async Task ConnectToHostAsync_WhenHostReturnsPermissions_StoresCurrentSessionPermissions()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService
+        {
+            PairingResponseToSend = new PairingResponse
+            {
+                Success = true,
+                SessionToken = "session-token",
+                SessionPermissions = new SessionPermissionSet
+                {
+                    AllowRemoteInput = false,
+                    AllowClipboardSync = false,
+                    AllowFileTransfer = false,
+                    AllowAudioStreaming = true,
+                    AllowSessionControl = false
+                }
+            }
+        };
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        var connected = await client.ConnectToHostAsync(new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        }, "123456");
+
+        Assert.True(connected);
+        Assert.NotNull(client.CurrentSessionPermissions);
+        Assert.False(client.CurrentSessionPermissions!.AllowRemoteInput);
+        Assert.False(client.CurrentSessionPermissions.AllowFileTransfer);
+        Assert.False(client.CurrentSessionPermissions.AllowSessionControl);
+    }
+
+    [Fact]
+    public async Task SendInputEventAsync_DoesNotForward_WhenRemoteInputPermissionDisabled()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService
+        {
+            PairingResponseToSend = new PairingResponse
+            {
+                Success = true,
+                SessionToken = "session-token",
+                SessionPermissions = new SessionPermissionSet
+                {
+                    AllowRemoteInput = false
+                }
+            }
+        };
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        await client.ConnectToHostAsync(new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        }, "123456");
+
+        await client.SendInputEventAsync(new InputEvent { Type = InputEventType.MouseMove, X = 50, Y = 50 });
+
+        Assert.Empty(comm.SentInputEvents);
     }
 
     [Fact]

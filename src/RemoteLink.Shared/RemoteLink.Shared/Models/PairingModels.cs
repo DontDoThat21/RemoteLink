@@ -43,6 +43,12 @@ public class PairingResponse
 
     /// <summary>Human-readable message (for logging / UI display).</summary>
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Effective session permissions granted by the host.
+    /// Null means full access for backward compatibility.
+    /// </summary>
+    public SessionPermissionSet? SessionPermissions { get; set; }
 }
 
 /// <summary>Reason a pairing attempt was rejected.</summary>

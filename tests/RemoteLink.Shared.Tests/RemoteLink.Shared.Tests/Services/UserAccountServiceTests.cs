@@ -261,6 +261,81 @@ public sealed class UserAccountServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetDeviceSessionPermissionsAsync_PersistsAndMatchesByInternetDeviceId()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "mobile-01",
+            InternetDeviceId = "123 456 789",
+            DeviceName = "Alice Phone",
+            IPAddress = "192.168.1.30",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+
+        await service.SetDeviceSessionPermissionsAsync("123 456 789", new SessionPermissionSet
+        {
+            AllowRemoteInput = false,
+            AllowClipboardSync = false,
+            AllowFileTransfer = false,
+            AllowAudioStreaming = true,
+            AllowSessionControl = false
+        });
+
+        var permissions = await service.GetDeviceSessionPermissionsAsync("mobile-01");
+        Assert.False(permissions.AllowRemoteInput);
+        Assert.False(permissions.AllowClipboardSync);
+        Assert.False(permissions.AllowFileTransfer);
+
+        var reloaded = CreateService();
+        await reloaded.LoadAsync();
+
+        var persisted = await reloaded.GetDeviceSessionPermissionsAsync("other-local-id", "123456789");
+        Assert.False(persisted.AllowRemoteInput);
+        Assert.False(persisted.AllowSessionControl);
+    }
+
+    [Fact]
+    public async Task RegisterDeviceAsync_PreservesSessionPermissionsAcrossDeviceUpdates()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "mobile-01",
+            InternetDeviceId = "123456789",
+            DeviceName = "Alice Phone",
+            IPAddress = "192.168.1.30",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+
+        await service.SetDeviceSessionPermissionsAsync("mobile-01", new SessionPermissionSet
+        {
+            AllowRemoteInput = false,
+            AllowClipboardSync = false
+        });
+
+        await service.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "mobile-01",
+            InternetDeviceId = "123 456 789",
+            DeviceName = "Alice Phone Updated",
+            IPAddress = "10.0.0.30",
+            Port = 22347,
+            Type = DeviceType.Mobile
+        });
+
+        var permissions = await service.GetDeviceSessionPermissionsAsync("mobile-01");
+        Assert.False(permissions.AllowRemoteInput);
+        Assert.False(permissions.AllowClipboardSync);
+    }
+
+    [Fact]
     public async Task RegisterDeviceAsync_PreservesBlockFlagAcrossDeviceUpdates()
     {
         var service = CreateService();

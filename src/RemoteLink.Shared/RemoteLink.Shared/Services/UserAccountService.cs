@@ -186,6 +186,57 @@ public sealed class UserAccountService : IUserAccountService
         }
     }
 
+    public async Task SetDeviceSessionPermissionsAsync(string deviceIdentifier, SessionPermissionSet permissions, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceIdentifier))
+            throw new ArgumentException("Device identifier is required.", nameof(deviceIdentifier));
+
+        ArgumentNullException.ThrowIfNull(permissions);
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            var device = FindManagedDevice(account, deviceIdentifier, internetDeviceId: null);
+
+            if (device is null)
+            {
+                device = CreateManagedDevicePlaceholder(deviceIdentifier);
+                account.ManagedDevices.Add(device);
+            }
+
+            device.SessionPermissions = permissions.Clone();
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<SessionPermissionSet> GetDeviceSessionPermissionsAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceIdentifier) && string.IsNullOrWhiteSpace(internetDeviceId))
+            return SessionPermissionSet.CreateFullAccess();
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrNull();
+            var permissions = account is null
+                ? null
+                : FindManagedDevice(account, deviceIdentifier, internetDeviceId)?.SessionPermissions;
+
+            return permissions?.Clone() ?? SessionPermissionSet.CreateFullAccess();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task DisableTwoFactorAsync(string verificationCode, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(verificationCode))
@@ -367,6 +418,7 @@ public sealed class UserAccountService : IUserAccountService
                 existing.RelayServerHost = mappedDevice.RelayServerHost;
                 existing.RelayServerPort = mappedDevice.RelayServerPort;
                 existing.LastSeenAtUtc = mappedDevice.LastSeenAtUtc;
+                existing.SessionPermissions ??= SessionPermissionSet.CreateFullAccess();
             }
 
             await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
@@ -797,6 +849,7 @@ public sealed class UserAccountService : IUserAccountService
             SupportsRelay = device.SupportsRelay,
             RelayServerHost = device.RelayServerHost,
             RelayServerPort = device.RelayServerPort,
+            SessionPermissions = SessionPermissionSet.CreateFullAccess(),
             LastSeenAtUtc = DateTime.UtcNow
         };
     }
@@ -831,9 +884,20 @@ public sealed class UserAccountService : IUserAccountService
 
     private static AccountManagedDevice CreateBlockedManagedDevicePlaceholder(string deviceIdentifier)
     {
+        var placeholder = CreateManagedDevicePlaceholder(deviceIdentifier);
+        placeholder.IsBlocked = true;
+        placeholder.BlockedAtUtc = DateTime.UtcNow;
+        placeholder.DeviceName = placeholder.InternetDeviceId is not null
+            ? $"Blocked {DeviceIdentityManager.FormatInternetDeviceId(placeholder.InternetDeviceId)}"
+            : placeholder.DeviceName;
+        return placeholder;
+    }
+
+    private static AccountManagedDevice CreateManagedDevicePlaceholder(string deviceIdentifier)
+    {
         var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(deviceIdentifier);
         var placeholderName = normalizedInternetId is not null
-            ? $"Blocked {DeviceIdentityManager.FormatInternetDeviceId(normalizedInternetId)}"
+            ? $"Managed {DeviceIdentityManager.FormatInternetDeviceId(normalizedInternetId)}"
             : deviceIdentifier.Trim();
 
         return new AccountManagedDevice
@@ -843,8 +907,7 @@ public sealed class UserAccountService : IUserAccountService
             DeviceName = placeholderName,
             Type = DeviceType.Unknown,
             LastSeenAtUtc = DateTime.UtcNow,
-            IsBlocked = true,
-            BlockedAtUtc = DateTime.UtcNow
+            SessionPermissions = SessionPermissionSet.CreateFullAccess()
         };
     }
 
@@ -902,6 +965,7 @@ public sealed class UserAccountService : IUserAccountService
             TrustedAtUtc = device.TrustedAtUtc,
             IsBlocked = device.IsBlocked,
             BlockedAtUtc = device.BlockedAtUtc,
+            SessionPermissions = device.SessionPermissions?.Clone() ?? SessionPermissionSet.CreateFullAccess(),
             LastSeenAtUtc = device.LastSeenAtUtc
         };
     }

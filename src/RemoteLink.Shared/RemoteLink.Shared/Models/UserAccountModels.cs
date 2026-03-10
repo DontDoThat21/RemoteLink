@@ -60,5 +60,6 @@ public sealed class AccountManagedDevice
     public DateTime? TrustedAtUtc { get; set; }
     public bool IsBlocked { get; set; }
     public DateTime? BlockedAtUtc { get; set; }
+    public SessionPermissionSet SessionPermissions { get; set; } = SessionPermissionSet.CreateFullAccess();
     public DateTime LastSeenAtUtc { get; set; }
 }
