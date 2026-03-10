@@ -438,6 +438,13 @@ public sealed class UserAccountService : IUserAccountService
 
             device.IsTrusted = isTrusted;
             device.TrustedAtUtc = isTrusted ? DateTime.UtcNow : null;
+
+            if (isTrusted)
+            {
+                device.IsBlocked = false;
+                device.BlockedAtUtc = null;
+            }
+
             await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -460,6 +467,65 @@ public sealed class UserAccountService : IUserAccountService
                 return false;
 
             return FindManagedDevice(account, deviceIdentifier, internetDeviceId)?.IsTrusted == true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task SetDeviceBlockedAsync(string deviceIdentifier, bool isBlocked, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceIdentifier))
+            throw new ArgumentException("Device identifier is required.", nameof(deviceIdentifier));
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            var device = FindManagedDevice(account, deviceIdentifier, internetDeviceId: null);
+
+            if (device is null)
+            {
+                if (!isBlocked)
+                    throw new InvalidOperationException("Managed device not found.");
+
+                device = CreateBlockedManagedDevicePlaceholder(deviceIdentifier);
+                account.ManagedDevices.Add(device);
+            }
+
+            device.IsBlocked = isBlocked;
+            device.BlockedAtUtc = isBlocked ? DateTime.UtcNow : null;
+
+            if (isBlocked)
+            {
+                device.IsTrusted = false;
+                device.TrustedAtUtc = null;
+            }
+
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<bool> IsDeviceBlockedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceIdentifier) && string.IsNullOrWhiteSpace(internetDeviceId))
+            return false;
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrNull();
+            if (account is null)
+                return false;
+
+            return FindManagedDevice(account, deviceIdentifier, internetDeviceId)?.IsBlocked == true;
         }
         finally
         {
@@ -763,6 +829,25 @@ public sealed class UserAccountService : IUserAccountService
              string.Equals(DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId), normalizedSecondaryInternetId, StringComparison.Ordinal)));
     }
 
+    private static AccountManagedDevice CreateBlockedManagedDevicePlaceholder(string deviceIdentifier)
+    {
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(deviceIdentifier);
+        var placeholderName = normalizedInternetId is not null
+            ? $"Blocked {DeviceIdentityManager.FormatInternetDeviceId(normalizedInternetId)}"
+            : deviceIdentifier.Trim();
+
+        return new AccountManagedDevice
+        {
+            DeviceId = normalizedInternetId is null ? deviceIdentifier.Trim() : string.Empty,
+            InternetDeviceId = normalizedInternetId,
+            DeviceName = placeholderName,
+            Type = DeviceType.Unknown,
+            LastSeenAtUtc = DateTime.UtcNow,
+            IsBlocked = true,
+            BlockedAtUtc = DateTime.UtcNow
+        };
+    }
+
     private static bool SavedDevicesMatch(SavedDevice left, SavedDevice right)
     {
         var leftInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(left.InternetDeviceId);
@@ -815,6 +900,8 @@ public sealed class UserAccountService : IUserAccountService
             RelayServerPort = device.RelayServerPort,
             IsTrusted = device.IsTrusted,
             TrustedAtUtc = device.TrustedAtUtc,
+            IsBlocked = device.IsBlocked,
+            BlockedAtUtc = device.BlockedAtUtc,
             LastSeenAtUtc = device.LastSeenAtUtc
         };
     }

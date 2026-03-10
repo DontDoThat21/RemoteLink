@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RemoteLink.Desktop.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Services;
 
 namespace RemoteLink.Desktop.Tests;
 
@@ -334,6 +335,7 @@ internal sealed class FakeUserAccountService : IUserAccountService
 {
     private readonly List<AccountManagedDevice> _managedDevices = new();
     private readonly HashSet<string> _trustedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _blockedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
 
     public UserAccountSession? CurrentSession { get; private set; }
     public bool IsSignedIn { get; private set; }
@@ -380,6 +382,16 @@ internal sealed class FakeUserAccountService : IUserAccountService
             _trustedDeviceIds.Add(normalizedInternetId);
     }
 
+    public void BlockDevice(string deviceId, string? internetDeviceId = null)
+    {
+        if (!string.IsNullOrWhiteSpace(deviceId))
+            _blockedDeviceIds.Add(deviceId);
+
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(internetDeviceId);
+        if (normalizedInternetId is not null)
+            _blockedDeviceIds.Add(normalizedInternetId);
+    }
+
     public Task LoadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<UserAccountSession> RegisterAsync(string email, string password, string displayName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task<UserAccountSession> LoginAsync(string email, string password, CancellationToken cancellationToken = default) => throw new NotImplementedException();
@@ -395,17 +407,24 @@ internal sealed class FakeUserAccountService : IUserAccountService
 
         if (existing is null)
         {
+            var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId);
+            var isTrusted = _trustedDeviceIds.Contains(device.DeviceId) ||
+                            (normalizedInternetId is not null && _trustedDeviceIds.Contains(normalizedInternetId));
+            var isBlocked = _blockedDeviceIds.Contains(device.DeviceId) ||
+                            (normalizedInternetId is not null && _blockedDeviceIds.Contains(normalizedInternetId));
+
             _managedDevices.Add(new AccountManagedDevice
             {
                 DeviceId = device.DeviceId,
-                InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
+                InternetDeviceId = normalizedInternetId,
                 DeviceName = device.DeviceName,
                 Type = device.Type,
                 IPAddress = device.IPAddress,
                 Port = device.Port,
-                IsTrusted = _trustedDeviceIds.Contains(device.DeviceId) ||
-                            (DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId) is string normalizedInternetId && _trustedDeviceIds.Contains(normalizedInternetId)),
-                TrustedAtUtc = DateTime.UtcNow,
+                IsTrusted = isTrusted,
+                IsBlocked = isBlocked,
+                TrustedAtUtc = isTrusted ? DateTime.UtcNow : null,
+                BlockedAtUtc = isBlocked ? DateTime.UtcNow : null,
                 LastSeenAtUtc = DateTime.UtcNow
             });
         }
@@ -416,6 +435,7 @@ internal sealed class FakeUserAccountService : IUserAccountService
     public Task RemoveManagedDeviceAsync(string deviceIdentifier, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IReadOnlyList<AccountManagedDevice>> GetManagedDevicesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AccountManagedDevice>>(ManagedDevices.AsReadOnly());
     public Task SetDeviceTrustAsync(string deviceIdentifier, bool isTrusted, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task SetDeviceBlockedAsync(string deviceIdentifier, bool isBlocked, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<bool> IsDeviceTrustedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
     {
@@ -423,6 +443,14 @@ internal sealed class FakeUserAccountService : IUserAccountService
         return Task.FromResult(
             (!string.IsNullOrWhiteSpace(deviceIdentifier) && _trustedDeviceIds.Contains(deviceIdentifier)) ||
             (normalizedInternetId is not null && _trustedDeviceIds.Contains(normalizedInternetId)));
+    }
+
+    public Task<bool> IsDeviceBlockedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
+    {
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(internetDeviceId);
+        return Task.FromResult(
+            (!string.IsNullOrWhiteSpace(deviceIdentifier) && _blockedDeviceIds.Contains(deviceIdentifier)) ||
+            (normalizedInternetId is not null && _blockedDeviceIds.Contains(normalizedInternetId)));
     }
 
     public Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -1144,6 +1172,34 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         Assert.Contains("Trusted device", response.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, _pairing.ValidatePinCallCount);
         Assert.True(_screen.IsCapturing);
+    }
+
+    [Fact]
+    public async Task BlockedDevice_IsRejectedBeforePinValidation()
+    {
+        _userAccount.SignIn();
+        _userAccount.TrustDevice("blocked-mobile", "123 456 789");
+        _userAccount.BlockDevice("blocked-mobile", "123 456 789");
+        _pairing.ValidatePinResult = true;
+
+        await StartHostAsync();
+        _comm.RaiseConnectionStateChanged(connected: true);
+        _comm.RaisePairingRequest(new PairingRequest
+        {
+            ClientDeviceId = "blocked-mobile",
+            ClientInternetDeviceId = "123 456 789",
+            ClientDeviceName = "Blocked Phone",
+            Pin = _pairing.CurrentPin,
+            RequestedAt = DateTime.UtcNow
+        });
+        await Task.Delay(120);
+
+        var response = Assert.Single(_comm.SentPairingResponses);
+        Assert.False(response.Success);
+        Assert.Equal(PairingFailureReason.HostRefused, response.FailureReason);
+        Assert.Contains("blocked", response.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, _pairing.ValidatePinCallCount);
+        Assert.False(_screen.IsCapturing);
     }
 
     [Fact]

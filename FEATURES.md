@@ -129,7 +129,7 @@
 | 8.1 | User account system (registration, login) | ✅ | Shared `IUserAccountService`/`UserAccountService`: local registration/login with PBKDF2-SHA256 password hashing, persisted 30-day sessions, account profile model, managed-device registry, synced saved-device snapshot storage; DI wired into Desktop/Desktop.UI/Mobile; 6 Shared tests |
 | 8.2 | Two-factor authentication (TOTP) | ✅ | Shared `TotpAuthenticator` + `UserAccountService` TOTP enrollment/verification, `otpauth://` provisioning URI generation, login challenge enforcement, unattended-access 2FA requirement flag; 8 Shared tests |
 | 8.3 | Trusted devices allow-list | ✅ | Managed-device trust metadata (`AccountManagedDevice.IsTrusted`/`TrustedAtUtc`), `IUserAccountService` trust APIs, pairing request internet-ID propagation, and `RemoteDesktopHost` PIN bypass for signed-in trusted devices; successful pairings auto-register client devices for later trust management; 4 regression tests |
-| 8.4 | Block & deny list | 📋 | Reject connections from specific IDs |
+| 8.4 | Block & deny list | ✅ | Account-backed deny list on managed devices/IDs; `RemoteDesktopHost` rejects blocked device IDs or internet IDs before PIN/trusted-device checks with `HostRefused`; persisted block state + regression tests |
 | 8.5 | Granular permission controls per session | 📋 | View-only, no file transfer, no clipboard, etc. |
 | 8.6 | Connection audit log / history | 📋 | Timestamped log: who connected, when, duration, actions |
 | 8.7 | Session timeout & idle disconnect | 📋 | Auto-disconnect after configurable idle period |

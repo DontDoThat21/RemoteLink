@@ -257,6 +257,23 @@ public class RemoteDesktopHost : BackgroundService
             {
                 await PublishIncomingConnectionRequestAlertAsync(request);
 
+                var blockedDevice = await IsBlockedDeviceAsync(request);
+                if (blockedDevice)
+                {
+                    await _communication.SendPairingResponseAsync(new PairingResponse
+                    {
+                        Success = false,
+                        FailureReason = PairingFailureReason.HostRefused,
+                        Message = "Connection refused. This device is blocked by the host."
+                    });
+
+                    _logger.LogWarning(
+                        "Pairing rejected for blocked client '{Name}' ({Id})",
+                        request.ClientDeviceName,
+                        request.ClientDeviceId);
+                    return;
+                }
+
                 var trustedDevice = await IsTrustedDeviceAsync(request);
                 bool valid = trustedDevice || _pairing.ValidatePin(request.Pin);
 
@@ -344,6 +361,22 @@ public class RemoteDesktopHost : BackgroundService
                 _logger.LogWarning(ex, "Error processing pairing request");
             }
         });
+    }
+
+    private async Task<bool> IsBlockedDeviceAsync(PairingRequest request)
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+            return false;
+
+        try
+        {
+            return await _userAccountService.IsDeviceBlockedAsync(request.ClientDeviceId, request.ClientInternetDeviceId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to evaluate blocked-device status for client '{ClientId}'", request.ClientDeviceId);
+            return false;
+        }
     }
 
     private async Task<bool> IsTrustedDeviceAsync(PairingRequest request)

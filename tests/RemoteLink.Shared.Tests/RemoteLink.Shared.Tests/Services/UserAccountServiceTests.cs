@@ -212,6 +212,91 @@ public sealed class UserAccountServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetDeviceBlockedAsync_PersistsAndMatchesByInternetDeviceId()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "mobile-01",
+            InternetDeviceId = "123 456 789",
+            DeviceName = "Alice Phone",
+            IPAddress = "192.168.1.30",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+
+        await service.SetDeviceBlockedAsync("123 456 789", isBlocked: true);
+
+        Assert.True(await service.IsDeviceBlockedAsync("mobile-01"));
+        Assert.False(await service.IsDeviceTrustedAsync("mobile-01"));
+
+        var reloaded = CreateService();
+        await reloaded.LoadAsync();
+
+        Assert.True(await reloaded.IsDeviceBlockedAsync("other-local-id", "123456789"));
+
+        var profile = await reloaded.GetCurrentProfileAsync();
+        Assert.NotNull(profile);
+        Assert.True(profile!.ManagedDevices[0].IsBlocked);
+        Assert.NotNull(profile.ManagedDevices[0].BlockedAtUtc);
+    }
+
+    [Fact]
+    public async Task SetDeviceBlockedAsync_CanCreatePlaceholderForUnknownIdentifier()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.SetDeviceBlockedAsync("987 654 321", isBlocked: true);
+
+        Assert.True(await service.IsDeviceBlockedAsync("unknown-device", "987654321"));
+
+        var devices = await service.GetManagedDevicesAsync();
+        var device = Assert.Single(devices);
+        Assert.Equal("987654321", device.InternetDeviceId);
+        Assert.True(device.IsBlocked);
+        Assert.Equal(DeviceType.Unknown, device.Type);
+    }
+
+    [Fact]
+    public async Task RegisterDeviceAsync_PreservesBlockFlagAcrossDeviceUpdates()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "mobile-01",
+            InternetDeviceId = "123456789",
+            DeviceName = "Alice Phone",
+            IPAddress = "192.168.1.30",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        });
+        await service.SetDeviceBlockedAsync("mobile-01", isBlocked: true);
+
+        await service.RegisterDeviceAsync(new DeviceInfo
+        {
+            DeviceId = "mobile-01",
+            InternetDeviceId = "123 456 789",
+            DeviceName = "Alice Phone Updated",
+            IPAddress = "10.0.0.30",
+            Port = 22347,
+            Type = DeviceType.Mobile
+        });
+
+        var devices = await service.GetManagedDevicesAsync();
+        var device = Assert.Single(devices);
+        Assert.True(device.IsBlocked);
+        Assert.NotNull(device.BlockedAtUtc);
+        Assert.Equal("Alice Phone Updated", device.DeviceName);
+        Assert.Equal("10.0.0.30", device.IPAddress);
+        Assert.Equal(22347, device.Port);
+    }
+
+    [Fact]
     public async Task BeginTwoFactorSetupAsync_ReturnsProvisioningUri()
     {
         var service = CreateService();

@@ -58,5 +58,7 @@ public sealed class AccountManagedDevice
     public int? RelayServerPort { get; set; }
     public bool IsTrusted { get; set; }
     public DateTime? TrustedAtUtc { get; set; }
+    public bool IsBlocked { get; set; }
+    public DateTime? BlockedAtUtc { get; set; }
     public DateTime LastSeenAtUtc { get; set; }
 }
