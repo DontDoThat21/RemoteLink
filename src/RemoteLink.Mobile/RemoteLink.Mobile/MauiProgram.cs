@@ -49,6 +49,7 @@ public static class MauiProgram
         // Shared application settings
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
         builder.Services.AddSingleton<IAppLockService, AppLockService>();
+        builder.Services.AddSingleton<IncomingConnectionNotificationListener>();
 
         // Remote desktop client (singleton shared across all pages)
         builder.Services.AddSingleton<RemoteDesktopClient>(provider =>

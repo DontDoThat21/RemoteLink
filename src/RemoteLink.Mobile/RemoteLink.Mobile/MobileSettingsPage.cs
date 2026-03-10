@@ -213,8 +213,8 @@ public class MobileSettingsPage : ContentPage
                     BuildSliderRow("Gesture sensitivity", "Scales pan and scroll gestures in the remote viewer.", _gestureSensitivitySlider, _gestureSensitivityValueLabel)),
                 BuildCard(
                     "Notifications",
-                    "In-app alerts for connection lifecycle events.",
-                    BuildSettingRow("Connection notifications", "Show alerts when a session connects or disconnects.", _notificationsSwitch)),
+                    "In-app alerts for session lifecycle events and incoming connection attempts detected on your LAN.",
+                    BuildSettingRow("Connection notifications", "Show alerts when sessions connect/disconnect and when a host reports that another device wants to connect.", _notificationsSwitch)),
                 BuildCard(
                     "Audio",
                     "Remote audio streaming preference.",

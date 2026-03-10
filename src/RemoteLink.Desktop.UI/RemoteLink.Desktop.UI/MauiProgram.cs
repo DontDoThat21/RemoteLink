@@ -40,6 +40,7 @@ public static class MauiProgram
 
         // Core shared services
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
+        builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();
         builder.Services.AddSingleton<IDeltaFrameEncoder, DeltaFrameEncoder>();

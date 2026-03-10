@@ -171,6 +171,27 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public void Dispose() { }
 }
 
+internal sealed class FakeConnectionRequestNotificationPublisher : IConnectionRequestNotificationPublisher
+{
+    private readonly object _lock = new();
+    private readonly List<IncomingConnectionRequestAlert> _alerts = new();
+
+    public List<IncomingConnectionRequestAlert> Alerts
+    {
+        get { lock (_lock) { return new List<IncomingConnectionRequestAlert>(_alerts); } }
+    }
+
+    public Task PublishAsync(IncomingConnectionRequestAlert alert, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            _alerts.Add(alert);
+        }
+
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>In-memory fake for <see cref="IScreenCapture"/>.</summary>
 internal sealed class FakeScreenCapture : IScreenCapture
 {
@@ -696,6 +717,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeAudioCaptureService _audioCapture = new();
     private readonly FakeSessionRecorder _recorder = new();
     private readonly FakeMessagingService _messaging = new();
+    private readonly FakeConnectionRequestNotificationPublisher _notificationPublisher = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -715,7 +737,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _clipboard,
             _audioCapture,
             _recorder,
-            _messaging);
+            _messaging,
+            _notificationPublisher);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>
@@ -940,6 +963,27 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         var response = _comm.SentPairingResponses[0];
         Assert.False(response.Success);
         Assert.Equal(PairingFailureReason.InvalidPin, response.FailureReason);
+    }
+
+    [Fact]
+    public async Task OnPairingRequestReceived_PublishesIncomingConnectionNotification()
+    {
+        await StartHostAsync();
+
+        _comm.RaisePairingRequest(new PairingRequest
+        {
+            ClientDeviceId = "mobile-device-1",
+            ClientDeviceName = "Test Phone",
+            Pin = _pairing.CurrentPin,
+            RequestedAt = DateTime.UtcNow
+        });
+
+        await Task.Delay(100);
+
+        var alert = Assert.Single(_notificationPublisher.Alerts);
+        Assert.Equal(Environment.MachineName, alert.HostDeviceName);
+        Assert.Equal("mobile-device-1", alert.ClientDeviceId);
+        Assert.Equal("Test Phone", alert.ClientDeviceName);
     }
 
     [Fact]

@@ -34,6 +34,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IAudioCaptureService _audioCapture;
     private readonly ISessionRecorder _sessionRecorder;
     private readonly IMessagingService _messagingService;
+    private readonly IConnectionRequestNotificationPublisher? _connectionRequestNotificationPublisher;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -65,7 +66,8 @@ public class RemoteDesktopHost : BackgroundService
         IClipboardService clipboardService,
         IAudioCaptureService audioCapture,
         ISessionRecorder sessionRecorder,
-        IMessagingService messagingService)
+        IMessagingService messagingService,
+        IConnectionRequestNotificationPublisher? connectionRequestNotificationPublisher = null)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -80,6 +82,7 @@ public class RemoteDesktopHost : BackgroundService
         _audioCapture = audioCapture;
         _sessionRecorder = sessionRecorder;
         _messagingService = messagingService;
+        _connectionRequestNotificationPublisher = connectionRequestNotificationPublisher;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -193,6 +196,8 @@ public class RemoteDesktopHost : BackgroundService
         {
             try
             {
+                await PublishIncomingConnectionRequestAlertAsync(request);
+
                 bool valid = _pairing.ValidatePin(request.Pin);
 
                 if (valid)
@@ -273,6 +278,27 @@ public class RemoteDesktopHost : BackgroundService
                 _logger.LogWarning(ex, "Error processing pairing request");
             }
         });
+    }
+
+    private async Task PublishIncomingConnectionRequestAlertAsync(PairingRequest request)
+    {
+        if (_connectionRequestNotificationPublisher is null)
+            return;
+
+        try
+        {
+            await _connectionRequestNotificationPublisher.PublishAsync(new IncomingConnectionRequestAlert
+            {
+                HostDeviceName = Environment.MachineName,
+                ClientDeviceId = request.ClientDeviceId,
+                ClientDeviceName = request.ClientDeviceName,
+                RequestedAt = request.RequestedAt == default ? DateTime.UtcNow : request.RequestedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to publish incoming connection notification");
+        }
     }
 
     /// <summary>

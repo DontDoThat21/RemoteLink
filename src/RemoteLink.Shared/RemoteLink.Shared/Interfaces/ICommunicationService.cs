@@ -3,6 +3,17 @@
 namespace RemoteLink.Shared.Interfaces;
 
 /// <summary>
+/// Publishes LAN-wide incoming connection request alerts for companion clients.
+/// </summary>
+public interface IConnectionRequestNotificationPublisher
+{
+    /// <summary>
+    /// Broadcast an incoming connection request alert.
+    /// </summary>
+    Task PublishAsync(IncomingConnectionRequestAlert alert, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Interface for communication between devices
 /// </summary>
 public interface ICommunicationService
