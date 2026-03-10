@@ -27,6 +27,7 @@ public class SettingsPage : ContentPage
 
     // ── Security ─────────────────────────────────────────────────────────
     private Entry? _pinExpiryEntry;
+    private Entry? _idleDisconnectEntry;
     private Entry? _maxAuthAttemptsEntry;
     private Switch? _allowUnattendedSw;
     private Switch? _requireTlsSw;
@@ -296,6 +297,7 @@ public class SettingsPage : ContentPage
     private View BuildSecurityPanel()
     {
         _pinExpiryEntry       = BuildNumericEntry("10", 5);
+        _idleDisconnectEntry  = BuildNumericEntry("0", 5);
         _maxAuthAttemptsEntry = BuildNumericEntry("5", 3);
         _allowUnattendedSw    = new Switch();
         _requireTlsSw         = new Switch();
@@ -306,6 +308,9 @@ public class SettingsPage : ContentPage
             BuildEntryRow("PIN expiry (minutes)",
                 "Minutes before the one-time PIN expires. Enter 0 to disable expiry.",
                 _pinExpiryEntry),
+            BuildEntryRow("Idle disconnect (minutes)",
+                "Automatically disconnect an active remote session after this much client inactivity. Enter 0 to disable.",
+                _idleDisconnectEntry),
             BuildEntryRow("Max auth attempts",
                 "Consecutive failed PIN attempts allowed before the device is locked out.",
                 _maxAuthAttemptsEntry),
@@ -722,6 +727,8 @@ public class SettingsPage : ContentPage
         // Security
         if (int.TryParse(_pinExpiryEntry?.Text, out int pinExpiry) && pinExpiry >= 0)
             s.Security.PinExpiryMinutes = pinExpiry;
+        if (int.TryParse(_idleDisconnectEntry?.Text, out int idleDisconnect) && idleDisconnect >= 0)
+            s.Security.IdleDisconnectMinutes = idleDisconnect;
         if (int.TryParse(_maxAuthAttemptsEntry?.Text, out int maxAttempts) && maxAttempts > 0)
             s.Security.MaxAuthAttempts = maxAttempts;
         s.Security.AllowUnattendedAccess = _allowUnattendedSw?.IsToggled  ?? s.Security.AllowUnattendedAccess;

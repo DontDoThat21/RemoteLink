@@ -58,6 +58,7 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
 
     // Settable connection state — tests can toggle this
     public bool IsConnected { get; set; }
+    public int DisconnectCallCount { get; private set; }
 
     // ── ICommunicationService events ──────────────────────────────────────────
     public event EventHandler<ScreenData>? ScreenDataReceived;
@@ -84,13 +85,36 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     public Task StartAsync(int port) => Task.CompletedTask;
     public Task StopAsync() => Task.CompletedTask;
     public Task<bool> ConnectToDeviceAsync(DeviceInfo device) => Task.FromResult(true);
-    public Task DisconnectAsync() => Task.CompletedTask;
+    public Task DisconnectAsync()
+    {
+        DisconnectCallCount++;
+        IsConnected = false;
+        ConnectionStateChanged?.Invoke(this, false);
+        return Task.CompletedTask;
+    }
 
     public Task SendScreenDataAsync(ScreenData screenData)
     {
         lock (_lock) { _sentScreenData.Add(screenData); }
         return Task.CompletedTask;
     }
+
+internal sealed class FakeAppSettingsService : IAppSettingsService
+{
+    public AppSettings Current { get; } = new();
+
+    public event EventHandler? SettingsSaved;
+
+    public Task LoadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task SaveAsync(CancellationToken cancellationToken = default)
+    {
+        SettingsSaved?.Invoke(this, EventArgs.Empty);
+        return Task.CompletedTask;
+    }
+
+    public Task ResetAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+}
 
     public Task SendInputEventAsync(InputEvent inputEvent)
     {
@@ -944,9 +968,11 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeMessagingService _messaging = new();
     private readonly FakeConnectionRequestNotificationPublisher _notificationPublisher = new();
     private readonly FakeUserAccountService _userAccount = new();
+    private readonly FakeAppSettingsService _settings = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
+    private DateTime _utcNow = new(2026, 03, 10, 12, 0, 0, DateTimeKind.Utc);
 
     public RemoteDesktopHostTests()
     {
@@ -965,8 +991,12 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _recorder,
             _messaging,
             _notificationPublisher,
-            userAccountService: _userAccount);
+            userAccountService: _userAccount,
+            appSettingsService: _settings,
+            utcNow: () => _utcNow);
     }
+
+    private void AdvanceTime(TimeSpan by) => _utcNow = _utcNow.Add(by);
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>
     private async Task StartHostAsync()
@@ -991,7 +1021,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             ClientDeviceId = "test-client",
             ClientDeviceName = "TestDevice",
             Pin = _pairing.CurrentPin!,
-            RequestedAt = DateTime.UtcNow
+            RequestedAt = _utcNow
         });
 
         // Allow the Task.Run inside OnPairingRequestReceived to complete
@@ -1082,6 +1112,46 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         await Task.Delay(120);
 
         Assert.Empty(_comm.SentScreenData);
+    }
+
+    [Fact]
+    public async Task IdleDisconnect_DisconnectsPairedClient_AfterConfiguredInactivity()
+    {
+        _settings.Current.Security.IdleDisconnectMinutes = 1;
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        AdvanceTime(TimeSpan.FromMinutes(2));
+        await Task.Delay(1200);
+
+        Assert.Equal(1, _comm.DisconnectCallCount);
+        Assert.False(_comm.IsConnected);
+
+        var session = Assert.Single(_sessionManager.CreatedSessions);
+        Assert.Equal(SessionStatus.Ended, session.Status);
+        Assert.Equal("Disconnected after 1 minute of inactivity.", session.DisconnectReason);
+    }
+
+    [Fact]
+    public async Task IdleDisconnect_TimerResets_WhenClientActivityIsReceived()
+    {
+        _settings.Current.Security.IdleDisconnectMinutes = 1;
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        AdvanceTime(TimeSpan.FromSeconds(50));
+        _comm.RaiseInputEventReceived(new InputEvent { Type = InputEventType.MouseMove, X = 100, Y = 50 });
+        await Task.Delay(150);
+
+        AdvanceTime(TimeSpan.FromSeconds(20));
+        await Task.Delay(1200);
+        Assert.Equal(0, _comm.DisconnectCallCount);
+
+        AdvanceTime(TimeSpan.FromSeconds(50));
+        await Task.Delay(1200);
+        Assert.Equal(1, _comm.DisconnectCallCount);
     }
 
     [Fact]

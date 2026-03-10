@@ -28,6 +28,7 @@ public class AppSettingsTests
         Assert.Equal(ThemeMode.System, settings.General.Theme);
         Assert.False(settings.Security.EnableAppLock);
         Assert.Equal(1, settings.Security.AppLockTimeoutMinutes);
+        Assert.Equal(0, settings.Security.IdleDisconnectMinutes);
         Assert.True(settings.Display.EnableAdaptiveQuality);
         Assert.Equal(ImageFormat.Jpeg, settings.Display.ImageFormat);
         Assert.Equal(80, settings.Display.ImageQuality);

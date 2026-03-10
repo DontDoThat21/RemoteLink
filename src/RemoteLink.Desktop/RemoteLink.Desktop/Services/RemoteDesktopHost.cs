@@ -39,6 +39,8 @@ public class RemoteDesktopHost : BackgroundService
     private readonly ISignalingService? _signalingService;
     private readonly DeviceInfo? _localDevice;
     private readonly IUserAccountService? _userAccountService;
+    private readonly IAppSettingsService? _appSettingsService;
+    private readonly Func<DateTime> _utcNow;
     private readonly object _auditLock = new();
 
     /// <summary>
@@ -57,6 +59,9 @@ public class RemoteDesktopHost : BackgroundService
     private volatile ScreenDataFormat _preferredImageFormat = ScreenDataFormat.Raw;
     private volatile bool _audioStreamingEnabled = true;
     private long _lastFrameSentAtUtcMs;
+    private long _lastClientActivityUtcTicks;
+    private int _idleDisconnectInProgress;
+    private string? _pendingDisconnectReason;
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
@@ -90,7 +95,9 @@ public class RemoteDesktopHost : BackgroundService
         INatTraversalService? natTraversalService = null,
         ISignalingService? signalingService = null,
         DeviceInfo? localDevice = null,
-        IUserAccountService? userAccountService = null)
+        IUserAccountService? userAccountService = null,
+        IAppSettingsService? appSettingsService = null,
+        Func<DateTime>? utcNow = null)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -110,6 +117,8 @@ public class RemoteDesktopHost : BackgroundService
         _signalingService = signalingService;
         _localDevice = localDevice;
         _userAccountService = userAccountService;
+        _appSettingsService = appSettingsService;
+        _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -118,6 +127,18 @@ public class RemoteDesktopHost : BackgroundService
 
         try
         {
+            if (_appSettingsService is not null)
+            {
+                try
+                {
+                    await _appSettingsService.LoadAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load persisted app settings. Using defaults for host security preferences.");
+                }
+            }
+
             if (_userAccountService is not null)
             {
                 try
@@ -208,6 +229,8 @@ public class RemoteDesktopHost : BackgroundService
                     await SendConnectionQualityUpdateAsync();
                     lastQualityUpdate = DateTime.UtcNow;
                 }
+
+                await CheckIdleDisconnectAsync();
             }
         }
         catch (OperationCanceledException)
@@ -292,6 +315,7 @@ public class RemoteDesktopHost : BackgroundService
                 {
                     _clientPaired = true;
                     _currentPermissions = sessionPermissions;
+                    RecordClientActivity();
 
                     await RegisterManagedClientDeviceAsync(request);
 
@@ -673,6 +697,8 @@ public class RemoteDesktopHost : BackgroundService
                 return;
             }
 
+            RecordClientActivity();
+
             try
             {
                 AppendAuditAction(
@@ -823,13 +849,17 @@ public class RemoteDesktopHost : BackgroundService
     {
         if (connected)
         {
+            _pendingDisconnectReason = null;
+            Interlocked.Exchange(ref _idleDisconnectInProgress, 0);
+            RecordClientActivity();
             _logger.LogInformation("Client connected — awaiting PIN pairing before streaming.");
             // Do NOT start screen capture yet; wait for successful pairing.
         }
         else
         {
+            var disconnectReason = ConsumeDisconnectReason("Remote session disconnected.");
             _clientPaired = false;
-            _ = FinalizeCurrentAuditLogEntryAsync("Remote session disconnected.");
+            _ = FinalizeCurrentAuditLogEntryAsync(disconnectReason);
             _logger.LogInformation("Client disconnected — stopping screen capture, audio, clipboard sync, and recording.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
@@ -851,6 +881,8 @@ public class RemoteDesktopHost : BackgroundService
             _audioStreamingEnabled = true;
             _currentPermissions = SessionPermissionSet.CreateFullAccess();
             Interlocked.Exchange(ref _lastFrameSentAtUtcMs, 0);
+            Interlocked.Exchange(ref _lastClientActivityUtcTicks, 0);
+            Interlocked.Exchange(ref _idleDisconnectInProgress, 0);
 
             // Clear chat messages
             _messagingService.ClearMessages();
@@ -859,6 +891,7 @@ public class RemoteDesktopHost : BackgroundService
             // End the current session if one exists
             if (_currentSession != null)
             {
+                _currentSession.DisconnectReason = disconnectReason;
                 _sessionManager.EndSession(_currentSession.SessionId);
                 _logger.LogInformation(
                     "Session {SessionId} ended. Duration: {Duration:mm\\:ss}",
@@ -1086,6 +1119,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private void OnMessageReceived(object? sender, ChatMessage message)
     {
+        RecordClientActivity();
         _logger.LogInformation(
             "Chat message received from {Sender}: {Text}",
             message.SenderName,
@@ -1099,6 +1133,8 @@ public class RemoteDesktopHost : BackgroundService
     private void OnInputEventReceived(object? sender, InputEvent inputEvent)
     {
         if (!_clientPaired || !_currentPermissions.AllowRemoteInput) return;
+
+        RecordClientActivity();
 
         _ = Task.Run(async () =>
         {
@@ -1156,6 +1192,8 @@ public class RemoteDesktopHost : BackgroundService
     {
         if (!_clientPaired || !_currentPermissions.AllowClipboardSync) return;
 
+        RecordClientActivity();
+
         _ = Task.Run(async () =>
         {
             try
@@ -1178,6 +1216,13 @@ public class RemoteDesktopHost : BackgroundService
                         _logger.LogDebug("Received clipboard data with no content");
                         break;
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to apply clipboard data from client");
+            }
+        });
+    }
 
     private bool IsSessionControlAllowed(SessionControlCommand command)
     {
@@ -1186,12 +1231,61 @@ public class RemoteDesktopHost : BackgroundService
 
         return command != SessionControlCommand.SetAudioEnabled || _currentPermissions.AllowAudioStreaming;
     }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to apply clipboard data from client");
-            }
-        });
+
+    private void RecordClientActivity()
+    {
+        Interlocked.Exchange(ref _lastClientActivityUtcTicks, _utcNow().Ticks);
+    }
+
+    private string ConsumeDisconnectReason(string fallback)
+    {
+        var reason = _pendingDisconnectReason;
+        _pendingDisconnectReason = null;
+        return string.IsNullOrWhiteSpace(reason) ? fallback : reason;
+    }
+
+    private async Task CheckIdleDisconnectAsync()
+    {
+        if (!_clientPaired || !_communication.IsConnected)
+            return;
+
+        int idleMinutes = _appSettingsService?.Current.Security.IdleDisconnectMinutes ?? 0;
+        if (idleMinutes <= 0)
+            return;
+
+        var lastActivityTicks = Interlocked.Read(ref _lastClientActivityUtcTicks);
+        if (lastActivityTicks <= 0)
+        {
+            RecordClientActivity();
+            return;
+        }
+
+        var idleTimeout = TimeSpan.FromMinutes(idleMinutes);
+        var lastActivityUtc = new DateTime(lastActivityTicks, DateTimeKind.Utc);
+        var idleDuration = _utcNow() - lastActivityUtc;
+        if (idleDuration < idleTimeout)
+            return;
+
+        if (Interlocked.Exchange(ref _idleDisconnectInProgress, 1) != 0)
+            return;
+
+        string reason = $"Disconnected after {idleMinutes} minute{(idleMinutes == 1 ? string.Empty : "s")} of inactivity.";
+        _pendingDisconnectReason = reason;
+
+        _logger.LogInformation(
+            "Disconnecting idle remote session after {IdleMinutes} minute(s) of inactivity.",
+            idleMinutes);
+
+        try
+        {
+            await _communication.DisconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            _pendingDisconnectReason = null;
+            Interlocked.Exchange(ref _idleDisconnectInProgress, 0);
+            _logger.LogWarning(ex, "Failed to disconnect idle remote session");
+        }
     }
 
     /// <summary>

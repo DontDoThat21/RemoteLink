@@ -54,6 +54,9 @@ public class AppSettings
         /// <summary>Minutes before the one-time PIN expires (0 = never).</summary>
         public int PinExpiryMinutes { get; set; } = 10;
 
+        /// <summary>Minutes of remote-client inactivity before the session is disconnected automatically (0 = disabled).</summary>
+        public int IdleDisconnectMinutes { get; set; } = 0;
+
         /// <summary>Maximum consecutive failed PIN attempts before lockout.</summary>
         public int MaxAuthAttempts { get; set; } = 5;
 
