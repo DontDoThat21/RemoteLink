@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Security;
 using RemoteLink.Shared.Services;
 using Xunit;
 
@@ -141,6 +142,88 @@ public sealed class UserAccountServiceTests : IDisposable
         Assert.Equal(session.AccountId, profile!.AccountId);
         Assert.Equal("Alice", profile.DisplayName);
         Assert.Single(profile.ManagedDevices);
+    }
+
+    [Fact]
+    public async Task BeginTwoFactorSetupAsync_ReturnsProvisioningUri()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        var setup = await service.BeginTwoFactorSetupAsync();
+
+        Assert.False(string.IsNullOrWhiteSpace(setup.SharedSecret));
+        Assert.Contains("otpauth://totp/", setup.ProvisioningUri, StringComparison.Ordinal);
+        Assert.Contains("alice%40example.com", setup.ProvisioningUri, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EnableTwoFactorAsync_RequiresValidCodeForLogin()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+        var setup = await service.BeginTwoFactorSetupAsync();
+
+        await service.EnableTwoFactorAsync(TotpAuthenticator.GenerateCode(setup.SharedSecret), requireForUnattendedAccess: true);
+        await service.LogoutAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.LoginAsync("alice@example.com", "Sup3rSecret!"));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.LoginAsync("alice@example.com", "Sup3rSecret!", "000000"));
+
+        var session = await service.LoginAsync(
+            "alice@example.com",
+            "Sup3rSecret!",
+            TotpAuthenticator.GenerateCode(setup.SharedSecret));
+
+        Assert.True(session.IsTwoFactorEnabled);
+    }
+
+    [Fact]
+    public async Task ValidateTwoFactorCodeAsync_ReturnsTrueForCurrentCode()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+        var setup = await service.BeginTwoFactorSetupAsync();
+        var code = TotpAuthenticator.GenerateCode(setup.SharedSecret);
+
+        await service.EnableTwoFactorAsync(code);
+
+        Assert.True(await service.ValidateTwoFactorCodeAsync(TotpAuthenticator.GenerateCode(setup.SharedSecret)));
+        Assert.False(await service.ValidateTwoFactorCodeAsync("123123"));
+    }
+
+    [Fact]
+    public async Task IsTwoFactorRequiredForUnattendedAccessAsync_ReflectsEnrollmentChoice()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+        var setup = await service.BeginTwoFactorSetupAsync();
+
+        await service.EnableTwoFactorAsync(TotpAuthenticator.GenerateCode(setup.SharedSecret), requireForUnattendedAccess: true);
+
+        Assert.True(await service.IsTwoFactorRequiredForUnattendedAccessAsync());
+    }
+
+    [Fact]
+    public async Task DisableTwoFactorAsync_RestoresPasswordOnlyLogin()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+        var setup = await service.BeginTwoFactorSetupAsync();
+
+        await service.EnableTwoFactorAsync(TotpAuthenticator.GenerateCode(setup.SharedSecret));
+        await service.DisableTwoFactorAsync(TotpAuthenticator.GenerateCode(setup.SharedSecret));
+        await service.LogoutAsync();
+
+        var session = await service.LoginAsync("alice@example.com", "Sup3rSecret!");
+        var profile = await service.GetCurrentProfileAsync();
+
+        Assert.False(session.IsTwoFactorEnabled);
+        Assert.NotNull(profile);
+        Assert.False(profile!.IsTwoFactorEnabled);
     }
 
     private UserAccountService CreateService()

@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-03-10 (session 52)
+> **Last updated:** 2026-03-10 (session 55)
 
 ## Legend
 - ✅ Complete & Tested
@@ -127,7 +127,7 @@
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 8.1 | User account system (registration, login) | ✅ | Shared `IUserAccountService`/`UserAccountService`: local registration/login with PBKDF2-SHA256 password hashing, persisted 30-day sessions, account profile model, managed-device registry, synced saved-device snapshot storage; DI wired into Desktop/Desktop.UI/Mobile; 6 Shared tests |
-| 8.2 | Two-factor authentication (TOTP) | 📋 | App-based 2FA for account and unattended access |
+| 8.2 | Two-factor authentication (TOTP) | ✅ | Shared `TotpAuthenticator` + `UserAccountService` TOTP enrollment/verification, `otpauth://` provisioning URI generation, login challenge enforcement, unattended-access 2FA requirement flag; 8 Shared tests |
 | 8.3 | Trusted devices allow-list | 📋 | Whitelist specific devices that can connect without PIN |
 | 8.4 | Block & deny list | 📋 | Reject connections from specific IDs |
 | 8.5 | Granular permission controls per session | 📋 | View-only, no file transfer, no clipboard, etc. |
@@ -211,6 +211,7 @@
 > Session 52 (2026-03-10): Feature 7.6 — Proxy support (HTTP/SOCKS5) completed. Added shared `ProxyConfiguration` and `ProxyTcpClientFactory` to support outbound HTTP CONNECT and SOCKS5 tunneling for internet-facing TCP paths. Updated `RelayCommunicationService` and `SignalingService` to establish proxy-aware connections, and updated `AdaptiveCommunicationService` plus Desktop/Desktop.UI/Mobile DI bootstrap to load proxy settings from `REMOTELINK_PROXY_TYPE` / `REMOTELINK_PROXY_HOST` / `REMOTELINK_PROXY_PORT` / `REMOTELINK_PROXY_USERNAME` / `REMOTELINK_PROXY_PASSWORD` / `REMOTELINK_PROXY_URL` with standard `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` URI fallback. Added Shared end-to-end tests covering relay over HTTP CONNECT proxy, signaling over SOCKS5 proxy, and proxy URI parsing.
 > Session 53 (2026-03-10): Feature 7.7 — Bandwidth throttling / adaptive bitrate (completed). Extended `RemoteDesktopHost` with transport-aware stream tuning on top of the existing performance monitor: constrained links now degrade gracefully by lowering effective stream FPS (10/6/4/2 tiers), capping quality more aggressively, and automatically switching non-JPEG screen streams to JPEG when bandwidth or send latency indicates congestion. Added host regression coverage for frame dropping and quality reduction under simulated low-bandwidth/high-latency conditions. Validation: `RemoteLink.Desktop.Tests` targeted run passed; workspace build succeeded.
 > Session 54 (2026-03-10): Feature 8.1 — User account system (registration, login) completed. Added shared `UserAccountProfile` / `UserAccountSession` / `AccountManagedDevice` models plus `IUserAccountService` and `UserAccountService` for optional local account registration and sign-in with PBKDF2-SHA256 password hashing, persisted 30-day sessions, managed-device tracking, and synced saved-device snapshot storage for future address-book sync/device-management UI. Wired the service into Desktop, Desktop.UI, and Mobile DI bootstrap. Validation: `UserAccountServiceTests` added in Shared (6 tests), targeted Shared tests passed, and workspace build succeeded.
+> Session 55 (2026-03-10): Feature 8.2 — Two-factor authentication (TOTP) completed. Added shared `TotpAuthenticator` for Base32 secret generation, RFC 6238 TOTP code generation/verification, and `otpauth://` provisioning URIs for authenticator apps. Extended `IUserAccountService` / `UserAccountService` with TOTP setup, enable/disable flows, password+code login enforcement, unattended-access requirement checks, and persisted 2FA state on account profiles/sessions. Validation: added 8 Shared tests across TOTP utility and account-service login/enrollment flows; targeted Shared tests passed, and workspace build succeeded.
 ---
 
 *This document is automatically updated as features are completed and tested.*

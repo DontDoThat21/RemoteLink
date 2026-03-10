@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Security;
 
 namespace RemoteLink.Shared.Services;
 
@@ -15,6 +16,7 @@ public sealed class UserAccountService : IUserAccountService
     private const int HashIterations = 100_000;
     private const int SaltSize = 16;
     private const int HashSize = 32;
+    private const string DefaultTwoFactorIssuer = "RemoteLink";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -118,6 +120,144 @@ public sealed class UserAccountService : IUserAccountService
 
     public async Task<UserAccountSession> LoginAsync(string email, string password, CancellationToken cancellationToken = default)
     {
+        return await LoginInternalAsync(email, password, twoFactorCode: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<UserAccountSession> LoginAsync(string email, string password, string twoFactorCode, CancellationToken cancellationToken = default)
+    {
+        return await LoginInternalAsync(email, password, string.IsNullOrWhiteSpace(twoFactorCode) ? null : twoFactorCode, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<UserAccountTwoFactorSetup> BeginTwoFactorSetupAsync(string? issuer = null, CancellationToken cancellationToken = default)
+    {
+        UserAccountTwoFactorSetup setup;
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            var effectiveIssuer = string.IsNullOrWhiteSpace(issuer) ? DefaultTwoFactorIssuer : issuer.Trim();
+            var secret = TotpAuthenticator.GenerateSecretKey();
+
+            account.PendingTwoFactorSecret = secret;
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+            setup = CreateTwoFactorSetup(account, effectiveIssuer, secret);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        return setup;
+    }
+
+    public async Task EnableTwoFactorAsync(string verificationCode, bool requireForUnattendedAccess = false, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(verificationCode))
+            throw new ArgumentException("Verification code is required.", nameof(verificationCode));
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+
+            if (string.IsNullOrWhiteSpace(account.PendingTwoFactorSecret))
+                throw new InvalidOperationException("Two-factor setup has not been started.");
+
+            if (!TotpAuthenticator.VerifyCode(account.PendingTwoFactorSecret, verificationCode))
+                throw new UnauthorizedAccessException("Invalid two-factor authentication code.");
+
+            account.TwoFactorSecret = account.PendingTwoFactorSecret;
+            account.PendingTwoFactorSecret = null;
+            account.IsTwoFactorEnabled = true;
+            account.RequireTwoFactorForUnattendedAccess = requireForUnattendedAccess;
+            account.TwoFactorEnabledAtUtc = DateTime.UtcNow;
+            UpdateCurrentSession(account);
+
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+            await SaveSessionIfActiveInternalAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Enabled TOTP for account {Email}", account.Email);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task DisableTwoFactorAsync(string verificationCode, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(verificationCode))
+            throw new ArgumentException("Verification code is required.", nameof(verificationCode));
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+
+            if (!account.IsTwoFactorEnabled || string.IsNullOrWhiteSpace(account.TwoFactorSecret))
+                throw new InvalidOperationException("Two-factor authentication is not enabled.");
+
+            if (!TotpAuthenticator.VerifyCode(account.TwoFactorSecret, verificationCode))
+                throw new UnauthorizedAccessException("Invalid two-factor authentication code.");
+
+            account.TwoFactorSecret = null;
+            account.PendingTwoFactorSecret = null;
+            account.IsTwoFactorEnabled = false;
+            account.RequireTwoFactorForUnattendedAccess = false;
+            account.TwoFactorEnabledAtUtc = null;
+            UpdateCurrentSession(account);
+
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+            await SaveSessionIfActiveInternalAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation("Disabled TOTP for account {Email}", account.Email);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<bool> IsTwoFactorRequiredForUnattendedAccessAsync(CancellationToken cancellationToken = default)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            return account.IsTwoFactorEnabled && account.RequireTwoFactorForUnattendedAccess;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<bool> ValidateTwoFactorCodeAsync(string code, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+            return false;
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+
+            return account.IsTwoFactorEnabled &&
+                   !string.IsNullOrWhiteSpace(account.TwoFactorSecret) &&
+                   TotpAuthenticator.VerifyCode(account.TwoFactorSecret, code);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    private async Task<UserAccountSession> LoginInternalAsync(string email, string password, string? twoFactorCode, CancellationToken cancellationToken)
+    {
         var normalizedEmail = NormalizeEmail(email);
         ValidatePassword(password);
 
@@ -133,6 +273,18 @@ public sealed class UserAccountService : IUserAccountService
 
             if (account is null || !VerifyPassword(password, account.PasswordHash, account.PasswordSalt))
                 throw new UnauthorizedAccessException("Invalid email or password.");
+
+            if (account.IsTwoFactorEnabled)
+            {
+                if (string.IsNullOrWhiteSpace(account.TwoFactorSecret))
+                    throw new InvalidOperationException("Two-factor authentication is enabled but not configured correctly.");
+
+                if (string.IsNullOrWhiteSpace(twoFactorCode))
+                    throw new UnauthorizedAccessException("Two-factor authentication code is required.");
+
+                if (!TotpAuthenticator.VerifyCode(account.TwoFactorSecret, twoFactorCode))
+                    throw new UnauthorizedAccessException("Invalid two-factor authentication code.");
+            }
 
             account.LastLoginAtUtc = DateTime.UtcNow;
             session = CreateSession(account);
@@ -373,7 +525,8 @@ public sealed class UserAccountService : IUserAccountService
                         DisplayName = account.DisplayName,
                         SessionToken = persistedSession.SessionToken,
                         CreatedAtUtc = persistedSession.CreatedAtUtc,
-                        ExpiresAtUtc = persistedSession.ExpiresAtUtc
+                        ExpiresAtUtc = persistedSession.ExpiresAtUtc,
+                        IsTwoFactorEnabled = account.IsTwoFactorEnabled
                     };
                 }
                 else
@@ -412,6 +565,19 @@ public sealed class UserAccountService : IUserAccountService
 
         var json = JsonSerializer.Serialize(persistedSession, JsonOptions);
         await File.WriteAllTextAsync(_sessionPath, json, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SaveSessionIfActiveInternalAsync(CancellationToken cancellationToken)
+    {
+        if (_currentSession is null)
+        {
+            if (File.Exists(_sessionPath))
+                File.Delete(_sessionPath);
+
+            return;
+        }
+
+        await SaveSessionInternalAsync(_currentSession, cancellationToken).ConfigureAwait(false);
     }
 
     private PersistedUserAccount GetCurrentAccountOrThrow()
@@ -473,7 +639,19 @@ public sealed class UserAccountService : IUserAccountService
             DisplayName = account.DisplayName,
             SessionToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
             CreatedAtUtc = DateTime.UtcNow,
-            ExpiresAtUtc = DateTime.UtcNow.AddDays(30)
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(30),
+            IsTwoFactorEnabled = account.IsTwoFactorEnabled
+        };
+    }
+
+    private static UserAccountTwoFactorSetup CreateTwoFactorSetup(PersistedUserAccount account, string issuer, string secret)
+    {
+        return new UserAccountTwoFactorSetup
+        {
+            Issuer = issuer,
+            AccountName = account.Email,
+            SharedSecret = secret,
+            ProvisioningUri = TotpAuthenticator.BuildProvisioningUri(issuer, account.Email, secret)
         };
     }
 
@@ -486,6 +664,9 @@ public sealed class UserAccountService : IUserAccountService
             DisplayName = account.DisplayName,
             CreatedAtUtc = account.CreatedAtUtc,
             LastLoginAtUtc = account.LastLoginAtUtc,
+            IsTwoFactorEnabled = account.IsTwoFactorEnabled,
+            RequireTwoFactorForUnattendedAccess = account.RequireTwoFactorForUnattendedAccess,
+            TwoFactorEnabledAtUtc = account.TwoFactorEnabledAtUtc,
             ManagedDevices = account.ManagedDevices.Select(CloneManagedDevice).ToList(),
             SyncedSavedDevices = account.SyncedSavedDevices.Select(CloneSavedDevice).ToList()
         };
@@ -543,8 +724,19 @@ public sealed class UserAccountService : IUserAccountService
             DisplayName = session.DisplayName,
             SessionToken = session.SessionToken,
             CreatedAtUtc = session.CreatedAtUtc,
-            ExpiresAtUtc = session.ExpiresAtUtc
+            ExpiresAtUtc = session.ExpiresAtUtc,
+            IsTwoFactorEnabled = session.IsTwoFactorEnabled
         };
+    }
+
+    private void UpdateCurrentSession(PersistedUserAccount account)
+    {
+        if (_currentSession is null || !string.Equals(_currentSession.AccountId, account.AccountId, StringComparison.Ordinal))
+            return;
+
+        _currentSession.Email = account.Email;
+        _currentSession.DisplayName = account.DisplayName;
+        _currentSession.IsTwoFactorEnabled = account.IsTwoFactorEnabled;
     }
 
     private static AccountManagedDevice CloneManagedDevice(AccountManagedDevice device)
@@ -593,6 +785,11 @@ public sealed class UserAccountService : IUserAccountService
         public string PasswordSalt { get; set; } = string.Empty;
         public DateTime CreatedAtUtc { get; set; }
         public DateTime LastLoginAtUtc { get; set; }
+        public bool IsTwoFactorEnabled { get; set; }
+        public string? TwoFactorSecret { get; set; }
+        public string? PendingTwoFactorSecret { get; set; }
+        public bool RequireTwoFactorForUnattendedAccess { get; set; }
+        public DateTime? TwoFactorEnabledAtUtc { get; set; }
         public List<AccountManagedDevice> ManagedDevices { get; set; } = new();
         public List<SavedDevice> SyncedSavedDevices { get; set; } = new();
     }

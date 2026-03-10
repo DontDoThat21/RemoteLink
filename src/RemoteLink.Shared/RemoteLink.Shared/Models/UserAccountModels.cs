@@ -10,6 +10,9 @@ public sealed class UserAccountProfile
     public string DisplayName { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
     public DateTime LastLoginAtUtc { get; set; }
+    public bool IsTwoFactorEnabled { get; set; }
+    public bool RequireTwoFactorForUnattendedAccess { get; set; }
+    public DateTime? TwoFactorEnabledAtUtc { get; set; }
     public List<AccountManagedDevice> ManagedDevices { get; set; } = new();
     public List<SavedDevice> SyncedSavedDevices { get; set; } = new();
 }
@@ -25,6 +28,18 @@ public sealed class UserAccountSession
     public string SessionToken { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
     public DateTime ExpiresAtUtc { get; set; }
+    public bool IsTwoFactorEnabled { get; set; }
+}
+
+/// <summary>
+/// Authenticator-app enrollment details for TOTP-based two-factor authentication.
+/// </summary>
+public sealed class UserAccountTwoFactorSetup
+{
+    public string Issuer { get; set; } = string.Empty;
+    public string AccountName { get; set; } = string.Empty;
+    public string SharedSecret { get; set; } = string.Empty;
+    public string ProvisioningUri { get; set; } = string.Empty;
 }
 
 /// <summary>

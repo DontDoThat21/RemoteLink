@@ -25,6 +25,9 @@ public interface IUserAccountService
     /// <summary>Authenticates an existing account.</summary>
     Task<UserAccountSession> LoginAsync(string email, string password, CancellationToken cancellationToken = default);
 
+    /// <summary>Authenticates an existing account using password + TOTP when 2FA is enabled.</summary>
+    Task<UserAccountSession> LoginAsync(string email, string password, string twoFactorCode, CancellationToken cancellationToken = default);
+
     /// <summary>Signs out the current session and clears the persisted session token.</summary>
     Task LogoutAsync(CancellationToken cancellationToken = default);
 
@@ -45,4 +48,19 @@ public interface IUserAccountService
 
     /// <summary>Returns the saved devices synced to the current account.</summary>
     Task<IReadOnlyList<SavedDevice>> GetSyncedSavedDevicesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Starts TOTP enrollment for the current account and returns authenticator-app setup details.</summary>
+    Task<UserAccountTwoFactorSetup> BeginTwoFactorSetupAsync(string? issuer = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Completes TOTP enrollment for the current account using a verification code.</summary>
+    Task EnableTwoFactorAsync(string verificationCode, bool requireForUnattendedAccess = false, CancellationToken cancellationToken = default);
+
+    /// <summary>Disables TOTP for the current account after verifying a current code.</summary>
+    Task DisableTwoFactorAsync(string verificationCode, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets whether the signed-in account requires TOTP for unattended-access approval.</summary>
+    Task<bool> IsTwoFactorRequiredForUnattendedAccessAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Validates a TOTP code for the signed-in account.</summary>
+    Task<bool> ValidateTwoFactorCodeAsync(string code, CancellationToken cancellationToken = default);
 }
