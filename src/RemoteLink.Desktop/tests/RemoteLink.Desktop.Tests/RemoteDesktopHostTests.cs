@@ -288,11 +288,17 @@ internal sealed class FakeInputHandler : IInputHandler
     // Use a lock to guard against concurrent Task.Run calls from RemoteDesktopHost
     private readonly object _lock = new();
     private readonly List<InputEvent> _receivedEvents = new();
+    private readonly List<KeyboardShortcut> _sentShortcuts = new();
 
     /// <summary>Thread-safe snapshot of events received so far.</summary>
     public List<InputEvent> ReceivedEvents
     {
         get { lock (_lock) { return new List<InputEvent>(_receivedEvents); } }
+    }
+
+    public List<KeyboardShortcut> SentShortcuts
+    {
+        get { lock (_lock) { return new List<KeyboardShortcut>(_sentShortcuts); } }
     }
 
     public bool IsActive { get; private set; }
@@ -317,7 +323,7 @@ internal sealed class FakeInputHandler : IInputHandler
 
     public Task SendShortcutAsync(KeyboardShortcut shortcut)
     {
-        // Track shortcut sends if needed in the future
+        lock (_lock) { _sentShortcuts.Add(shortcut); }
         return Task.CompletedTask;
     }
 }
@@ -1152,6 +1158,36 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         AdvanceTime(TimeSpan.FromSeconds(50));
         await Task.Delay(1200);
         Assert.Equal(1, _comm.DisconnectCallCount);
+    }
+
+    [Fact]
+    public async Task LockOnSessionEnd_SendsLockShortcut_WhenConfiguredAndPairedClientDisconnects()
+    {
+        _settings.Current.Security.LockOnSessionEnd = true;
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseConnectionStateChanged(false);
+        await Task.Delay(150);
+
+        Assert.Single(_input.SentShortcuts);
+        Assert.Equal(KeyboardShortcut.LockWorkstation, _input.SentShortcuts[0]);
+    }
+
+    [Fact]
+    public async Task LockOnSessionEnd_DoesNotSendLockShortcut_WhenClientDisconnectsBeforePairing()
+    {
+        _settings.Current.Security.LockOnSessionEnd = true;
+
+        await StartHostAsync();
+
+        _comm.RaiseConnectionStateChanged(true);
+        await Task.Delay(50);
+        _comm.RaiseConnectionStateChanged(false);
+        await Task.Delay(150);
+
+        Assert.Empty(_input.SentShortcuts);
     }
 
     [Fact]

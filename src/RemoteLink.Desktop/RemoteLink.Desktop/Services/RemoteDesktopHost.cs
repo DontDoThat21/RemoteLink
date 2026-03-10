@@ -858,6 +858,7 @@ public class RemoteDesktopHost : BackgroundService
         }
         else
         {
+            var shouldLockWorkstation = _clientPaired && (_appSettingsService?.Current.Security.LockOnSessionEnd ?? false);
             var disconnectReason = ConsumeDisconnectReason("Remote session disconnected.");
             _clientPaired = false;
             _ = FinalizeCurrentAuditLogEntryAsync(disconnectReason);
@@ -905,6 +906,31 @@ public class RemoteDesktopHost : BackgroundService
             var newPin = _pairing.GeneratePin();
             _logger.LogInformation(
                 "New PIN generated for next connection: {Pin}", newPin);
+
+            if (shouldLockWorkstation)
+                _ = LockWorkstationAfterSessionEndAsync(disconnectReason);
+        }
+    }
+
+    private async Task LockWorkstationAfterSessionEndAsync(string disconnectReason)
+    {
+        if (!_inputHandler.IsActive)
+        {
+            _logger.LogWarning(
+                "Remote session ended with lock-on-disconnect enabled, but the input handler is inactive. Workstation lock skipped.");
+            return;
+        }
+
+        try
+        {
+            await _inputHandler.SendShortcutAsync(KeyboardShortcut.LockWorkstation);
+            _logger.LogInformation(
+                "Locked local workstation after remote session ended. Reason: {Reason}",
+                disconnectReason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to lock the local workstation after remote session end.");
         }
     }
 
