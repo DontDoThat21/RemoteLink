@@ -301,6 +301,7 @@ internal sealed class FakePairingService : IPairingService
 
     /// <summary>Controls whether <see cref="ValidatePin"/> returns true.</summary>
     public bool ValidatePinResult { get; set; } = true;
+    public int ValidatePinCallCount { get; private set; }
 
     public bool IsLockedOut { get; set; }
     public string? CurrentPin => _currentPin;
@@ -322,10 +323,115 @@ internal sealed class FakePairingService : IPairingService
 
     public bool ValidatePin(string pin)
     {
+        ValidatePinCallCount++;
         bool result = ValidatePinResult && !IsLockedOut;
         PairingAttempted?.Invoke(this, new PairingAttemptResult { Success = result });
         return result;
     }
+}
+
+internal sealed class FakeUserAccountService : IUserAccountService
+{
+    private readonly List<AccountManagedDevice> _managedDevices = new();
+    private readonly HashSet<string> _trustedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
+
+    public UserAccountSession? CurrentSession { get; private set; }
+    public bool IsSignedIn { get; private set; }
+    public event EventHandler<UserAccountSession?>? SessionChanged;
+
+    public List<AccountManagedDevice> ManagedDevices => _managedDevices.Select(device => new AccountManagedDevice
+    {
+        DeviceId = device.DeviceId,
+        InternetDeviceId = device.InternetDeviceId,
+        DeviceName = device.DeviceName,
+        Type = device.Type,
+        IPAddress = device.IPAddress,
+        Port = device.Port,
+        SupportsRelay = device.SupportsRelay,
+        RelayServerHost = device.RelayServerHost,
+        RelayServerPort = device.RelayServerPort,
+        IsTrusted = device.IsTrusted,
+        TrustedAtUtc = device.TrustedAtUtc,
+        LastSeenAtUtc = device.LastSeenAtUtc
+    }).ToList();
+
+    public void SignIn()
+    {
+        CurrentSession = new UserAccountSession
+        {
+            AccountId = "account-1",
+            Email = "alice@example.com",
+            DisplayName = "Alice",
+            SessionToken = "session-token",
+            CreatedAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(30)
+        };
+        IsSignedIn = true;
+        SessionChanged?.Invoke(this, CurrentSession);
+    }
+
+    public void TrustDevice(string deviceId, string? internetDeviceId = null)
+    {
+        if (!string.IsNullOrWhiteSpace(deviceId))
+            _trustedDeviceIds.Add(deviceId);
+
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(internetDeviceId);
+        if (normalizedInternetId is not null)
+            _trustedDeviceIds.Add(normalizedInternetId);
+    }
+
+    public Task LoadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<UserAccountSession> RegisterAsync(string email, string password, string displayName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<UserAccountSession> LoginAsync(string email, string password, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<UserAccountSession> LoginAsync(string email, string password, string twoFactorCode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task LogoutAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<UserAccountProfile?> GetCurrentProfileAsync(CancellationToken cancellationToken = default) => Task.FromResult<UserAccountProfile?>(null);
+
+    public Task RegisterDeviceAsync(DeviceInfo device, CancellationToken cancellationToken = default)
+    {
+        var existing = _managedDevices.FirstOrDefault(candidate =>
+            string.Equals(candidate.DeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(DeviceIdentityManager.NormalizeInternetDeviceId(candidate.InternetDeviceId), DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId), StringComparison.Ordinal));
+
+        if (existing is null)
+        {
+            _managedDevices.Add(new AccountManagedDevice
+            {
+                DeviceId = device.DeviceId,
+                InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
+                DeviceName = device.DeviceName,
+                Type = device.Type,
+                IPAddress = device.IPAddress,
+                Port = device.Port,
+                IsTrusted = _trustedDeviceIds.Contains(device.DeviceId) ||
+                            (DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId) is string normalizedInternetId && _trustedDeviceIds.Contains(normalizedInternetId)),
+                TrustedAtUtc = DateTime.UtcNow,
+                LastSeenAtUtc = DateTime.UtcNow
+            });
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveManagedDeviceAsync(string deviceIdentifier, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<IReadOnlyList<AccountManagedDevice>> GetManagedDevicesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AccountManagedDevice>>(ManagedDevices.AsReadOnly());
+    public Task SetDeviceTrustAsync(string deviceIdentifier, bool isTrusted, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<bool> IsDeviceTrustedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
+    {
+        var normalizedInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(internetDeviceId);
+        return Task.FromResult(
+            (!string.IsNullOrWhiteSpace(deviceIdentifier) && _trustedDeviceIds.Contains(deviceIdentifier)) ||
+            (normalizedInternetId is not null && _trustedDeviceIds.Contains(normalizedInternetId)));
+    }
+
+    public Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<IReadOnlyList<SavedDevice>> GetSyncedSavedDevicesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SavedDevice>>(Array.Empty<SavedDevice>());
+    public Task<UserAccountTwoFactorSetup> BeginTwoFactorSetupAsync(string? issuer = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task EnableTwoFactorAsync(string verificationCode, bool requireForUnattendedAccess = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task DisableTwoFactorAsync(string verificationCode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<bool> IsTwoFactorRequiredForUnattendedAccessAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
+    public Task<bool> ValidateTwoFactorCodeAsync(string code, CancellationToken cancellationToken = default) => Task.FromResult(false);
 }
 
 /// <summary>In-memory fake for <see cref="INetworkDiscovery"/>.</summary>
@@ -736,6 +842,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeSessionRecorder _recorder = new();
     private readonly FakeMessagingService _messaging = new();
     private readonly FakeConnectionRequestNotificationPublisher _notificationPublisher = new();
+    private readonly FakeUserAccountService _userAccount = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -756,7 +863,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _audioCapture,
             _recorder,
             _messaging,
-            _notificationPublisher);
+            _notificationPublisher,
+            userAccountService: _userAccount);
     }
 
     /// <summary>Kick off the host as a BackgroundService and wait for it to initialize.</summary>
@@ -1010,6 +1118,45 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         Assert.True(response.Success);
         Assert.NotNull(response.SessionToken);
         Assert.False(string.IsNullOrEmpty(response.SessionToken));
+    }
+
+    [Fact]
+    public async Task TrustedDevice_PairsWithoutPinAndBypassesPinValidation()
+    {
+        _userAccount.SignIn();
+        _userAccount.TrustDevice("trusted-mobile", "123 456 789");
+        _pairing.ValidatePinResult = false;
+
+        await StartHostAsync();
+        _comm.RaiseConnectionStateChanged(connected: true);
+        _comm.RaisePairingRequest(new PairingRequest
+        {
+            ClientDeviceId = "trusted-mobile",
+            ClientInternetDeviceId = "123 456 789",
+            ClientDeviceName = "Trusted Phone",
+            Pin = string.Empty,
+            RequestedAt = DateTime.UtcNow
+        });
+        await Task.Delay(120);
+
+        var response = Assert.Single(_comm.SentPairingResponses);
+        Assert.True(response.Success);
+        Assert.Contains("Trusted device", response.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, _pairing.ValidatePinCallCount);
+        Assert.True(_screen.IsCapturing);
+    }
+
+    [Fact]
+    public async Task SuccessfulPairing_RegistersClientDeviceForSignedInAccount()
+    {
+        _userAccount.SignIn();
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        var device = Assert.Single(_userAccount.ManagedDevices);
+        Assert.Equal("test-client", device.DeviceId);
+        Assert.Equal("TestDevice", device.DeviceName);
     }
 
     [Fact]

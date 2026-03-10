@@ -38,6 +38,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly INatTraversalService? _natTraversalService;
     private readonly ISignalingService? _signalingService;
     private readonly DeviceInfo? _localDevice;
+    private readonly IUserAccountService? _userAccountService;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -85,7 +86,8 @@ public class RemoteDesktopHost : BackgroundService
         IConnectionRequestNotificationPublisher? connectionRequestNotificationPublisher = null,
         INatTraversalService? natTraversalService = null,
         ISignalingService? signalingService = null,
-        DeviceInfo? localDevice = null)
+        DeviceInfo? localDevice = null,
+        IUserAccountService? userAccountService = null)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -104,6 +106,7 @@ public class RemoteDesktopHost : BackgroundService
         _natTraversalService = natTraversalService;
         _signalingService = signalingService;
         _localDevice = localDevice;
+        _userAccountService = userAccountService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -112,6 +115,18 @@ public class RemoteDesktopHost : BackgroundService
 
         try
         {
+            if (_userAccountService is not null)
+            {
+                try
+                {
+                    await _userAccountService.LoadAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to load persisted user account state. Trusted-device checks will be unavailable.");
+                }
+            }
+
             // Initialize messaging service with host device info
             _messagingService.Initialize(Environment.MachineName, $"{Environment.MachineName} Host");
 
@@ -242,11 +257,14 @@ public class RemoteDesktopHost : BackgroundService
             {
                 await PublishIncomingConnectionRequestAlertAsync(request);
 
-                bool valid = _pairing.ValidatePin(request.Pin);
+                var trustedDevice = await IsTrustedDeviceAsync(request);
+                bool valid = trustedDevice || _pairing.ValidatePin(request.Pin);
 
                 if (valid)
                 {
                     _clientPaired = true;
+
+                    await RegisterManagedClientDeviceAsync(request);
 
                     // Create and track session
                     _currentSession = _sessionManager.CreateSession(
@@ -264,12 +282,16 @@ public class RemoteDesktopHost : BackgroundService
                     {
                         Success = true,
                         SessionToken = token,
-                        Message = "Pairing accepted."
+                        Message = trustedDevice
+                            ? "Trusted device accepted without PIN."
+                            : "Pairing accepted."
                     };
                     await _communication.SendPairingResponseAsync(response);
 
                     _logger.LogInformation(
-                        "Client '{Name}' ({Id}) paired successfully. Session {SessionId} created.",
+                        trustedDevice
+                            ? "Trusted client '{Name}' ({Id}) paired without PIN. Session {SessionId} created."
+                            : "Client '{Name}' ({Id}) paired successfully. Session {SessionId} created.",
                         request.ClientDeviceName,
                         request.ClientDeviceId,
                         _currentSession.SessionId[..8]);
@@ -322,6 +344,47 @@ public class RemoteDesktopHost : BackgroundService
                 _logger.LogWarning(ex, "Error processing pairing request");
             }
         });
+    }
+
+    private async Task<bool> IsTrustedDeviceAsync(PairingRequest request)
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+            return false;
+
+        try
+        {
+            return await _userAccountService.IsDeviceTrustedAsync(request.ClientDeviceId, request.ClientInternetDeviceId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to evaluate trusted-device status for client '{ClientId}'", request.ClientDeviceId);
+            return false;
+        }
+    }
+
+    private async Task RegisterManagedClientDeviceAsync(PairingRequest request)
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+            return;
+
+        try
+        {
+            await _userAccountService.RegisterDeviceAsync(new DeviceInfo
+            {
+                DeviceId = request.ClientDeviceId,
+                InternetDeviceId = request.ClientInternetDeviceId,
+                DeviceName = string.IsNullOrWhiteSpace(request.ClientDeviceName) ? request.ClientDeviceId : request.ClientDeviceName,
+                Type = DeviceType.Unknown,
+                IPAddress = string.Empty,
+                Port = 0,
+                IsOnline = true,
+                LastSeen = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to register paired client '{ClientId}' with the signed-in account", request.ClientDeviceId);
+        }
     }
 
     private async Task PublishIncomingConnectionRequestAlertAsync(PairingRequest request)

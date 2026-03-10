@@ -9,6 +9,9 @@ public class PairingRequest
     /// <summary>Unique identifier of the requesting client device.</summary>
     public string ClientDeviceId { get; set; } = string.Empty;
 
+    /// <summary>Optional internet-facing identifier of the requesting client device.</summary>
+    public string? ClientInternetDeviceId { get; set; }
+
     /// <summary>Human-readable name of the requesting client device.</summary>
     public string ClientDeviceName { get; set; } = string.Empty;
 

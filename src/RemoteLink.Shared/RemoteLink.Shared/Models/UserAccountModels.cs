@@ -56,5 +56,7 @@ public sealed class AccountManagedDevice
     public bool SupportsRelay { get; set; }
     public string? RelayServerHost { get; set; }
     public int? RelayServerPort { get; set; }
+    public bool IsTrusted { get; set; }
+    public DateTime? TrustedAtUtc { get; set; }
     public DateTime LastSeenAtUtc { get; set; }
 }

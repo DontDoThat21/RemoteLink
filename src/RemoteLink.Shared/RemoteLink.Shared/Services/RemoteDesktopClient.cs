@@ -238,10 +238,11 @@ public class RemoteDesktopClient
 
         var request = new PairingRequest
         {
-            ClientDeviceId   = BuildDeviceId(),
+            ClientDeviceId = BuildDeviceId(),
+            ClientInternetDeviceId = _localDevice?.InternetDeviceId,
             ClientDeviceName = BuildDeviceName(),
-            Pin              = pin,
-            RequestedAt      = DateTime.UtcNow
+            Pin = pin,
+            RequestedAt = DateTime.UtcNow
         };
 
         try

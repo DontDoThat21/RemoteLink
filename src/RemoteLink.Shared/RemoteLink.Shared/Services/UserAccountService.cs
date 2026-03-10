@@ -421,6 +421,52 @@ public sealed class UserAccountService : IUserAccountService
         }
     }
 
+    public async Task SetDeviceTrustAsync(string deviceIdentifier, bool isTrusted, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceIdentifier))
+            throw new ArgumentException("Device identifier is required.", nameof(deviceIdentifier));
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            var device = FindManagedDevice(account, deviceIdentifier, internetDeviceId: null);
+
+            if (device is null)
+                throw new InvalidOperationException("Managed device not found.");
+
+            device.IsTrusted = isTrusted;
+            device.TrustedAtUtc = isTrusted ? DateTime.UtcNow : null;
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<bool> IsDeviceTrustedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceIdentifier) && string.IsNullOrWhiteSpace(internetDeviceId))
+            return false;
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrNull();
+            if (account is null)
+                return false;
+
+            return FindManagedDevice(account, deviceIdentifier, internetDeviceId)?.IsTrusted == true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(savedDevices);
@@ -702,6 +748,21 @@ public sealed class UserAccountService : IUserAccountService
                 string.Equals(leftInternetId, rightInternetId, StringComparison.Ordinal));
     }
 
+    private static AccountManagedDevice? FindManagedDevice(PersistedUserAccount account, string? deviceIdentifier, string? internetDeviceId)
+    {
+        var normalizedPrimaryInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(deviceIdentifier);
+        var normalizedSecondaryInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(internetDeviceId);
+
+        return account.ManagedDevices.FirstOrDefault(device =>
+            (!string.IsNullOrWhiteSpace(deviceIdentifier) &&
+             !string.IsNullOrWhiteSpace(device.DeviceId) &&
+             string.Equals(device.DeviceId, deviceIdentifier, StringComparison.OrdinalIgnoreCase)) ||
+            (normalizedPrimaryInternetId is not null &&
+             string.Equals(DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId), normalizedPrimaryInternetId, StringComparison.Ordinal)) ||
+            (normalizedSecondaryInternetId is not null &&
+             string.Equals(DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId), normalizedSecondaryInternetId, StringComparison.Ordinal)));
+    }
+
     private static bool SavedDevicesMatch(SavedDevice left, SavedDevice right)
     {
         var leftInternetId = DeviceIdentityManager.NormalizeInternetDeviceId(left.InternetDeviceId);
@@ -752,6 +813,8 @@ public sealed class UserAccountService : IUserAccountService
             SupportsRelay = device.SupportsRelay,
             RelayServerHost = device.RelayServerHost,
             RelayServerPort = device.RelayServerPort,
+            IsTrusted = device.IsTrusted,
+            TrustedAtUtc = device.TrustedAtUtc,
             LastSeenAtUtc = device.LastSeenAtUtc
         };
     }

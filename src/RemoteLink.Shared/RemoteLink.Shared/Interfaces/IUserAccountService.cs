@@ -43,6 +43,12 @@ public interface IUserAccountService
     /// <summary>Returns managed devices for the signed-in account.</summary>
     Task<IReadOnlyList<AccountManagedDevice>> GetManagedDevicesAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Marks or unmarks a managed device as trusted for PIN-less host pairing.</summary>
+    Task SetDeviceTrustAsync(string deviceIdentifier, bool isTrusted, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns whether a managed device is trusted for PIN-less host pairing.</summary>
+    Task<bool> IsDeviceTrustedAsync(string deviceIdentifier, string? internetDeviceId = null, CancellationToken cancellationToken = default);
+
     /// <summary>Replaces the synced saved-device snapshot for the signed-in account.</summary>
     Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default);
 
