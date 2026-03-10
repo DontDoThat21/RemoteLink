@@ -72,6 +72,18 @@ public class RemoteViewerPage : ContentPage
             VerticalOptions = LayoutOptions.Center,
         };
 
+        var rebootButton = new Button
+        {
+            Text = "Reboot",
+            BackgroundColor = ThemeColors.Warning,
+            TextColor = Colors.White,
+            CornerRadius = 4,
+            HeightRequest = 32,
+            FontSize = 12,
+            Padding = new Thickness(12, 0),
+        };
+        rebootButton.Clicked += OnRemoteRebootClicked;
+
         var disconnectButton = new Button
         {
             Text = "Disconnect",
@@ -94,6 +106,7 @@ public class RemoteViewerPage : ContentPage
                 new ColumnDefinition(GridLength.Auto),    // host name
                 new ColumnDefinition(GridLength.Auto),    // FPS
                 new ColumnDefinition(GridLength.Auto),    // latency
+                new ColumnDefinition(GridLength.Auto),    // reboot
                 new ColumnDefinition(GridLength.Star),    // spacer
                 new ColumnDefinition(GridLength.Auto),    // disconnect
             },
@@ -102,7 +115,8 @@ public class RemoteViewerPage : ContentPage
                 CreateGridChild(_hostNameLabel, column: 0),
                 CreateGridChild(_fpsLabel, column: 1),
                 CreateGridChild(_latencyLabel, column: 2),
-                CreateGridChild(disconnectButton, column: 4),
+                CreateGridChild(rebootButton, column: 3),
+                CreateGridChild(disconnectButton, column: 5),
             }
         };
 
@@ -460,6 +474,9 @@ public class RemoteViewerPage : ContentPage
     {
         if (state == ClientConnectionState.Disconnected && !_isDisconnecting)
         {
+            if (_client.IsAutoReconnectPending)
+                return;
+
             // Remote host dropped the connection — navigate back
             MainThread.BeginInvokeOnMainThread(async () =>
             {
@@ -483,6 +500,36 @@ public class RemoteViewerPage : ContentPage
         }
 
         await Navigation.PopAsync();
+    }
+
+    private async void OnRemoteRebootClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected)
+            return;
+
+        bool confirm = await DisplayAlertAsync(
+            "Reboot Remote Device",
+            $"Restart {_client.ConnectedHost?.DeviceName ?? "the remote host"}? RemoteLink will try to reconnect automatically when supported.",
+            "Reboot",
+            "Cancel");
+
+        if (!confirm)
+            return;
+
+        try
+        {
+            var response = await _client.RequestRemoteRebootAsync();
+            var message = response.AutoReconnectSupported == true
+                ? $"Remote reboot requested. Waiting {response.ReconnectDelaySeconds ?? 25} seconds before reconnecting..."
+                : "Remote reboot requested. Automatic reconnect is unavailable for this session.";
+
+            await DisplayAlertAsync("Remote Reboot", message, "OK");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to request remote reboot");
+            await DisplayAlertAsync("Remote Reboot", $"Failed to request remote reboot: {ex.Message}", "OK");
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

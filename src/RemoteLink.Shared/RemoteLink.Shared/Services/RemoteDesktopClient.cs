@@ -40,6 +40,14 @@ public class RemoteDesktopClient
     private bool _isStarted;
     private TaskCompletionSource<PairingResponse>? _pairingTcs;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<SessionControlResponse>> _pendingSessionControlRequests = new();
+    private CancellationTokenSource? _autoReconnectCts;
+    private Task? _autoReconnectTask;
+    private DeviceInfo? _pendingAutoReconnectHost;
+    private TimeSpan _pendingAutoReconnectDelay;
+    private bool _isAutoReconnectPending;
+
+    private const int RemoteRebootReconnectAttempts = 10;
+    private static readonly TimeSpan RemoteRebootReconnectRetryDelay = TimeSpan.FromSeconds(5);
 
     // ── Public events ─────────────────────────────────────────────────────────
 
@@ -86,6 +94,9 @@ public class RemoteDesktopClient
 
     /// <summary><c>true</c> when the current connection is a read-only presentation session.</summary>
     public bool IsPresentationSession { get; private set; }
+
+    /// <summary><c>true</c> when the client is waiting to reconnect after a requested remote reboot.</summary>
+    public bool IsAutoReconnectPending => _isAutoReconnectPending;
 
     /// <summary>Session token returned by the host on successful pairing.</summary>
     public string? SessionToken { get; private set; }
@@ -192,9 +203,17 @@ public class RemoteDesktopClient
         DeviceInfo host,
         string pin,
         CancellationToken ct = default)
+        => await ConnectToHostCoreAsync(host, pin, ct, preserveAutoReconnectState: false, suppressPairingFailure: false);
+
+    private async Task<bool> ConnectToHostCoreAsync(
+        DeviceInfo host,
+        string pin,
+        CancellationToken ct,
+        bool preserveAutoReconnectState,
+        bool suppressPairingFailure)
     {
         // Disconnect from any existing session first
-        await DisconnectAsync();
+        await DisconnectAsync(clearAutoReconnectState: !preserveAutoReconnectState);
 
         ConnectedHost = host;
         SetState(ClientConnectionState.Connecting);
@@ -221,7 +240,7 @@ public class RemoteDesktopClient
             _logger.LogError(ex, "TCP connection to {Host} failed", host.DeviceName);
             await CleanupCommAsync(comm);
             SetState(ClientConnectionState.Disconnected);
-            PairingFailed?.Invoke(this, $"Connection failed: {ex.Message}");
+            ReportPairingFailure($"Connection failed: {ex.Message}", suppressPairingFailure);
             return false;
         }
 
@@ -231,7 +250,7 @@ public class RemoteDesktopClient
                 host.DeviceName, host.IPAddress, host.Port);
             await CleanupCommAsync(comm);
             SetState(ClientConnectionState.Disconnected);
-            PairingFailed?.Invoke(this, "Could not reach host — check IP and port.");
+            ReportPairingFailure("Could not reach host — check IP and port.", suppressPairingFailure);
             return false;
         }
 
@@ -267,6 +286,8 @@ public class RemoteDesktopClient
                 SessionToken = response.SessionToken;
                 CurrentSessionPermissions = response.SessionPermissions?.Clone() ?? SessionPermissionSet.CreateFullAccess();
                 IsPresentationSession = false;
+                if (preserveAutoReconnectState)
+                    ResetAutoReconnectState(cancelPendingTask: false);
                 SetState(ClientConnectionState.Connected);
                 ServiceStatusChanged?.Invoke(this, $"Connected to {host.DeviceName}");
                 _logger.LogInformation("Paired with {Host}, token={Token}",
@@ -277,7 +298,7 @@ public class RemoteDesktopClient
             {
                 var reason = FormatFailureReason(response.FailureReason, response.Message);
                 _logger.LogWarning("Pairing rejected: {Reason}", reason);
-                PairingFailed?.Invoke(this, reason);
+                ReportPairingFailure(reason, suppressPairingFailure);
                 await CleanupCommAsync(comm);
                 SetState(ClientConnectionState.Disconnected);
                 return false;
@@ -286,7 +307,7 @@ public class RemoteDesktopClient
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Pairing timed out connecting to {Host}", host.DeviceName);
-            PairingFailed?.Invoke(this, "Pairing timed out — ensure the host is ready.");
+            ReportPairingFailure("Pairing timed out — ensure the host is ready.", suppressPairingFailure);
             await CleanupCommAsync(comm);
             SetState(ClientConnectionState.Disconnected);
             return false;
@@ -294,7 +315,7 @@ public class RemoteDesktopClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "Pairing error with {Host}", host.DeviceName);
-            PairingFailed?.Invoke(this, $"Pairing error: {ex.Message}");
+            ReportPairingFailure($"Pairing error: {ex.Message}", suppressPairingFailure);
             await CleanupCommAsync(comm);
             SetState(ClientConnectionState.Disconnected);
             return false;
@@ -361,7 +382,13 @@ public class RemoteDesktopClient
     /// Gracefully disconnects from the current host and resets state.
     /// </summary>
     public async Task DisconnectAsync()
+        => await DisconnectAsync(clearAutoReconnectState: true);
+
+    private async Task DisconnectAsync(bool clearAutoReconnectState)
     {
+        if (clearAutoReconnectState)
+            ResetAutoReconnectState(cancelPendingTask: true);
+
         var comm = Interlocked.Exchange(ref _communicationService, null);
         if (comm != null)
             await CleanupCommAsync(comm);
@@ -382,6 +409,38 @@ public class RemoteDesktopClient
 
         if (ConnectionState != ClientConnectionState.Disconnected)
             SetState(ClientConnectionState.Disconnected);
+    }
+
+    /// <summary>
+    /// Requests a remote reboot on the connected host and, when supported, schedules an automatic reconnect.
+    /// </summary>
+    public async Task<SessionControlResponse> RequestRemoteRebootAsync(CancellationToken ct = default)
+    {
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
+        var host = ConnectedHost ?? throw new InvalidOperationException("The client is not connected to a host.");
+
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.RebootDevice,
+            configure: null,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to request a remote reboot.");
+
+        if (response.AutoReconnectSupported == true)
+        {
+            int reconnectDelaySeconds = Math.Max(1, response.ReconnectDelaySeconds ?? 25);
+            ScheduleAutoReconnect(host, TimeSpan.FromSeconds(reconnectDelaySeconds));
+            ServiceStatusChanged?.Invoke(this, $"Remote reboot requested. Waiting {reconnectDelaySeconds} seconds before reconnecting...");
+        }
+        else
+        {
+            ServiceStatusChanged?.Invoke(this, "Remote reboot requested. Automatic reconnect is unavailable for this session.");
+        }
+
+        return response;
     }
 
     // ── Input forwarding ──────────────────────────────────────────────────────
@@ -570,7 +629,16 @@ public class RemoteDesktopClient
             CancelPendingSessionControlRequests();
             CurrentConnectionQuality = null;
             SetState(ClientConnectionState.Disconnected);
-            ServiceStatusChanged?.Invoke(this, "Disconnected from host.");
+
+            if (_isAutoReconnectPending)
+            {
+                ServiceStatusChanged?.Invoke(this, "Remote host is restarting. Automatic reconnect is pending...");
+                StartAutoReconnectLoopIfNeeded();
+            }
+            else
+            {
+                ServiceStatusChanged?.Invoke(this, "Disconnected from host.");
+            }
         }
     }
 
@@ -648,6 +716,87 @@ public class RemoteDesktopClient
 
         try { await comm.DisconnectAsync(); } catch { /* ignore */ }
         if (comm is IDisposable d) d.Dispose();
+    }
+
+    private void ReportPairingFailure(string message, bool suppressPairingFailure)
+    {
+        if (!suppressPairingFailure)
+            PairingFailed?.Invoke(this, message);
+    }
+
+    private void ScheduleAutoReconnect(DeviceInfo host, TimeSpan delay)
+    {
+        ResetAutoReconnectState(cancelPendingTask: true);
+        _pendingAutoReconnectHost = host;
+        _pendingAutoReconnectDelay = delay;
+        _isAutoReconnectPending = true;
+        _autoReconnectCts = new CancellationTokenSource();
+    }
+
+    private void StartAutoReconnectLoopIfNeeded()
+    {
+        if (!_isAutoReconnectPending || _pendingAutoReconnectHost is null)
+            return;
+
+        if (_autoReconnectTask is not null && !_autoReconnectTask.IsCompleted)
+            return;
+
+        _autoReconnectTask = Task.Run(RunAutoReconnectLoopAsync);
+    }
+
+    private async Task RunAutoReconnectLoopAsync()
+    {
+        var host = _pendingAutoReconnectHost;
+        var token = _autoReconnectCts?.Token ?? CancellationToken.None;
+        if (host is null)
+            return;
+
+        try
+        {
+            if (_pendingAutoReconnectDelay > TimeSpan.Zero)
+                await Task.Delay(_pendingAutoReconnectDelay, token);
+
+            for (int attempt = 1; attempt <= RemoteRebootReconnectAttempts; attempt++)
+            {
+                ServiceStatusChanged?.Invoke(this, $"Attempting automatic reconnect ({attempt}/{RemoteRebootReconnectAttempts})...");
+
+                if (await ConnectToHostCoreAsync(host, string.Empty, token, preserveAutoReconnectState: true, suppressPairingFailure: true))
+                {
+                    ServiceStatusChanged?.Invoke(this, $"Reconnected to {host.DeviceName} after remote reboot.");
+                    return;
+                }
+
+                if (attempt < RemoteRebootReconnectAttempts)
+                    await Task.Delay(RemoteRebootReconnectRetryDelay, token);
+            }
+
+            ResetAutoReconnectState(cancelPendingTask: true);
+            PairingFailed?.Invoke(this, "Automatic reconnect failed. Ensure the host starts automatically and this device is trusted.");
+            ServiceStatusChanged?.Invoke(this, "Automatic reconnect failed.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _autoReconnectTask = null;
+        }
+    }
+
+    private void ResetAutoReconnectState(bool cancelPendingTask)
+    {
+        _isAutoReconnectPending = false;
+        _pendingAutoReconnectHost = null;
+        _pendingAutoReconnectDelay = TimeSpan.Zero;
+
+        var cts = Interlocked.Exchange(ref _autoReconnectCts, null);
+        if (cts is null)
+            return;
+
+        if (cancelPendingTask)
+            cts.Cancel();
+
+        cts.Dispose();
     }
 
     private async Task CleanupPresentationClientAsync(PresentationSessionClient presentationClient)

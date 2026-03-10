@@ -24,6 +24,7 @@ public class RemoteDesktopClientTests
     {
         public bool IsConnected { get; private set; }
         public SessionControlRequest? LastSessionControlRequest { get; private set; }
+        public SessionControlResponse? SessionControlResponseToSend { get; set; }
         public PairingResponse PairingResponseToSend { get; set; } = new()
         {
             Success = true,
@@ -87,15 +88,17 @@ public class RemoteDesktopClientTests
         {
             LastSessionControlRequest = request;
 
-            SessionControlResponseReceived?.Invoke(this, new SessionControlResponse
+            var response = SessionControlResponseToSend ?? new SessionControlResponse
             {
-                RequestId = request.RequestId,
-                Command = request.Command,
                 Success = true,
                 AppliedQuality = request.Quality,
                 AppliedImageFormat = request.ImageFormat,
                 AppliedAudioEnabled = request.AudioEnabled
-            });
+            };
+
+            response.RequestId = request.RequestId;
+            response.Command = request.Command;
+            SessionControlResponseReceived?.Invoke(this, response);
 
             return Task.CompletedTask;
         }
@@ -115,6 +118,12 @@ public class RemoteDesktopClientTests
         public void RaiseConnectionQuality(ConnectionQuality quality)
         {
             ConnectionQualityReceived?.Invoke(this, quality);
+        }
+
+        public void RaiseConnectionStateChanged(bool connected)
+        {
+            IsConnected = connected;
+            ConnectionStateChanged?.Invoke(this, connected);
         }
     }
 
@@ -252,6 +261,67 @@ public class RemoteDesktopClientTests
         Assert.False(client.CurrentSessionPermissions!.AllowRemoteInput);
         Assert.False(client.CurrentSessionPermissions.AllowFileTransfer);
         Assert.False(client.CurrentSessionPermissions.AllowSessionControl);
+    }
+
+    [Fact]
+    public async Task RequestRemoteRebootAsync_SchedulesAutomaticReconnect_WhenSupported()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var initialComm = new FakeCommunicationService
+        {
+            SessionControlResponseToSend = new SessionControlResponse
+            {
+                Success = true,
+                Command = SessionControlCommand.RebootDevice,
+                AutoReconnectSupported = true,
+                ReconnectDelaySeconds = 1
+            }
+        };
+        var reconnectComm = new FakeCommunicationService
+        {
+            PairingResponseToSend = new PairingResponse
+            {
+                Success = true,
+                SessionToken = "reconnected-token"
+            }
+        };
+
+        int factoryCalls = 0;
+        var client = new RemoteDesktopClient(
+            NullLogger<RemoteDesktopClient>.Instance,
+            discovery,
+            () => factoryCalls++ == 0 ? initialComm : reconnectComm);
+
+        var host = new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+
+        Assert.True(await client.ConnectToHostAsync(host, "123456"));
+
+        var reconnectedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += (_, state) =>
+        {
+            if (state == ClientConnectionState.Connected && client.SessionToken == "reconnected-token")
+                reconnectedTcs.TrySetResult(true);
+        };
+
+        var response = await client.RequestRemoteRebootAsync();
+
+        Assert.True(response.AutoReconnectSupported);
+        Assert.Equal(SessionControlCommand.RebootDevice, initialComm.LastSessionControlRequest?.Command);
+        Assert.True(client.IsAutoReconnectPending);
+
+        initialComm.RaiseConnectionStateChanged(false);
+
+        await reconnectedTcs.Task.WaitAsync(TimeSpan.FromSeconds(4));
+
+        Assert.Equal("reconnected-token", client.SessionToken);
+        Assert.False(client.IsAutoReconnectPending);
     }
 
     [Fact]

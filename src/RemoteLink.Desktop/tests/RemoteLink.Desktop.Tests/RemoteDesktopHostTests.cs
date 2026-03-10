@@ -27,6 +27,17 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     {
         get { lock (_lock) { return new List<ScreenData>(_sentScreenData); } }
     }
+
+internal sealed class FakeSystemPowerService : ISystemPowerService
+{
+    public int RestartCallCount { get; private set; }
+
+    public Task RestartComputerAsync(CancellationToken cancellationToken = default)
+    {
+        RestartCallCount++;
+        return Task.CompletedTask;
+    }
+}
     public List<InputEvent> SentInputEvents
     {
         get { lock (_lock) { return new List<InputEvent>(_sentInputEvents); } }
@@ -216,6 +227,17 @@ internal sealed class FakeConnectionRequestNotificationPublisher : IConnectionRe
             _alerts.Add(alert);
         }
 
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeSystemPowerService : ISystemPowerService
+{
+    public int RestartCallCount { get; private set; }
+
+    public Task RestartComputerAsync(CancellationToken cancellationToken = default)
+    {
+        RestartCallCount++;
         return Task.CompletedTask;
     }
 }
@@ -975,6 +997,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeConnectionRequestNotificationPublisher _notificationPublisher = new();
     private readonly FakeUserAccountService _userAccount = new();
     private readonly FakeAppSettingsService _settings = new();
+    private readonly FakeSystemPowerService _systemPower = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
@@ -999,6 +1022,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _notificationPublisher,
             userAccountService: _userAccount,
             appSettingsService: _settings,
+            systemPowerService: _systemPower,
             utcNow: () => _utcNow);
     }
 
@@ -1031,6 +1055,22 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         });
 
         // Allow the Task.Run inside OnPairingRequestReceived to complete
+        await Task.Delay(120);
+    }
+
+    private async Task SimulateTrustedPairingAsync(string clientDeviceId)
+    {
+        _comm.RaiseConnectionStateChanged(connected: true);
+        await Task.Delay(20);
+
+        _comm.RaisePairingRequest(new PairingRequest
+        {
+            ClientDeviceId = clientDeviceId,
+            ClientDeviceName = "Trusted Device",
+            Pin = string.Empty,
+            RequestedAt = _utcNow
+        });
+
         await Task.Delay(120);
     }
 

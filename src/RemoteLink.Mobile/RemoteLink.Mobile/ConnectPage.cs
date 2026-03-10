@@ -432,6 +432,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         var qualityButton = BuildSessionActionButton("📊 Quality", OnQualityClicked);
         _monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
+        var rebootButton = BuildSessionActionButton("↻ Reboot", OnRemoteRebootClicked, ThemeColors.WarningText);
         var disconnectButton = BuildSessionActionButton("✕ Disconnect", OnToolbarDisconnectClicked, ThemeColors.Danger);
         disconnectButton.TextColor = Colors.White;
 
@@ -474,6 +475,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                                 _specialKeysToggleButton,
                                 qualityButton,
                                 _monitorButton,
+                                rebootButton,
                                 disconnectButton
                             }
                         }
@@ -1278,6 +1280,33 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             await DisconnectAsync();
     }
 
+    private async void OnRemoteRebootClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected) return;
+
+        bool confirm = await DisplayAlertAsync(
+            "Reboot Remote Device",
+            $"Restart {_client.ConnectedHost?.DeviceName ?? "the remote host"}? RemoteLink will try to reconnect automatically when supported.",
+            "Reboot",
+            "Cancel");
+
+        if (!confirm)
+            return;
+
+        try
+        {
+            var response = await _client.RequestRemoteRebootAsync();
+            StatusMessage = response.AutoReconnectSupported == true
+                ? $"Remote reboot requested. Waiting {response.ReconnectDelaySeconds ?? 25}s before reconnecting..."
+                : "Remote reboot requested. Automatic reconnect is unavailable for this session.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to request remote reboot");
+            await DisplayAlertAsync("Remote Reboot", $"Failed to request remote reboot: {ex.Message}", "OK");
+        }
+    }
+
     private void OnKeyCaptureTextChanged(object? sender, TextChangedEventArgs e)
     {
         if (_suppressKeyCaptureTextChanged || !_client.IsConnected) return;
@@ -2037,6 +2066,19 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     break;
 
                 case ClientConnectionState.Disconnected:
+                    if (_client.IsAutoReconnectPending)
+                    {
+                        _connectedBanner.IsVisible = true;
+                        _remoteViewer.IsVisible = true;
+                        _manualConnectCard.IsVisible = false;
+                        _scanQrButton.IsVisible = false;
+                        _discoveredSection.IsVisible = false;
+                        _connectedHostLabel.Text = $"Reconnecting to {_client.ConnectedHost?.DeviceName ?? "remote host"} after reboot...";
+                        ApplyConnectionQuality(null);
+                        UpdateSessionOverlayVisibility();
+                        return;
+                    }
+
                     var hadConnectedSession = _hasConnectedSession;
                     _hasConnectedSession = false;
                     if (_connectionStartedAt.HasValue)

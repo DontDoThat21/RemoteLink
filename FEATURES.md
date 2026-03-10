@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-03-10 (session 59)
+> **Last updated:** 2026-03-10 (session 61)
 
 ## Legend
 - ✅ Complete & Tested
@@ -141,7 +141,7 @@
 |---|---------|--------|-------|
 | 9.1 | Meeting / presentation mode | ✅ | Shared `PresentationSessionHost`/`PresentationSessionClient`: TLS-aware multi-viewer read-only broadcast with join PIN, view-only permissions, screen + quality fan-out, and new Shared regression coverage |
 | 9.2 | Whiteboard / screen annotation | ✅ | Presentation annotation completed: host-side board state + late-join replay, bidirectional viewer annotation messages, remove/clear support, and Shared regression coverage for replay + collaborative sync |
-| 9.3 | Remote reboot & auto-reconnect | 📋 | Reboot remote machine and automatically re-establish session |
+| 9.3 | Remote reboot & auto-reconnect | ✅ | Remote reboot completed: `SessionControlCommand.RebootDevice`, desktop `ISystemPowerService` reboot execution, trusted-session + auto-start reconnect hints, `RemoteDesktopClient.RequestRemoteRebootAsync()` with scheduled reconnect attempts, and reboot actions in mobile + desktop remote viewers |
 | 9.4 | Remote system information panel | 📋 | View remote OS, CPU, RAM, disk, network info without full desktop |
 | 9.5 | Remote command / script execution | 📋 | Run CLI commands or scripts on remote host from client |
 | 9.6 | Multi-session support | 📋 | Connect to multiple hosts simultaneously (tabbed sessions) |
@@ -216,6 +216,7 @@
 > Session 58 (2026-03-10): Feature 8.8 — Remote device lock on disconnect completed. `RemoteDesktopHost` now honors `AppSettings.Security.LockOnSessionEnd` by sending `KeyboardShortcut.LockWorkstation` through the host input handler whenever a paired remote session disconnects, while leaving pre-pair disconnects untouched. Added host regression coverage for the enabled/paired and pre-pair disconnect paths, and updated the feature tracker status to complete.
 > Session 59 (2026-03-10): Feature 9.1 — Meeting / presentation mode confirmed complete and tested. Existing Shared `PresentationSessionHost`/`PresentationSessionClient` support multi-viewer read-only presentation sessions with PIN-gated joins, TLS-capable transport, view-only permissions, and screen/connection-quality broadcast fan-out; added `PresentationSessionTests` covering multi-viewer frame delivery and invalid-PIN rejection. Feature 9.2 — Whiteboard / screen annotation started with new `PresentationAnnotation*` models, `PresentationAnnotationBoard` state service, and presentation transport support for broadcasting/receiving real-time annotation messages; Shared regression coverage added for annotation transport and board state changes.
 > Session 60 (2026-03-10): Feature 9.2 — Whiteboard / screen annotation completed. `PresentationSessionHost` now persists annotation board state, replays current annotations to late-joining viewers, accepts viewer-originated annotation updates, and broadcasts normalized upsert/remove/clear changes back to all connected presentation clients. `PresentationSessionClient` gained annotation send support, and Shared `PresentationSessionTests` now cover collaborative viewer sync plus late-join annotation replay. Validation: `dotnet test tests/RemoteLink.Shared.Tests/RemoteLink.Shared.Tests/RemoteLink.Shared.Tests.csproj --filter PresentationSessionTests -v minimal` passed.
+> Session 61 (2026-03-10): Feature 9.3 — Remote reboot & auto-reconnect completed. Added shared `SessionControlCommand.RebootDevice` plus reboot response metadata, desktop `ISystemPowerService`/`SystemPowerService` host execution, `RemoteDesktopHost` reboot handling with trusted-device + auto-start reconnect hints, `RemoteDesktopClient.RequestRemoteRebootAsync()` automatic reconnect scheduling, and reboot actions in the mobile `ConnectPage` toolbar and desktop `RemoteViewerPage`. Validation: targeted Shared + Desktop tests cover reboot command handling and automatic reconnect flow.
 ---
 
 *This document is automatically updated as features are completed and tested.*

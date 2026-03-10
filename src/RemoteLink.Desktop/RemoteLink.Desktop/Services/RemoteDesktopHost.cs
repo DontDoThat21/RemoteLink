@@ -41,6 +41,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly DeviceInfo? _localDevice;
     private readonly IUserAccountService? _userAccountService;
     private readonly IAppSettingsService? _appSettingsService;
+    private readonly ISystemPowerService _systemPowerService;
     private readonly Func<DateTime> _utcNow;
     private readonly object _auditLock = new();
 
@@ -63,6 +64,9 @@ public class RemoteDesktopHost : BackgroundService
     private long _lastClientActivityUtcTicks;
     private int _idleDisconnectInProgress;
     private string? _pendingDisconnectReason;
+    private bool _currentSessionTrustedDevice;
+
+    private static readonly TimeSpan RebootCommandLeadTime = TimeSpan.FromMilliseconds(750);
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
@@ -98,6 +102,7 @@ public class RemoteDesktopHost : BackgroundService
         DeviceInfo? localDevice = null,
         IUserAccountService? userAccountService = null,
         IAppSettingsService? appSettingsService = null,
+        ISystemPowerService? systemPowerService = null,
         Func<DateTime>? utcNow = null)
     {
         _logger = logger;
@@ -119,6 +124,7 @@ public class RemoteDesktopHost : BackgroundService
         _localDevice = localDevice;
         _userAccountService = userAccountService;
         _appSettingsService = appSettingsService;
+        _systemPowerService = systemPowerService ?? new SystemPowerService();
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
 
@@ -316,6 +322,7 @@ public class RemoteDesktopHost : BackgroundService
                 {
                     _clientPaired = true;
                     _currentPermissions = sessionPermissions;
+                    _currentSessionTrustedDevice = trustedDevice;
                     RecordClientActivity();
 
                     await RegisterManagedClientDeviceAsync(request);
@@ -814,6 +821,34 @@ public class RemoteDesktopHost : BackgroundService
                         break;
                     }
 
+                    case SessionControlCommand.RebootDevice:
+                    {
+                        bool autoReconnectSupported = _currentSessionTrustedDevice && (_appSettingsService?.Current.Startup.StartHostAutomatically ?? false);
+                        const int reconnectDelaySeconds = 25;
+
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            AutoReconnectSupported = autoReconnectSupported,
+                            ReconnectDelaySeconds = autoReconnectSupported ? reconnectDelaySeconds : null
+                        });
+
+                        AppendAuditAction(
+                            ConnectionAuditActionType.SessionControlApplied,
+                            autoReconnectSupported
+                                ? "Requested remote reboot with automatic reconnect."
+                                : "Requested remote reboot without automatic reconnect support.");
+
+                        _pendingDisconnectReason = autoReconnectSupported
+                            ? "Remote reboot initiated with automatic reconnect."
+                            : "Remote reboot initiated.";
+
+                        _ = TriggerRemoteRebootAsync();
+                        break;
+                    }
+
                     default:
                         await _communication.SendSessionControlResponseAsync(new SessionControlResponse
                         {
@@ -861,6 +896,7 @@ public class RemoteDesktopHost : BackgroundService
             var shouldLockWorkstation = _clientPaired && (_appSettingsService?.Current.Security.LockOnSessionEnd ?? false);
             var disconnectReason = ConsumeDisconnectReason("Remote session disconnected.");
             _clientPaired = false;
+            _currentSessionTrustedDevice = false;
             _ = FinalizeCurrentAuditLogEntryAsync(disconnectReason);
             _logger.LogInformation("Client disconnected — stopping screen capture, audio, clipboard sync, and recording.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
@@ -909,6 +945,19 @@ public class RemoteDesktopHost : BackgroundService
 
             if (shouldLockWorkstation)
                 _ = LockWorkstationAfterSessionEndAsync(disconnectReason);
+        }
+    }
+
+    private async Task TriggerRemoteRebootAsync()
+    {
+        try
+        {
+            await Task.Delay(RebootCommandLeadTime);
+            await _systemPowerService.RestartComputerAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to reboot the remote machine after a reboot request.");
         }
     }
 

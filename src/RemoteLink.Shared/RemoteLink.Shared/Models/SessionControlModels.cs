@@ -9,7 +9,8 @@ public enum SessionControlCommand
     SelectMonitor,
     SetQuality,
     SetImageFormat,
-    SetAudioEnabled
+    SetAudioEnabled,
+    RebootDevice
 }
 
 /// <summary>
@@ -39,4 +40,6 @@ public class SessionControlResponse
     public int? AppliedQuality { get; set; }
     public ScreenDataFormat? AppliedImageFormat { get; set; }
     public bool? AppliedAudioEnabled { get; set; }
+    public bool? AutoReconnectSupported { get; set; }
+    public int? ReconnectDelaySeconds { get; set; }
 }
