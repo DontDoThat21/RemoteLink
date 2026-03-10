@@ -36,6 +36,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
+        var signalingConfiguration = SignalingConfiguration.FromEnvironment();
         var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
             "desktop-ui",
             Environment.MachineName,
@@ -44,7 +45,9 @@ public static class MauiProgram
         relayConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);
+        builder.Services.AddSingleton(signalingConfiguration);
         builder.Services.AddSingleton(localDevice);
+        builder.Services.AddSingleton<ISignalingService, SignalingService>();
 
         // File transfer (chunked streaming with progress tracking)
         builder.Services.AddSingleton<IFileTransferService, FileTransferService>();

@@ -28,6 +28,7 @@ public static class MauiProgram
         builder.Logging.AddDebug();
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
+        var signalingConfiguration = SignalingConfiguration.FromEnvironment();
         var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
             "mobile-client",
             Environment.MachineName + " Mobile",
@@ -36,7 +37,9 @@ public static class MauiProgram
         relayConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);
+        builder.Services.AddSingleton(signalingConfiguration);
         builder.Services.AddSingleton(localDevice);
+        builder.Services.AddSingleton<ISignalingService, SignalingService>();
 
         // Network discovery service
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>

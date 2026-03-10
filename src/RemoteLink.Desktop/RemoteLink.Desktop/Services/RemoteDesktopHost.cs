@@ -36,6 +36,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IMessagingService _messagingService;
     private readonly IConnectionRequestNotificationPublisher? _connectionRequestNotificationPublisher;
     private readonly INatTraversalService? _natTraversalService;
+    private readonly ISignalingService? _signalingService;
     private readonly DeviceInfo? _localDevice;
 
     /// <summary>
@@ -71,6 +72,7 @@ public class RemoteDesktopHost : BackgroundService
         IMessagingService messagingService,
         IConnectionRequestNotificationPublisher? connectionRequestNotificationPublisher = null,
         INatTraversalService? natTraversalService = null,
+        ISignalingService? signalingService = null,
         DeviceInfo? localDevice = null)
     {
         _logger = logger;
@@ -88,6 +90,7 @@ public class RemoteDesktopHost : BackgroundService
         _messagingService = messagingService;
         _connectionRequestNotificationPublisher = connectionRequestNotificationPublisher;
         _natTraversalService = natTraversalService;
+        _signalingService = signalingService;
         _localDevice = localDevice;
     }
 
@@ -139,6 +142,8 @@ public class RemoteDesktopHost : BackgroundService
                 {
                     var natDiscovery = await _natTraversalService.StartAsync(HostPort, stoppingToken);
                     ApplyNatDiscoveryResult(_localDevice, natDiscovery);
+                    if (_signalingService is not null)
+                        await _signalingService.RegisterDeviceAsync(_localDevice, stoppingToken);
                     _logger.LogInformation(
                         "NAT traversal ready. Type={NatType}, public endpoint={PublicIPAddress}:{PublicPort}, candidates={CandidateCount}",
                         natDiscovery.NatType,

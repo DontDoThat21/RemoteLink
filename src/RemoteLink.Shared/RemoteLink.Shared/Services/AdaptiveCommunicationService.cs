@@ -11,9 +11,11 @@ namespace RemoteLink.Shared.Services;
 public sealed class AdaptiveCommunicationService : ICommunicationService, IDisposable
 {
     private readonly ILogger<AdaptiveCommunicationService> _logger;
+    private readonly DeviceInfo? _localDevice;
     private readonly TcpCommunicationService _tcpService;
     private readonly UdpNatCommunicationService _udpService;
     private readonly RelayCommunicationService? _relayService;
+    private readonly ISignalingService? _signalingService;
     private ICommunicationService? _activeService;
     private bool _disposed;
 
@@ -21,14 +23,17 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
         INatTraversalService natTraversalService,
         DeviceInfo? localDevice = null,
         RelayConfiguration? relayConfiguration = null,
+        ISignalingService? signalingService = null,
         ILogger<AdaptiveCommunicationService>? logger = null)
     {
         _logger = logger ?? NullLogger<AdaptiveCommunicationService>.Instance;
+        _localDevice = localDevice;
         _tcpService = new TcpCommunicationService();
         _udpService = new UdpNatCommunicationService(natTraversalService);
         _relayService = localDevice is not null && relayConfiguration?.IsConfigured == true
             ? new RelayCommunicationService(localDevice, relayConfiguration)
             : null;
+        _signalingService = signalingService;
 
         WireTransport(_tcpService);
         WireTransport(_udpService);
@@ -61,6 +66,8 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
     public async Task StartAsync(int port)
     {
         ThrowIfDisposed();
+        if (_signalingService is not null && _localDevice is not null)
+            await _signalingService.StartAsync(_localDevice);
         if (_relayService is not null)
             await _relayService.StartAsync(port);
         await _udpService.StartAsync(port);
@@ -69,6 +76,8 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
 
     public async Task StopAsync()
     {
+        if (_signalingService is not null)
+            await _signalingService.StopAsync();
         if (_relayService is not null)
             await _relayService.StopAsync();
         await _udpService.StopAsync();
@@ -80,6 +89,8 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(device);
+
+        device = await EnrichDeviceAsync(device);
 
         var shouldTryUdp = (device.NatCandidates?.Count > 0) || (!string.IsNullOrWhiteSpace(device.PublicIPAddress) && device.PublicPort is > 0);
         if (shouldTryUdp)
@@ -169,6 +180,52 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
 
     private ICommunicationService ActiveOrDefault()
         => _activeService ?? (_udpService.IsConnected ? _udpService : _relayService?.IsConnected == true ? _relayService : _tcpService);
+
+    private async Task<DeviceInfo> EnrichDeviceAsync(DeviceInfo device)
+    {
+        if (_signalingService?.IsConfigured != true)
+            return device;
+
+        var lookupKey = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId)
+            ?? DeviceIdentityManager.NormalizeInternetDeviceId(device.DeviceId);
+        if (lookupKey is null)
+            return device;
+
+        try
+        {
+            var resolvedDevice = await _signalingService.ResolveDeviceAsync(lookupKey);
+            return resolvedDevice is null ? device : MergeDeviceInfo(device, resolvedDevice);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Signaling lookup failed for {DeviceId}", lookupKey);
+            return device;
+        }
+    }
+
+    private static DeviceInfo MergeDeviceInfo(DeviceInfo requested, DeviceInfo resolved)
+    {
+        return new DeviceInfo
+        {
+            DeviceId = string.IsNullOrWhiteSpace(resolved.DeviceId) ? requested.DeviceId : resolved.DeviceId,
+            InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(requested.InternetDeviceId)
+                ?? DeviceIdentityManager.NormalizeInternetDeviceId(resolved.InternetDeviceId),
+            DeviceName = string.IsNullOrWhiteSpace(resolved.DeviceName) ? requested.DeviceName : resolved.DeviceName,
+            IPAddress = string.IsNullOrWhiteSpace(requested.IPAddress) ? resolved.IPAddress : requested.IPAddress,
+            MacAddress = requested.MacAddress ?? resolved.MacAddress,
+            Port = requested.Port > 0 ? requested.Port : resolved.Port,
+            PublicIPAddress = string.IsNullOrWhiteSpace(requested.PublicIPAddress) ? resolved.PublicIPAddress : requested.PublicIPAddress,
+            PublicPort = requested.PublicPort is > 0 ? requested.PublicPort : resolved.PublicPort,
+            NatType = requested.NatType != NatTraversalType.Unknown ? requested.NatType : resolved.NatType,
+            NatCandidates = requested.NatCandidates.Count > 0 ? requested.NatCandidates : resolved.NatCandidates,
+            SupportsRelay = requested.SupportsRelay || resolved.SupportsRelay,
+            RelayServerHost = requested.RelayServerHost ?? resolved.RelayServerHost,
+            RelayServerPort = requested.RelayServerPort ?? resolved.RelayServerPort,
+            Type = requested.Type != DeviceType.Unknown ? requested.Type : resolved.Type,
+            LastSeen = resolved.LastSeen != default ? resolved.LastSeen : requested.LastSeen,
+            IsOnline = requested.IsOnline || resolved.IsOnline
+        };
+    }
 
     private void WireTransport(ICommunicationService transport)
     {
