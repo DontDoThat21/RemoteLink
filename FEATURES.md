@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-03-09 (session 39)
+> **Last updated:** 2026-03-10 (session 41)
 
 ## Legend
 - ✅ Complete & Tested
@@ -100,7 +100,7 @@
 | 6.7 | Chat UI overlay / page | ✅ | Mobile chat tab now has live message bubbles, composer/send flow, automatic read-state handling, and unread badge wiring in the tab/header; solution build succeeded |
 | 6.8 | Session toolbar (floating action buttons) | ✅ | `ConnectPage.cs` now overlays a floating in-session action bar while connected: keyboard toggle + hidden key-capture entry for live text input, expandable special-keys bar (Esc/Tab/Enter/Backspace/arrows + shortcuts), real monitor selector backed by host `IScreenCapture.GetMonitorsAsync()`/`SelectMonitorAsync()`, real quality picker backed by host `SetQuality()`, and disconnect confirmation; new shared session-control request/response messages wire `RemoteDesktopClient` ↔ `RemoteDesktopHost` |
 | 6.9 | On-screen virtual keyboard & special keys | ✅ | `ConnectPage.cs` special-keys overlay now includes sticky modifier buttons (`Ctrl`/`Alt`/`Shift`/`Win`), function keys `F1`-`F12`, navigation keys, `Esc`, `Tab`, `Enter`, `Backspace`, and modifier-aware forwarding for letters/digits/space typed through the hidden keyboard entry |
-| 6.10 | Multi-monitor selector UI | 📋 | Backend exists (3.4); needs picker/carousel to switch monitors |
+| 6.10 | Multi-monitor selector UI | ✅ | `ConnectPage.cs` now has an in-session monitor selector panel with horizontal monitor cards/carousel, current/primary badges, refresh action, live remote monitor preload/fetch, and tap-to-switch flow; `dotnet build RemoteLink.sln` succeeded (no dedicated mobile test project discovered) |
 | 6.11 | Connection quality badge / overlay | 📋 | Backend exists (3.5); needs real-time badge (Excellent/Good/Fair/Poor) |
 | 6.12 | Settings page (display quality, input, notifications) | 📋 | Adaptive quality, image format, gesture sensitivity, audio toggle |
 | 6.13 | Dark / light theme support (mobile) | 📋 | Follow OS theme + manual toggle |

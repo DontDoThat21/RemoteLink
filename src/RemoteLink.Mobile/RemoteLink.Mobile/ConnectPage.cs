@@ -64,6 +64,10 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private Entry _keyCaptureEntry = null!;
     private Button _keyboardToggleButton = null!;
     private Button _specialKeysToggleButton = null!;
+    private Button _monitorButton = null!;
+    private Border _monitorSelectorPanel = null!;
+    private Label _monitorSelectorStatusLabel = null!;
+    private HorizontalStackLayout _monitorCarousel = null!;
 
     // UI references — manual connect card (to hide when connected)
     private Border _manualConnectCard = null!;
@@ -76,6 +80,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private bool _suppressKeyCaptureTextChanged;
     private int _selectedQuality = 75;
     private string? _selectedMonitorId;
+    private bool _isMonitorSelectorVisible;
+    private bool _isMonitorSelectorLoading;
+    private readonly List<MonitorInfo> _remoteMonitors = new();
     private readonly Dictionary<string, Button> _modifierButtons = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _modifierKeyCodes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -263,6 +270,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         _sessionToolbar = BuildSessionToolbar();
         _specialKeysBar = BuildSpecialKeysBar();
+        _monitorSelectorPanel = BuildMonitorSelectorPanel();
         _keyCaptureEntry = BuildKeyCaptureEntry();
         UpdateSessionOverlayVisibility();
 
@@ -272,7 +280,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Padding = new Thickness(16, 0, 16, 16),
             VerticalOptions = LayoutOptions.End,
             HorizontalOptions = LayoutOptions.Fill,
-            Children = { _specialKeysBar, _sessionToolbar, _keyCaptureEntry }
+            Children = { _specialKeysBar, _monitorSelectorPanel, _sessionToolbar, _keyCaptureEntry }
         };
 
         var layout = new Grid();
@@ -287,7 +295,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         _specialKeysToggleButton = BuildSessionActionButton("⌥ Keys", OnSpecialKeysToggleClicked);
 
         var qualityButton = BuildSessionActionButton("📊 Quality", OnQualityClicked);
-        var monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
+        _monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
         var disconnectButton = BuildSessionActionButton("✕ Disconnect", OnToolbarDisconnectClicked, Color.FromArgb("#C62828"));
         disconnectButton.TextColor = Colors.White;
 
@@ -329,7 +337,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                                 _keyboardToggleButton,
                                 _specialKeysToggleButton,
                                 qualityButton,
-                                monitorButton,
+                                _monitorButton,
                                 disconnectButton
                             }
                         }
@@ -337,6 +345,406 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 }
             }
         };
+    }
+
+    private Border BuildMonitorSelectorPanel()
+    {
+        var refreshButton = new Button
+        {
+            Text = "Refresh",
+            FontSize = 12,
+            FontAttributes = FontAttributes.Bold,
+            BackgroundColor = Color.FromArgb("#EFEAFF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 14,
+            HeightRequest = 32,
+            Padding = new Thickness(12, 4)
+        };
+        refreshButton.Clicked += OnRefreshMonitorSelectorClicked;
+
+        var doneButton = new Button
+        {
+            Text = "Done",
+            FontSize = 12,
+            FontAttributes = FontAttributes.Bold,
+            BackgroundColor = Color.FromArgb("#EFEAFF"),
+            TextColor = Color.FromArgb("#512BD4"),
+            CornerRadius = 14,
+            HeightRequest = 32,
+            Padding = new Thickness(12, 4)
+        };
+        doneButton.Clicked += (_, _) => HideMonitorSelector();
+
+        _monitorSelectorStatusLabel = new Label
+        {
+            Text = "Loading remote monitors...",
+            FontSize = 12,
+            TextColor = Colors.Gray
+        };
+
+        _monitorCarousel = new HorizontalStackLayout
+        {
+            Spacing = 10,
+            Children = { BuildMonitorPlaceholder("Loading remote monitors...") }
+        };
+
+        var header = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto)
+            }
+        };
+        header.Add(new Label
+        {
+            Text = "Monitor selector",
+            FontSize = 13,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Color.FromArgb("#6B5FB5")
+        });
+        header.Add(new HorizontalStackLayout
+        {
+            Spacing = 8,
+            Children = { refreshButton, doneButton }
+        }, 1, 0);
+
+        return new Border
+        {
+            IsVisible = false,
+            BackgroundColor = Colors.White,
+            Stroke = Color.FromArgb("#D7CCFF"),
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 18 },
+            Padding = new Thickness(12, 10),
+            Shadow = new Shadow
+            {
+                Brush = Brush.Black,
+                Opacity = 0.12f,
+                Radius = 16,
+                Offset = new Point(0, 6)
+            },
+            Content = new VerticalStackLayout
+            {
+                Spacing = 8,
+                Children =
+                {
+                    header,
+                    _monitorSelectorStatusLabel,
+                    new ScrollView
+                    {
+                        Orientation = ScrollOrientation.Horizontal,
+                        Content = _monitorCarousel
+                    }
+                }
+            }
+        };
+    }
+
+    private View BuildMonitorPlaceholder(string text)
+    {
+        return new Border
+        {
+            WidthRequest = 220,
+            MinimumHeightRequest = 138,
+            BackgroundColor = Color.FromArgb("#FAFAFA"),
+            Stroke = Color.FromArgb("#E0E0E0"),
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 14 },
+            Padding = new Thickness(16),
+            Content = new Label
+            {
+                Text = text,
+                FontSize = 13,
+                TextColor = Colors.Gray,
+                HorizontalTextAlignment = TextAlignment.Center,
+                VerticalTextAlignment = TextAlignment.Center,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Center
+            }
+        };
+    }
+
+    private void RebuildMonitorCarousel()
+    {
+        _monitorCarousel.Children.Clear();
+
+        if (_remoteMonitors.Count == 0)
+        {
+            _monitorCarousel.Children.Add(BuildMonitorPlaceholder("No remote monitors available."));
+            return;
+        }
+
+        foreach (var monitor in _remoteMonitors)
+            _monitorCarousel.Children.Add(BuildMonitorCard(monitor));
+    }
+
+    private View BuildMonitorCard(MonitorInfo monitor)
+    {
+        bool isSelected = string.Equals(monitor.Id, _selectedMonitorId, StringComparison.Ordinal);
+
+        var badgeRow = new HorizontalStackLayout { Spacing = 6 };
+        if (monitor.IsPrimary)
+            badgeRow.Children.Add(BuildMonitorBadge("Primary", "#FFF3E0", "#EF6C00"));
+        if (isSelected)
+            badgeRow.Children.Add(BuildMonitorBadge("Current", "#E8F5E9", "#2E7D32"));
+
+        var card = new Border
+        {
+            WidthRequest = 220,
+            BackgroundColor = isSelected ? Color.FromArgb("#F4F0FF") : Colors.White,
+            Stroke = isSelected ? Color.FromArgb("#512BD4") : Color.FromArgb("#DADCE0"),
+            StrokeThickness = isSelected ? 2 : 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 14 },
+            Padding = new Thickness(12),
+            Content = new VerticalStackLayout
+            {
+                Spacing = 8,
+                Children =
+                {
+                    CreateMonitorPreview(monitor, isSelected),
+                    new Label
+                    {
+                        Text = monitor.Name,
+                        FontSize = 14,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Colors.Black,
+                        LineBreakMode = LineBreakMode.TailTruncation
+                    },
+                    badgeRow,
+                    new Label
+                    {
+                        Text = $"{monitor.Width} × {monitor.Height}",
+                        FontSize = 12,
+                        TextColor = Color.FromArgb("#5F6368")
+                    },
+                    new Label
+                    {
+                        Text = $"Position {monitor.Left}, {monitor.Top}",
+                        FontSize = 11,
+                        TextColor = Colors.Gray
+                    }
+                }
+            }
+        };
+
+        var tap = new TapGestureRecognizer();
+        tap.Tapped += async (_, _) => await SelectMonitorAsync(monitor);
+        card.GestureRecognizers.Add(tap);
+        return card;
+    }
+
+    private View CreateMonitorPreview(MonitorInfo monitor, bool isSelected)
+    {
+        const double maxWidth = 156;
+        const double maxHeight = 78;
+
+        var scale = Math.Min(maxWidth / Math.Max(1, monitor.Width), maxHeight / Math.Max(1, monitor.Height));
+        var previewWidth = Math.Max(54, monitor.Width * scale);
+        var previewHeight = Math.Max(34, monitor.Height * scale);
+
+        return new Grid
+        {
+            HeightRequest = 94,
+            BackgroundColor = isSelected ? Color.FromArgb("#6B46D1") : Color.FromArgb("#F3EEFF"),
+            Padding = new Thickness(12, 8),
+            Children =
+            {
+                new Border
+                {
+                    WidthRequest = previewWidth,
+                    HeightRequest = previewHeight,
+                    HorizontalOptions = LayoutOptions.Center,
+                    VerticalOptions = LayoutOptions.Center,
+                    BackgroundColor = isSelected ? Color.FromArgb("#8E73E6") : Color.FromArgb("#D9CFFF"),
+                    Stroke = isSelected ? Colors.White : Color.FromArgb("#9E8BDF"),
+                    StrokeThickness = 1,
+                    StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+                    Content = new Label
+                    {
+                        Text = GetCompactMonitorName(monitor),
+                        FontSize = 12,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = isSelected ? Colors.White : Color.FromArgb("#512BD4"),
+                        HorizontalOptions = LayoutOptions.Center,
+                        VerticalOptions = LayoutOptions.Center,
+                        HorizontalTextAlignment = TextAlignment.Center,
+                        VerticalTextAlignment = TextAlignment.Center
+                    }
+                }
+            }
+        };
+    }
+
+    private static View BuildMonitorBadge(string text, string backgroundColor, string textColor)
+    {
+        return new Border
+        {
+            BackgroundColor = Color.FromArgb(backgroundColor),
+            StrokeThickness = 0,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+            Padding = new Thickness(8, 2),
+            Content = new Label
+            {
+                Text = text,
+                FontSize = 10,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = Color.FromArgb(textColor)
+            }
+        };
+    }
+
+    private static string GetCompactMonitorName(MonitorInfo monitor)
+    {
+        if (monitor.IsPrimary)
+            return "Primary";
+
+        var trimmed = monitor.Name.Trim();
+        return trimmed.Length <= 12 ? trimmed : trimmed[..11] + "…";
+    }
+
+    private void UpdateMonitorButtonState()
+    {
+        if (_monitorButton == null)
+            return;
+
+        if (!_client.IsConnected)
+        {
+            _monitorButton.Text = "🖥 Monitor";
+            _monitorButton.BackgroundColor = Color.FromArgb("#512BD4");
+            return;
+        }
+
+        var selectedMonitor = _remoteMonitors.FirstOrDefault(m => string.Equals(m.Id, _selectedMonitorId, StringComparison.Ordinal));
+        _monitorButton.Text = _isMonitorSelectorLoading
+            ? "🖥 Loading..."
+            : selectedMonitor != null
+                ? $"🖥 {GetCompactMonitorName(selectedMonitor)}"
+                : "🖥 Monitor";
+
+        _monitorButton.BackgroundColor = _isMonitorSelectorVisible
+            ? Color.FromArgb("#1565C0")
+            : Color.FromArgb("#512BD4");
+    }
+
+    private void HideMonitorSelector()
+    {
+        if (!_isMonitorSelectorVisible)
+            return;
+
+        _isMonitorSelectorVisible = false;
+        UpdateSessionOverlayVisibility();
+        StatusMessage = "Monitor selector hidden.";
+    }
+
+    private async Task LoadRemoteMonitorsAsync()
+    {
+        _isMonitorSelectorLoading = true;
+        UpdateMonitorButtonState();
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _monitorSelectorStatusLabel.Text = "Loading remote monitors...";
+            _monitorSelectorStatusLabel.TextColor = Colors.Gray;
+            _monitorCarousel.Children.Clear();
+            _monitorCarousel.Children.Add(BuildMonitorPlaceholder("Loading remote monitors..."));
+        });
+
+        try
+        {
+            var (monitors, selectedMonitorId) = await _client.GetRemoteMonitorsAsync();
+
+            _remoteMonitors.Clear();
+            foreach (var monitor in monitors.OrderByDescending(m => m.IsPrimary).ThenBy(m => m.Name))
+                _remoteMonitors.Add(monitor);
+
+            _selectedMonitorId = selectedMonitorId
+                ?? _remoteMonitors.FirstOrDefault(m => m.IsPrimary)?.Id
+                ?? _remoteMonitors.FirstOrDefault()?.Id;
+
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                RebuildMonitorCarousel();
+                _monitorSelectorStatusLabel.Text = _remoteMonitors.Count == 0
+                    ? "No monitors found on the remote host."
+                    : "Swipe through the displays and tap one to switch instantly.";
+                _monitorSelectorStatusLabel.TextColor = _remoteMonitors.Count == 0
+                    ? Colors.Gray
+                    : Color.FromArgb("#5F6368");
+                UpdateMonitorButtonState();
+            });
+        }
+        finally
+        {
+            _isMonitorSelectorLoading = false;
+            MainThread.BeginInvokeOnMainThread(UpdateMonitorButtonState);
+        }
+    }
+
+    private async Task WarmMonitorSelectorAsync()
+    {
+        try
+        {
+            await LoadRemoteMonitorsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Unable to preload remote monitors for the session toolbar");
+        }
+    }
+
+    private async void OnRefreshMonitorSelectorClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected || _isMonitorSelectorLoading)
+            return;
+
+        try
+        {
+            StatusMessage = "Refreshing remote monitor list...";
+            await LoadRemoteMonitorsAsync();
+            StatusMessage = _remoteMonitors.Count > 0
+                ? "Monitor list refreshed. Tap a display card to switch."
+                : "No monitors found on the remote host.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to refresh remote monitor list");
+            _monitorSelectorStatusLabel.Text = $"Failed to refresh monitors: {ex.Message}";
+            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#C62828");
+            await DisplayAlertAsync("Monitor", $"Failed to refresh remote monitors: {ex.Message}", "OK");
+        }
+    }
+
+    private async Task SelectMonitorAsync(MonitorInfo monitor)
+    {
+        if (!_client.IsConnected || _isMonitorSelectorLoading)
+            return;
+
+        try
+        {
+            _isMonitorSelectorLoading = true;
+            UpdateMonitorButtonState();
+            _monitorSelectorStatusLabel.Text = $"Switching to {monitor.Name}...";
+            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#1565C0");
+
+            _selectedMonitorId = await _client.SelectRemoteMonitorAsync(monitor.Id);
+            RebuildMonitorCarousel();
+            _monitorSelectorStatusLabel.Text = $"Switched to {monitor.Name}.";
+            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#2E7D32");
+            StatusMessage = $"Remote monitor switched to {monitor.Name}.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to switch remote monitor");
+            _monitorSelectorStatusLabel.Text = $"Failed to switch monitor: {ex.Message}";
+            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#C62828");
+            await DisplayAlertAsync("Monitor", $"Failed to switch remote monitor: {ex.Message}", "OK");
+        }
+        finally
+        {
+            _isMonitorSelectorLoading = false;
+            UpdateMonitorButtonState();
+        }
     }
 
     private Border BuildSpecialKeysBar()
@@ -501,11 +909,23 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         if (_specialKeysBar != null)
             _specialKeysBar.IsVisible = isConnected && _isSpecialKeysVisible;
 
+        if (_monitorSelectorPanel != null)
+            _monitorSelectorPanel.IsVisible = isConnected && _isMonitorSelectorVisible;
+
         if (!isConnected)
         {
             _isKeyboardVisible = false;
             _isSpecialKeysVisible = false;
+            _isMonitorSelectorVisible = false;
+            _isMonitorSelectorLoading = false;
             _activeModifiers.Clear();
+            _remoteMonitors.Clear();
+
+            if (_monitorCarousel != null)
+            {
+                _monitorCarousel.Children.Clear();
+                _monitorCarousel.Children.Add(BuildMonitorPlaceholder("Connect to a host to browse monitors."));
+            }
 
             if (_keyCaptureEntry != null)
             {
@@ -527,6 +947,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         if (_specialKeysToggleButton != null)
             _specialKeysToggleButton.BackgroundColor = _isSpecialKeysVisible ? Color.FromArgb("#7B1FA2") : Color.FromArgb("#512BD4");
 
+        UpdateMonitorButtonState();
         UpdateModifierButtonStates();
     }
 
@@ -615,34 +1036,25 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         try
         {
-            var (monitors, selectedMonitorId) = await _client.GetRemoteMonitorsAsync();
-            if (monitors.Count == 0)
+            if (_isMonitorSelectorVisible && !_isMonitorSelectorLoading)
             {
-                await DisplayAlertAsync("Monitors", "No monitors found on the remote host.", "OK");
+                HideMonitorSelector();
                 return;
             }
 
-            _selectedMonitorId = selectedMonitorId;
-
-            var options = monitors
-                .Select(m => $"{m.Name} ({m.Width}×{m.Height}){(m.IsPrimary ? " [Primary]" : string.Empty)}{(m.Id == _selectedMonitorId ? " ✓" : string.Empty)}")
-                .ToArray();
-
-            var choice = await DisplayActionSheetAsync("Monitor Selector", "Cancel", null, options);
-            if (string.IsNullOrWhiteSpace(choice) || choice == "Cancel")
-                return;
-
-            int index = Array.IndexOf(options, choice);
-            if (index < 0)
-                return;
-
-            var selectedMonitor = monitors[index];
-            _selectedMonitorId = await _client.SelectRemoteMonitorAsync(selectedMonitor.Id);
-            StatusMessage = $"Remote monitor switched to {selectedMonitor.Name}.";
+            _isSpecialKeysVisible = false;
+            _isMonitorSelectorVisible = true;
+            UpdateSessionOverlayVisibility();
+            await LoadRemoteMonitorsAsync();
+            StatusMessage = _remoteMonitors.Count > 0
+                ? "Monitor selector ready — tap a display card to switch."
+                : "No monitors found on the remote host.";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to switch remote monitor");
+            _monitorSelectorStatusLabel.Text = $"Failed to load monitors: {ex.Message}";
+            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#C62828");
             await DisplayAlertAsync("Monitor", $"Failed to switch remote monitor: {ex.Message}", "OK");
         }
     }
@@ -1374,6 +1786,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _discoveredSection.IsVisible = false;
                     StatusMessage = $"Connected to {hostName}";
                     UpdateSessionOverlayVisibility();
+                    _ = WarmMonitorSelectorAsync();
                     break;
 
                 case ClientConnectionState.Disconnected:
@@ -1401,6 +1814,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     OnManualEntryChanged(null, null!);
                     _selectedMonitorId = null;
                     _selectedQuality = 75;
+                    _monitorSelectorStatusLabel.Text = "Loading remote monitors...";
+                    _monitorSelectorStatusLabel.TextColor = Colors.Gray;
                     UpdateSessionOverlayVisibility();
                     if (StatusMessage.StartsWith("Connected"))
                         StatusMessage = "Disconnected. Scanning for hosts...";
