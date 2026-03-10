@@ -416,6 +416,83 @@ public class TcpCommunicationServiceTests : IAsyncDisposable
         Assert.Equal("Display 1", received.Monitors![0].Name);
     }
 
+    [Fact]
+    public async Task SendSessionControlRequestAsync_RoundTrips_ImageFormatRequest()
+    {
+        using var server = new TcpCommunicationService();
+        using var client = new TcpCommunicationService();
+
+        var tcs = new TaskCompletionSource<SessionControlRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SessionControlRequestReceived += (_, request) => tcs.TrySetResult(request);
+
+        await server.StartAsync(_port);
+
+        var device = new DeviceInfo
+        {
+            DeviceId = "h",
+            DeviceName = "H",
+            IPAddress = "127.0.0.1",
+            Port = _port,
+            Type = DeviceType.Desktop
+        };
+        await client.ConnectToDeviceAsync(device);
+        await Task.Delay(100);
+
+        await client.SendSessionControlRequestAsync(new SessionControlRequest
+        {
+            RequestId = "req-format",
+            Command = SessionControlCommand.SetImageFormat,
+            ImageFormat = ScreenDataFormat.PNG
+        });
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await client.StopAsync();
+        await server.StopAsync();
+
+        Assert.Equal(SessionControlCommand.SetImageFormat, received.Command);
+        Assert.Equal(ScreenDataFormat.PNG, received.ImageFormat);
+    }
+
+    [Fact]
+    public async Task SendSessionControlResponseAsync_RoundTrips_AudioSettingResponse()
+    {
+        using var server = new TcpCommunicationService();
+        using var client = new TcpCommunicationService();
+
+        var tcs = new TaskCompletionSource<SessionControlResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.SessionControlResponseReceived += (_, response) => tcs.TrySetResult(response);
+
+        await server.StartAsync(_port);
+
+        var device = new DeviceInfo
+        {
+            DeviceId = "h",
+            DeviceName = "H",
+            IPAddress = "127.0.0.1",
+            Port = _port,
+            Type = DeviceType.Desktop
+        };
+        await client.ConnectToDeviceAsync(device);
+        await Task.Delay(100);
+
+        await server.SendSessionControlResponseAsync(new SessionControlResponse
+        {
+            RequestId = "req-audio",
+            Command = SessionControlCommand.SetAudioEnabled,
+            Success = true,
+            AppliedAudioEnabled = false
+        });
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await client.StopAsync();
+        await server.StopAsync();
+
+        Assert.Equal(SessionControlCommand.SetAudioEnabled, received.Command);
+        Assert.False(received.AppliedAudioEnabled);
+    }
+
     // ── Dispose ───────────────────────────────────────────────────────────────
 
     public async ValueTask DisposeAsync()

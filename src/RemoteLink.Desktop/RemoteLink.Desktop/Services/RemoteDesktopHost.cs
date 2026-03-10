@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
@@ -615,11 +616,11 @@ public class RemoteDesktopHost : BackgroundService
         using var stream = new MemoryStream();
         if (format == ScreenDataFormat.PNG)
         {
-            bitmap.Save(stream, ImageFormat.Png);
+            bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
         }
         else
         {
-            var codec = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
+            var codec = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
             if (codec == null)
                 throw new InvalidOperationException("JPEG encoder not available.");
 

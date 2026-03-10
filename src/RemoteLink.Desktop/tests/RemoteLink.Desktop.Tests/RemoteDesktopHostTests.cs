@@ -1285,7 +1285,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         await StartHostAsync();
         await SimulatePairingAsync();
 
-        Assert.True(_audio.IsCapturing);
+        Assert.True(_audioCapture.IsCapturing);
 
         _comm.RaiseSessionControlRequest(new SessionControlRequest
         {
@@ -1296,8 +1296,8 @@ public class RemoteDesktopHostTests : IAsyncDisposable
 
         await Task.Delay(120);
 
-        Assert.False(_audio.IsCapturing);
-        Assert.Equal(1, _audio.StopCallCount);
+        Assert.False(_audioCapture.IsCapturing);
+        Assert.Equal(1, _audioCapture.StopCallCount);
         Assert.Equal(SessionControlCommand.SetAudioEnabled, _comm.SentSessionControlResponses[^1].Command);
         Assert.False(_comm.SentSessionControlResponses[^1].AppliedAudioEnabled);
     }

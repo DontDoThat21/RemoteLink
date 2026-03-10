@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-03-10 (session 41)
+> **Last updated:** 2026-03-10 (session 43)
 
 ## Legend
 - ✅ Complete & Tested
@@ -102,7 +102,7 @@
 | 6.9 | On-screen virtual keyboard & special keys | ✅ | `ConnectPage.cs` special-keys overlay now includes sticky modifier buttons (`Ctrl`/`Alt`/`Shift`/`Win`), function keys `F1`-`F12`, navigation keys, `Esc`, `Tab`, `Enter`, `Backspace`, and modifier-aware forwarding for letters/digits/space typed through the hidden keyboard entry |
 | 6.10 | Multi-monitor selector UI | ✅ | `ConnectPage.cs` now has an in-session monitor selector panel with horizontal monitor cards/carousel, current/primary badges, refresh action, live remote monitor preload/fetch, and tap-to-switch flow; `dotnet build RemoteLink.sln` succeeded (no dedicated mobile test project discovered) |
 | 6.11 | Connection quality badge / overlay | ✅ | `RemoteDesktopClient` now surfaces live `ConnectionQuality` updates to mobile UI; `ConnectPage.cs` shows a floating in-session quality badge overlay with real-time Excellent/Good/Fair/Poor status plus FPS, latency, and bandwidth metrics; resets to a neutral "Measuring..." state on connect and clears on disconnect |
-| 6.12 | Settings page (display quality, input, notifications) | 📋 | Adaptive quality, image format, gesture sensitivity, audio toggle |
+| 6.12 | Settings page (display quality, input, notifications) | ✅ | `MobileSettingsPage.cs` now provides persisted display/input/notification/audio settings via `IAppSettingsService`; `ConnectPage.cs` applies gesture sensitivity, connection notifications, preferred quality, negotiated image format, and remote audio toggle for active sessions; host/client session-control support added for `SetImageFormat` + `SetAudioEnabled`; targeted Shared + Desktop tests added |
 | 6.13 | Dark / light theme support (mobile) | 📋 | Follow OS theme + manual toggle |
 | 6.14 | Biometric / PIN app lock | 📋 | Fingerprint or face ID to unlock the app (secure device list) |
 | 6.15 | Push notifications for incoming connection requests | 📋 | Alert when another device wants to connect |
