@@ -52,9 +52,21 @@ public class RemoteDesktopHost : BackgroundService
 
     private volatile ScreenDataFormat _preferredImageFormat = ScreenDataFormat.Raw;
     private volatile bool _audioStreamingEnabled = true;
+    private long _lastFrameSentAtUtcMs;
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
+    private const int MaxAdaptiveStreamFps = 10;
+    private const int ModerateAdaptiveStreamFps = 6;
+    private const int LowBandwidthAdaptiveStreamFps = 4;
+    private const int CriticalAdaptiveStreamFps = 2;
+    private const int MinimumAdaptiveQuality = 45;
+    private const long ModerateLatencyThresholdMs = 75;
+    private const long HighLatencyThresholdMs = 150;
+    private const long CriticalLatencyThresholdMs = 250;
+    private const long ModerateBandwidthThresholdBytesPerSec = 2_500_000;
+    private const long LowBandwidthThresholdBytesPerSec = 1_500_000;
+    private const long CriticalBandwidthThresholdBytesPerSec = 750_000;
 
     public RemoteDesktopHost(
         ILogger<RemoteDesktopHost> logger,
@@ -533,6 +545,7 @@ public class RemoteDesktopHost : BackgroundService
             _perfMonitor.Reset();
             _preferredImageFormat = ScreenDataFormat.Raw;
             _audioStreamingEnabled = true;
+            Interlocked.Exchange(ref _lastFrameSentAtUtcMs, 0);
 
             // Clear chat messages
             _messagingService.ClearMessages();
@@ -565,16 +578,19 @@ public class RemoteDesktopHost : BackgroundService
     {
         if (!_communication.IsConnected || !_clientPaired) return;
 
+        var tuning = GetStreamTuning();
+        if (!ShouldSendFrame(tuning.TargetFps))
+            return;
+
         _ = Task.Run(async () =>
         {
             try
             {
                 var sendStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var frameToSend = PrepareFrameForTransmission(screenData);
+                var frameToSend = PrepareFrameForTransmission(screenData, tuning.Format, tuning.Quality);
 
-                // Apply adaptive quality
-                int recommendedQuality = _perfMonitor.GetRecommendedQuality();
-                _screenCapture.SetQuality(recommendedQuality);
+                // Apply adaptive bitrate / quality for subsequent captures
+                _screenCapture.SetQuality(tuning.Quality);
 
                 // Apply delta encoding
                 var (encodedFrame, isDelta) = await _deltaEncoder.EncodeFrameAsync(frameToSend);
@@ -597,7 +613,7 @@ public class RemoteDesktopHost : BackgroundService
                         encodedFrame.FrameId[..8],
                         encodedFrame.ImageData.Length,
                         encodedFrame.DeltaRegions?.Count ?? 0,
-                        recommendedQuality,
+                        tuning.Quality,
                         latency);
                 }
             }
@@ -639,9 +655,8 @@ public class RemoteDesktopHost : BackgroundService
         });
     }
 
-    private ScreenData PrepareFrameForTransmission(ScreenData screenData)
+    private ScreenData PrepareFrameForTransmission(ScreenData screenData, ScreenDataFormat preferredFormat, int quality)
     {
-        var preferredFormat = _preferredImageFormat;
         if (preferredFormat == ScreenDataFormat.Raw || screenData.Format == preferredFormat)
             return screenData;
 
@@ -653,7 +668,7 @@ public class RemoteDesktopHost : BackgroundService
 
         try
         {
-            var encodedBytes = EncodeRawFrame(screenData, preferredFormat, screenData.Quality);
+            var encodedBytes = EncodeRawFrame(screenData, preferredFormat, quality);
             if (encodedBytes.Length == 0)
                 return screenData;
 
@@ -664,7 +679,7 @@ public class RemoteDesktopHost : BackgroundService
                 Width = screenData.Width,
                 Height = screenData.Height,
                 Format = preferredFormat,
-                Quality = screenData.Quality,
+                Quality = quality,
                 ImageData = encodedBytes
             };
         }
@@ -674,6 +689,57 @@ public class RemoteDesktopHost : BackgroundService
             return screenData;
         }
     }
+
+    private (int Quality, int TargetFps, ScreenDataFormat Format) GetStreamTuning()
+    {
+        var preferredFormat = _preferredImageFormat;
+        var recommendedQuality = _perfMonitor.GetRecommendedQuality();
+        var latencyMs = _perfMonitor.GetAverageLatency();
+        var bandwidthBytesPerSec = _perfMonitor.GetCurrentBandwidth();
+        var hasMetrics = latencyMs > 0 || bandwidthBytesPerSec > 0 || _perfMonitor.GetCurrentFps() > 0;
+
+        if (!hasMetrics)
+            return (recommendedQuality, MaxAdaptiveStreamFps, preferredFormat);
+
+        if (latencyMs >= CriticalLatencyThresholdMs ||
+            (bandwidthBytesPerSec > 0 && bandwidthBytesPerSec <= CriticalBandwidthThresholdBytesPerSec))
+        {
+            return (Math.Max(MinimumAdaptiveQuality, Math.Min(recommendedQuality, 50)), CriticalAdaptiveStreamFps, GetThrottledFormat(preferredFormat));
+        }
+
+        if (latencyMs >= HighLatencyThresholdMs ||
+            (bandwidthBytesPerSec > 0 && bandwidthBytesPerSec <= LowBandwidthThresholdBytesPerSec))
+        {
+            return (Math.Max(MinimumAdaptiveQuality, Math.Min(recommendedQuality, 60)), LowBandwidthAdaptiveStreamFps, GetThrottledFormat(preferredFormat));
+        }
+
+        if (latencyMs >= ModerateLatencyThresholdMs ||
+            (bandwidthBytesPerSec > 0 && bandwidthBytesPerSec <= ModerateBandwidthThresholdBytesPerSec))
+        {
+            return (Math.Max(MinimumAdaptiveQuality, Math.Min(recommendedQuality, 70)), ModerateAdaptiveStreamFps, GetThrottledFormat(preferredFormat));
+        }
+
+        return (recommendedQuality, MaxAdaptiveStreamFps, preferredFormat);
+    }
+
+    private bool ShouldSendFrame(int targetFps)
+    {
+        if (targetFps >= MaxAdaptiveStreamFps)
+            return true;
+
+        var minimumFrameSpacingMs = Math.Max(1L, 1000L / Math.Max(1, targetFps));
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var previous = Interlocked.Read(ref _lastFrameSentAtUtcMs);
+
+        if (previous > 0 && now - previous < minimumFrameSpacingMs)
+            return false;
+
+        Interlocked.Exchange(ref _lastFrameSentAtUtcMs, now);
+        return true;
+    }
+
+    private static ScreenDataFormat GetThrottledFormat(ScreenDataFormat preferredFormat)
+        => preferredFormat == ScreenDataFormat.JPEG ? preferredFormat : ScreenDataFormat.JPEG;
 
     private static byte[] EncodeRawFrame(ScreenData screenData, ScreenDataFormat format, int quality)
     {

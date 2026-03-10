@@ -483,6 +483,9 @@ internal sealed class FakeDeltaFrameEncoder : IDeltaFrameEncoder
 internal sealed class FakePerformanceMonitor : IPerformanceMonitor
 {
     private int _recommendedQuality = 75;
+    private double _currentFps = 10.0;
+    private long _currentBandwidth = 3_000_000;
+    private long _averageLatency = 20;
     public bool ResetCalled { get; private set; }
     public int RecordFrameSentCallCount { get; private set; }
 
@@ -493,11 +496,11 @@ internal sealed class FakePerformanceMonitor : IPerformanceMonitor
 
     public int GetRecommendedQuality() => _recommendedQuality;
 
-    public double GetCurrentFps() => 10.0;
+    public double GetCurrentFps() => _currentFps;
 
-    public long GetCurrentBandwidth() => 1_000_000;
+    public long GetCurrentBandwidth() => _currentBandwidth;
 
-    public long GetAverageLatency() => 20;
+    public long GetAverageLatency() => _averageLatency;
 
     public void Reset()
     {
@@ -508,6 +511,21 @@ internal sealed class FakePerformanceMonitor : IPerformanceMonitor
     public void SetRecommendedQuality(int quality)
     {
         _recommendedQuality = quality;
+    }
+
+    public void SetCurrentFps(double fps)
+    {
+        _currentFps = fps;
+    }
+
+    public void SetCurrentBandwidth(long bandwidth)
+    {
+        _currentBandwidth = bandwidth;
+    }
+
+    public void SetAverageLatency(long latencyMs)
+    {
+        _averageLatency = latencyMs;
     }
 }
 
@@ -895,6 +913,56 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         var widths = _comm.SentScreenData.Select(s => s.Width).ToHashSet();
         for (int i = 1; i <= 5; i++)
             Assert.Contains(i * 100, widths);
+    }
+
+    [Fact]
+    public async Task Frames_AreThrottled_WhenConnectionBandwidthDrops()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _perfMonitor.SetCurrentBandwidth(600_000);
+        _perfMonitor.SetAverageLatency(220);
+
+        for (int i = 0; i < 5; i++)
+        {
+            _screen.RaiseFrameCaptured(new ScreenData
+            {
+                Width = 1280,
+                Height = 720,
+                Format = ScreenDataFormat.Raw,
+                ImageData = new byte[] { 1, 2, 3, (byte)i }
+            });
+        }
+
+        await Task.Delay(150);
+
+        Assert.True(_comm.SentScreenData.Count < 5,
+            $"Expected throttling to drop frames, but {_comm.SentScreenData.Count} were sent.");
+    }
+
+    [Fact]
+    public async Task ScreenQuality_IsReduced_WhenConnectionBandwidthDrops()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _perfMonitor.SetRecommendedQuality(85);
+        _perfMonitor.SetCurrentBandwidth(700_000);
+        _perfMonitor.SetAverageLatency(180);
+
+        _screen.RaiseFrameCaptured(new ScreenData
+        {
+            Width = 1920,
+            Height = 1080,
+            Format = ScreenDataFormat.Raw,
+            ImageData = new byte[] { 9, 8, 7, 6 }
+        });
+
+        await Task.Delay(120);
+
+        Assert.True(_screen.LastQuality <= 60,
+            $"Expected reduced capture quality under constrained bandwidth, but got {_screen.LastQuality}.");
     }
 
     [Fact]
