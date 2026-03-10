@@ -72,6 +72,7 @@ public sealed class PresentationSessionHost : IAsyncDisposable
     private const string MessageTypeAnnotation = "PresentationAnnotation";
 
     private readonly ConcurrentDictionary<string, ViewerConnection> _viewers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly PresentationAnnotationBoard _annotationBoard = new();
     private readonly TlsConfiguration _tlsConfiguration;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -91,6 +92,8 @@ public sealed class PresentationSessionHost : IAsyncDisposable
     public int ViewerCount => _viewers.Count;
     public int Port { get; private set; } = DefaultPort;
     public string? SessionName { get; private set; }
+
+    public IReadOnlyList<PresentationAnnotation> GetAnnotations() => _annotationBoard.GetAnnotations();
 
     public event EventHandler? SessionStateChanged;
     public event EventHandler<int>? ViewerCountChanged;
@@ -146,8 +149,7 @@ public sealed class PresentationSessionHost : IAsyncDisposable
     public async Task<PresentationBroadcastResult> BroadcastAnnotationAsync(PresentationAnnotationMessage annotationMessage, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(annotationMessage);
-        long payloadBytes = JsonSerializer.SerializeToUtf8Bytes(annotationMessage).LongLength;
-        return await BroadcastAsync(MessageTypeAnnotation, annotationMessage, payloadBytes, cancellationToken).ConfigureAwait(false);
+        return await ApplyAnnotationMessageAsync(annotationMessage, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopAsync()
@@ -249,6 +251,7 @@ public sealed class PresentationSessionHost : IAsyncDisposable
             ViewerCountChanged?.Invoke(this, ViewerCount);
             SessionStateChanged?.Invoke(this, EventArgs.Empty);
 
+            await SendCurrentAnnotationsAsync(viewer, cancellationToken).ConfigureAwait(false);
             await WaitForViewerDisconnectAsync(stream, cancellationToken).ConfigureAwait(false);
         }
         catch
@@ -295,21 +298,42 @@ public sealed class PresentationSessionHost : IAsyncDisposable
 
     private async Task WaitForViewerDisconnectAsync(Stream stream, CancellationToken cancellationToken)
     {
-        var lengthBuffer = new byte[4];
         while (!cancellationToken.IsCancellationRequested)
         {
-            var read = await ReadExactAsync(stream, lengthBuffer, 0, 4, cancellationToken).ConfigureAwait(false);
-            if (read < 4)
+            var envelope = await ReadEnvelopeAsync(stream, cancellationToken).ConfigureAwait(false);
+            if (envelope is null)
                 break;
 
-            int length = BitConverter.ToInt32(lengthBuffer, 0);
-            if (length <= 0)
-                break;
+            if (string.Equals(envelope.MessageType, MessageTypeAnnotation, StringComparison.Ordinal))
+            {
+                var annotationMessage = Decode<PresentationAnnotationMessage>(envelope.Payload);
+                if (annotationMessage is not null)
+                    await ApplyAnnotationMessageAsync(annotationMessage, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
 
-            var payload = new byte[length];
-            read = await ReadExactAsync(stream, payload, 0, length, cancellationToken).ConfigureAwait(false);
-            if (read < length)
-                break;
+    private async Task<PresentationBroadcastResult> ApplyAnnotationMessageAsync(PresentationAnnotationMessage annotationMessage, CancellationToken cancellationToken)
+    {
+        var appliedMessage = _annotationBoard.Apply(annotationMessage);
+        long payloadBytes = JsonSerializer.SerializeToUtf8Bytes(appliedMessage).LongLength;
+        return await BroadcastAsync(MessageTypeAnnotation, appliedMessage, payloadBytes, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SendCurrentAnnotationsAsync(ViewerConnection viewer, CancellationToken cancellationToken)
+    {
+        foreach (var annotation in _annotationBoard.GetAnnotations())
+        {
+            var message = new PresentationAnnotationMessage
+            {
+                Action = PresentationAnnotationAction.Upsert,
+                AnnotationId = annotation.AnnotationId,
+                Annotation = annotation,
+                ChangedByDeviceId = annotation.CreatedByDeviceId,
+                ChangedAtUtc = annotation.CreatedAtUtc
+            };
+
+            await SendAnnotationAsync(viewer, message, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -343,6 +367,15 @@ public sealed class PresentationSessionHost : IAsyncDisposable
         }
 
         return result;
+    }
+
+    private static Task SendAnnotationAsync(ViewerConnection viewer, PresentationAnnotationMessage annotationMessage, CancellationToken cancellationToken)
+    {
+        return viewer.SendAsync(new PresentationEnvelope
+        {
+            MessageType = MessageTypeAnnotation,
+            Payload = Encode(annotationMessage)
+        }, cancellationToken);
     }
 
     private async Task RemoveViewerAsync(string viewerId)

@@ -169,6 +169,137 @@ public class PresentationSessionTests
     }
 
     [Fact]
+    public async Task PresentationSessionClient_SendsAnnotationsThatAreBroadcastToAllViewersAndStoredOnHost()
+    {
+        int port = GetFreePort();
+        var tlsConfiguration = new TlsConfiguration { Enabled = false };
+
+        await using var host = new PresentationSessionHost(tlsConfiguration);
+        await host.StartAsync(port);
+        await host.ActivateAsync("123456", "Team Sync");
+
+        var annotation1Tcs = new TaskCompletionSource<PresentationAnnotationMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var annotation2Tcs = new TaskCompletionSource<PresentationAnnotationMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var viewer1 = new PresentationSessionClient(tlsConfiguration);
+        viewer1.AnnotationReceived += (_, annotation) => annotation1Tcs.TrySetResult(annotation);
+
+        await using var viewer2 = new PresentationSessionClient(tlsConfiguration);
+        viewer2.AnnotationReceived += (_, annotation) => annotation2Tcs.TrySetResult(annotation);
+
+        var presentationHost = new DeviceInfo
+        {
+            DeviceId = "presentation-host",
+            DeviceName = "Presentation Host",
+            IPAddress = "127.0.0.1",
+            PresentationPort = port,
+            SupportsPresentationMode = true,
+            PresentationSessionActive = true,
+            Type = DeviceType.Desktop
+        };
+
+        Assert.True((await viewer1.ConnectAsync(presentationHost, "123456", "viewer-1", "Viewer 1")).Success);
+        Assert.True((await viewer2.ConnectAsync(presentationHost, "123456", "viewer-2", "Viewer 2")).Success);
+        await WaitForViewerCountAsync(host, 2);
+
+        await viewer1.SendAnnotationAsync(new PresentationAnnotationMessage
+        {
+            Action = PresentationAnnotationAction.Upsert,
+            ChangedByDeviceId = "viewer-1",
+            ChangedAtUtc = DateTime.UtcNow,
+            Annotation = new PresentationAnnotation
+            {
+                AnnotationId = "annotation-from-viewer",
+                Kind = PresentationAnnotationKind.Freehand,
+                CreatedByDeviceId = "viewer-1",
+                CreatedAtUtc = DateTime.UtcNow,
+                Style = new PresentationAnnotationStyle
+                {
+                    StrokeColor = "#22C55E",
+                    StrokeWidth = 4
+                },
+                Points =
+                [
+                    new PresentationAnnotationPoint { X = 0.15, Y = 0.25 },
+                    new PresentationAnnotationPoint { X = 0.45, Y = 0.55 },
+                    new PresentationAnnotationPoint { X = 0.80, Y = 0.70 }
+                ]
+            }
+        });
+
+        var received1 = await annotation1Tcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var received2 = await annotation2Tcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal("annotation-from-viewer", received1.Annotation?.AnnotationId);
+        Assert.Equal("annotation-from-viewer", received2.Annotation?.AnnotationId);
+        Assert.Single(host.GetAnnotations());
+        Assert.Equal(PresentationAnnotationKind.Freehand, host.GetAnnotations()[0].Kind);
+    }
+
+    [Fact]
+    public async Task PresentationSessionHost_SendsExistingAnnotationsToLateJoiners()
+    {
+        int port = GetFreePort();
+        var tlsConfiguration = new TlsConfiguration { Enabled = false };
+
+        await using var host = new PresentationSessionHost(tlsConfiguration);
+        await host.StartAsync(port);
+        await host.ActivateAsync("123456", "Architecture Review");
+
+        await host.BroadcastAnnotationAsync(new PresentationAnnotationMessage
+        {
+            Action = PresentationAnnotationAction.Upsert,
+            ChangedByDeviceId = "host-presenter",
+            ChangedAtUtc = DateTime.UtcNow,
+            Annotation = new PresentationAnnotation
+            {
+                AnnotationId = "persistent-annotation",
+                Kind = PresentationAnnotationKind.Rectangle,
+                CreatedByDeviceId = "host-presenter",
+                CreatedAtUtc = DateTime.UtcNow,
+                Style = new PresentationAnnotationStyle
+                {
+                    StrokeColor = "#F97316",
+                    StrokeWidth = 6,
+                    Opacity = 0.8
+                },
+                Points =
+                [
+                    new PresentationAnnotationPoint { X = 0.2, Y = 0.2 },
+                    new PresentationAnnotationPoint { X = 0.7, Y = 0.6 }
+                ]
+            }
+        });
+
+        var annotationTcs = new TaskCompletionSource<PresentationAnnotationMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var lateViewer = new PresentationSessionClient(tlsConfiguration);
+        lateViewer.AnnotationReceived += (_, annotation) => annotationTcs.TrySetResult(annotation);
+
+        var response = await lateViewer.ConnectAsync(
+            new DeviceInfo
+            {
+                DeviceId = "presentation-host",
+                DeviceName = "Presentation Host",
+                IPAddress = "127.0.0.1",
+                PresentationPort = port,
+                SupportsPresentationMode = true,
+                PresentationSessionActive = true,
+                Type = DeviceType.Desktop
+            },
+            "123456",
+            "late-viewer",
+            "Late Viewer");
+
+        Assert.True(response.Success);
+
+        var received = await annotationTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(PresentationAnnotationAction.Upsert, received.Action);
+        Assert.Equal("persistent-annotation", received.Annotation?.AnnotationId);
+        Assert.Equal(PresentationAnnotationKind.Rectangle, received.Annotation?.Kind);
+    }
+
+    [Fact]
     public void PresentationAnnotationBoard_AppliesUpsertsRemovalsAndClear()
     {
         var board = new PresentationAnnotationBoard();

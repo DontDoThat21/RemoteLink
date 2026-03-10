@@ -40,6 +40,24 @@ public sealed class PresentationSessionClient : IAsyncDisposable
     public event EventHandler<PresentationAnnotationMessage>? AnnotationReceived;
     public event EventHandler<bool>? ConnectionStateChanged;
 
+    public async Task SendAnnotationAsync(PresentationAnnotationMessage annotationMessage, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(annotationMessage);
+
+        if (_stream is null)
+            throw new InvalidOperationException("The presentation client is not connected.");
+
+        var effectiveToken = cancellationToken;
+        if (!effectiveToken.CanBeCanceled && _cts is not null)
+            effectiveToken = _cts.Token;
+
+        await SendEnvelopeAsync(new PresentationEnvelope
+        {
+            MessageType = MessageTypeAnnotation,
+            Payload = Encode(annotationMessage)
+        }, effectiveToken).ConfigureAwait(false);
+    }
+
     public async Task<PresentationJoinResponse> ConnectAsync(DeviceInfo host, string pin, string viewerDeviceId, string viewerDeviceName, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(host);

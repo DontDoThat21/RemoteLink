@@ -283,6 +283,23 @@ public class RemoteDesktopClient
                 return false;
             }
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Pairing timed out connecting to {Host}", host.DeviceName);
+            PairingFailed?.Invoke(this, "Pairing timed out — ensure the host is ready.");
+            await CleanupCommAsync(comm);
+            SetState(ClientConnectionState.Disconnected);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Pairing error with {Host}", host.DeviceName);
+            PairingFailed?.Invoke(this, $"Pairing error: {ex.Message}");
+            await CleanupCommAsync(comm);
+            SetState(ClientConnectionState.Disconnected);
+            return false;
+        }
+    }
 
     /// <summary>
     /// Connects to a host's presentation stream using the current host PIN.
@@ -338,23 +355,6 @@ public class RemoteDesktopClient
         await CleanupPresentationClientAsync(presentationClient);
         SetState(ClientConnectionState.Disconnected);
         return false;
-    }
-        catch (OperationCanceledException)
-        {
-            _logger.LogWarning("Pairing timed out connecting to {Host}", host.DeviceName);
-            PairingFailed?.Invoke(this, "Pairing timed out — ensure the host is ready.");
-            await CleanupCommAsync(comm);
-            SetState(ClientConnectionState.Disconnected);
-            return false;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Pairing error with {Host}", host.DeviceName);
-            PairingFailed?.Invoke(this, $"Pairing error: {ex.Message}");
-            await CleanupCommAsync(comm);
-            SetState(ClientConnectionState.Disconnected);
-            return false;
-        }
     }
 
     /// <summary>

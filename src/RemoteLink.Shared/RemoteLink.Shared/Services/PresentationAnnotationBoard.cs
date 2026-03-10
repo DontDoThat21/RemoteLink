@@ -19,7 +19,7 @@ public sealed class PresentationAnnotationBoard
         }
     }
 
-    public void Apply(PresentationAnnotationMessage message)
+    public PresentationAnnotationMessage Apply(PresentationAnnotationMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
@@ -55,8 +55,11 @@ public sealed class PresentationAnnotationBoard
             }
         }
 
-        if (raisedMessage is not null)
-            Changed?.Invoke(this, raisedMessage);
+        if (raisedMessage is null)
+            throw new InvalidOperationException($"Unsupported annotation action: {message.Action}.");
+
+        Changed?.Invoke(this, raisedMessage);
+        return raisedMessage;
     }
 
     public void Clear(string? changedByDeviceId = null)
