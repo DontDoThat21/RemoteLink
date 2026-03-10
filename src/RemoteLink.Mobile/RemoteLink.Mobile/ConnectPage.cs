@@ -23,6 +23,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private readonly RemoteDesktopClient _client;
     private readonly INetworkDiscovery _networkDiscovery;
     private readonly IConnectionHistoryService _connectionHistory;
+    private readonly IAppSettingsService _settingsService;
 
     // Touch-to-mouse translation
     private readonly TouchToMouseTranslator _touchTranslator = new();
@@ -36,6 +37,10 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private string _statusMessage = "Initializing...";
     private readonly List<DeviceInfo> _availableHosts = new();
     private bool _isManualConnecting;
+    private bool _showConnectionNotifications = true;
+    private bool _adaptiveQualityEnabled = true;
+    private float _gestureSensitivity = 1.0f;
+    private bool _hasConnectedSession;
 
     // Throttle frame rendering
     private volatile bool _frameRenderBusy;
@@ -59,6 +64,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private Image _remoteViewer = null!;
     private Label _statusLabel = null!;
     private ActivityIndicator _activityIndicator = null!;
+    private Border _qualityOverlay = null!;
+    private Label _qualityTitleLabel = null!;
+    private Label _qualityDetailsLabel = null!;
     private Border _sessionToolbar = null!;
     private Border _specialKeysBar = null!;
     private Entry _keyCaptureEntry = null!;
@@ -106,12 +114,18 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         set { _statusMessage = value; OnPropertyChanged(); }
     }
 
-    public ConnectPage(ILogger<ConnectPage> logger, RemoteDesktopClient client, INetworkDiscovery networkDiscovery, IConnectionHistoryService connectionHistory)
+    public ConnectPage(
+        ILogger<ConnectPage> logger,
+        RemoteDesktopClient client,
+        INetworkDiscovery networkDiscovery,
+        IConnectionHistoryService connectionHistory,
+        IAppSettingsService settingsService)
     {
         _logger = logger;
         _client = client;
         _networkDiscovery = networkDiscovery;
         _connectionHistory = connectionHistory;
+        _settingsService = settingsService;
 
         Title = "Connect";
         BackgroundColor = Colors.White;
@@ -124,12 +138,18 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         _client.ServiceStatusChanged += OnServiceStatusChanged;
         _client.ConnectionStateChanged += OnConnectionStateChanged;
         _client.PairingFailed += OnPairingFailed;
+        _client.ConnectionQualityUpdated += OnConnectionQualityUpdated;
         _client.ScreenDataReceived += OnScreenDataReceived;
+        _settingsService.SettingsSaved += OnSettingsSaved;
+
+        ApplyConnectionQuality(_client.CurrentConnectionQuality);
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        await LoadSettingsAsync();
 
         // Reset manual connect UI when returning from a disconnected state
         if (!_client.IsConnected && _isManualConnecting)
@@ -156,6 +176,32 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 _logger.LogError(ex, "Failed to start discovery");
             }
         }
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        try
+        {
+            await _settingsService.LoadAsync();
+            ApplySettings(_settingsService.Current);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load mobile settings");
+        }
+    }
+
+    private void OnSettingsSaved(object? sender, EventArgs e)
+    {
+        MainThread.BeginInvokeOnMainThread(() => ApplySettings(_settingsService.Current));
+    }
+
+    private void ApplySettings(AppSettings settings)
+    {
+        _showConnectionNotifications = settings.General.ShowConnectionNotifications;
+        _adaptiveQualityEnabled = settings.Display.EnableAdaptiveQuality;
+        _selectedQuality = Math.Clamp(settings.Display.ImageQuality, 50, 85);
+        _gestureSensitivity = Math.Clamp((float)settings.Input.GestureSensitivity, 0.5f, 2.0f);
     }
 
     // ── Layout ─────────────────────────────────────────────────────────
@@ -269,6 +315,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         root.Add(_discoveredSection);
 
         _sessionToolbar = BuildSessionToolbar();
+        _qualityOverlay = BuildQualityOverlay();
         _specialKeysBar = BuildSpecialKeysBar();
         _monitorSelectorPanel = BuildMonitorSelectorPanel();
         _keyCaptureEntry = BuildKeyCaptureEntry();
@@ -280,7 +327,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Padding = new Thickness(16, 0, 16, 16),
             VerticalOptions = LayoutOptions.End,
             HorizontalOptions = LayoutOptions.Fill,
-            Children = { _specialKeysBar, _monitorSelectorPanel, _sessionToolbar, _keyCaptureEntry }
+            Children = { _qualityOverlay, _specialKeysBar, _monitorSelectorPanel, _sessionToolbar, _keyCaptureEntry }
         };
 
         var layout = new Grid();
@@ -343,6 +390,48 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                         }
                     }
                 }
+            }
+        };
+    }
+
+    private Border BuildQualityOverlay()
+    {
+        _qualityTitleLabel = new Label
+        {
+            Text = "Quality: --",
+            FontSize = 12,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = Color.FromArgb("#616161")
+        };
+
+        _qualityDetailsLabel = new Label
+        {
+            Text = "Connect to see live quality.",
+            FontSize = 11,
+            TextColor = Color.FromArgb("#616161")
+        };
+
+        return new Border
+        {
+            IsVisible = false,
+            HorizontalOptions = LayoutOptions.End,
+            MaximumWidthRequest = 260,
+            BackgroundColor = Color.FromArgb("#F5F5F5"),
+            Stroke = Color.FromArgb("#D0D0D0"),
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
+            Padding = new Thickness(12, 8),
+            Shadow = new Shadow
+            {
+                Brush = Brush.Black,
+                Opacity = 0.10f,
+                Radius = 12,
+                Offset = new Point(0, 4)
+            },
+            Content = new VerticalStackLayout
+            {
+                Spacing = 2,
+                Children = { _qualityTitleLabel, _qualityDetailsLabel }
             }
         };
     }
@@ -903,6 +992,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     {
         bool isConnected = _client.IsConnected;
 
+        if (_qualityOverlay != null)
+            _qualityOverlay.IsVisible = isConnected;
+
         if (_sessionToolbar != null)
             _sessionToolbar.IsVisible = isConnected;
 
@@ -920,6 +1012,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             _isMonitorSelectorLoading = false;
             _activeModifiers.Clear();
             _remoteMonitors.Clear();
+            ApplyConnectionQuality(null);
 
             if (_monitorCarousel != null)
             {
@@ -959,6 +1052,43 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             modifier.Value.BackgroundColor = isActive ? Color.FromArgb("#2E7D32") : Color.FromArgb("#EFEAFF");
             modifier.Value.TextColor = isActive ? Colors.White : Color.FromArgb("#512BD4");
         }
+    }
+
+    private void ApplyConnectionQuality(ConnectionQuality? quality)
+    {
+        if (_qualityOverlay == null || _qualityTitleLabel == null || _qualityDetailsLabel == null)
+            return;
+
+        if (quality == null)
+        {
+            _qualityTitleLabel.Text = _client.IsConnected ? "Quality: Measuring..." : "Quality: --";
+            _qualityDetailsLabel.Text = _client.IsConnected
+                ? "Waiting for live connection metrics..."
+                : "Connect to see live quality.";
+            ApplyQualityPalette(null);
+            return;
+        }
+
+        _qualityTitleLabel.Text = $"Quality: {quality.Rating}";
+        _qualityDetailsLabel.Text = $"{Math.Round(quality.Fps):0} FPS • {quality.Latency} ms • {quality.GetBandwidthString()}";
+        ApplyQualityPalette(quality.Rating);
+    }
+
+    private void ApplyQualityPalette(QualityRating? rating)
+    {
+        var (background, border, text) = rating switch
+        {
+            QualityRating.Excellent => (Color.FromArgb("#E8F5E9"), Color.FromArgb("#2E7D32"), Color.FromArgb("#1B5E20")),
+            QualityRating.Good => (Color.FromArgb("#E3F2FD"), Color.FromArgb("#1565C0"), Color.FromArgb("#0D47A1")),
+            QualityRating.Fair => (Color.FromArgb("#FFF8E1"), Color.FromArgb("#EF6C00"), Color.FromArgb("#E65100")),
+            QualityRating.Poor => (Color.FromArgb("#FFEBEE"), Color.FromArgb("#C62828"), Color.FromArgb("#B71C1C")),
+            _ => (Color.FromArgb("#F5F5F5"), Color.FromArgb("#D0D0D0"), Color.FromArgb("#616161"))
+        };
+
+        _qualityOverlay.BackgroundColor = background;
+        _qualityOverlay.Stroke = border;
+        _qualityTitleLabel.TextColor = text;
+        _qualityDetailsLabel.TextColor = text;
     }
 
     private async void OnKeyboardToggleClicked(object? sender, EventArgs e)
@@ -1778,6 +1908,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             {
                 case ClientConnectionState.Connected:
                     var hostName = _client.ConnectedHost?.DeviceName ?? "Unknown";
+                    _hasConnectedSession = true;
                     _connectedHostLabel.Text = $"Connected to {hostName}";
                     _connectedBanner.IsVisible = true;
                     _remoteViewer.IsVisible = true;
@@ -1785,11 +1916,16 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _scanQrButton.IsVisible = false;
                     _discoveredSection.IsVisible = false;
                     StatusMessage = $"Connected to {hostName}";
+                    ApplyConnectionQuality(_client.CurrentConnectionQuality);
                     UpdateSessionOverlayVisibility();
+                    _ = ApplyPreferredSessionSettingsAsync(hostName);
+                    _ = ShowConnectionNotificationAsync("Connected", $"Connected to {hostName}.");
                     _ = WarmMonitorSelectorAsync();
                     break;
 
                 case ClientConnectionState.Disconnected:
+                    var hadConnectedSession = _hasConnectedSession;
+                    _hasConnectedSession = false;
                     if (_connectionStartedAt.HasValue)
                     {
                         var records = _connectionHistory.GetAll();
@@ -1816,9 +1952,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _selectedQuality = 75;
                     _monitorSelectorStatusLabel.Text = "Loading remote monitors...";
                     _monitorSelectorStatusLabel.TextColor = Colors.Gray;
+                    ApplyConnectionQuality(null);
                     UpdateSessionOverlayVisibility();
                     if (StatusMessage.StartsWith("Connected"))
                         StatusMessage = "Disconnected. Scanning for hosts...";
+
+                    if (hadConnectedSession)
+                        _ = ShowConnectionNotificationAsync("Disconnected", "Remote session ended.");
+
                     break;
 
                 case ClientConnectionState.Connecting:
@@ -1835,6 +1976,36 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private void OnPairingFailed(object? sender, string reason)
     {
         MainThread.BeginInvokeOnMainThread(() => StatusMessage = $"Pairing failed: {reason}");
+    }
+
+    private void OnConnectionQualityUpdated(object? sender, ConnectionQuality quality)
+    {
+        MainThread.BeginInvokeOnMainThread(() => ApplyConnectionQuality(quality));
+    }
+
+    private async Task ApplyPreferredSessionSettingsAsync(string hostName)
+    {
+        if (_adaptiveQualityEnabled || !_client.IsConnected)
+            return;
+
+        try
+        {
+            _selectedQuality = await _client.SetRemoteQualityAsync(_selectedQuality);
+            MainThread.BeginInvokeOnMainThread(() =>
+                StatusMessage = $"Connected to {hostName} • Preferred quality {_selectedQuality}% applied.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to apply preferred session quality");
+        }
+    }
+
+    private Task ShowConnectionNotificationAsync(string title, string message)
+    {
+        if (!_showConnectionNotifications)
+            return Task.CompletedTask;
+
+        return DisplayAlertAsync(title, message, "OK");
     }
 
     private void OnServiceStatusChanged(object? sender, string status)
@@ -1927,12 +2098,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 _panStartY = (float)(surface.Height / 2);
                 break;
             case GestureStatus.Running:
+                var scaledTotalX = (float)e.TotalX * _gestureSensitivity;
+                var scaledTotalY = (float)e.TotalY * _gestureSensitivity;
                 ForwardGesture(new TouchGestureData
                 {
                     GestureType = TouchGestureType.Pan,
-                    X = _panStartX + (float)e.TotalX,
-                    Y = _panStartY + (float)e.TotalY,
-                    DeltaX = (float)e.TotalX, DeltaY = (float)e.TotalY,
+                    X = _panStartX + scaledTotalX,
+                    Y = _panStartY + scaledTotalY,
+                    DeltaX = scaledTotalX, DeltaY = scaledTotalY,
                     DisplayWidth = (float)surface.Width, DisplayHeight = (float)surface.Height
                 });
                 break;
@@ -1942,7 +2115,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private void OnScrolled(object? sender, PinchGestureUpdatedEventArgs e)
     {
         if (e.Status != GestureStatus.Running || sender is not View surface) return;
-        float pixelDelta = (float)((1.0 - e.Scale) * 80.0);
+        float pixelDelta = (float)((1.0 - e.Scale) * 80.0 * _gestureSensitivity);
         ForwardGesture(new TouchGestureData
         {
             GestureType = TouchGestureType.Scroll,

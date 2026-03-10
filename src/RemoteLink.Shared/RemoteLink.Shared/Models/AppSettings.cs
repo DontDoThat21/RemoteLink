@@ -1,7 +1,7 @@
 namespace RemoteLink.Shared.Models;
 
 /// <summary>
-/// Persisted application settings for RemoteLink Desktop.
+/// Persisted application settings for RemoteLink applications.
 /// All sections are represented as nested classes for logical grouping.
 /// </summary>
 public class AppSettings
@@ -17,6 +17,9 @@ public class AppSettings
 
     /// <summary>Screen-capture and image-quality preferences.</summary>
     public DisplaySettings Display { get; set; } = new();
+
+    /// <summary>Client-side input preferences.</summary>
+    public InputSettings Input { get; set; } = new();
 
     /// <summary>Audio capture preferences.</summary>
     public AudioSettings Audio { get; set; } = new();
@@ -83,6 +86,9 @@ public class AppSettings
     /// <summary>Screen-capture and image quality settings.</summary>
     public class DisplaySettings
     {
+        /// <summary>Allow the host to adapt image quality automatically based on network conditions.</summary>
+        public bool EnableAdaptiveQuality { get; set; } = true;
+
         /// <summary>Maximum frames per second sent to connected clients.</summary>
         public int TargetFps { get; set; } = 30;
 
@@ -94,6 +100,13 @@ public class AppSettings
 
         /// <summary>Send only changed regions between frames (delta encoding).</summary>
         public bool UseDeltaEncoding { get; set; } = true;
+    }
+
+    /// <summary>Client-side touch and gesture settings.</summary>
+    public class InputSettings
+    {
+        /// <summary>Multiplier applied to touch gesture movement and scroll translation.</summary>
+        public double GestureSensitivity { get; set; } = 1.0;
     }
 
     /// <summary>Audio capture settings.</summary>

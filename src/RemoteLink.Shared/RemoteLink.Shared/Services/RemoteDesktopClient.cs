@@ -58,6 +58,9 @@ public class RemoteDesktopClient
     /// <summary>Fired when pairing fails, with a human-readable reason string.</summary>
     public event EventHandler<string>? PairingFailed;
 
+    /// <summary>Fired when the connected host publishes updated connection quality metrics.</summary>
+    public event EventHandler<ConnectionQuality>? ConnectionQualityUpdated;
+
     // ── Properties ────────────────────────────────────────────────────────────
 
     /// <summary>Current connection lifecycle state.</summary>
@@ -71,6 +74,9 @@ public class RemoteDesktopClient
 
     /// <summary>The active communication service for the current connection, if any.</summary>
     public ICommunicationService? CurrentCommunicationService => _communicationService;
+
+    /// <summary>The latest connection quality metrics received from the connected host.</summary>
+    public ConnectionQuality? CurrentConnectionQuality { get; private set; }
 
     /// <summary>Session token returned by the host on successful pairing.</summary>
     public string? SessionToken { get; private set; }
@@ -181,6 +187,7 @@ public class RemoteDesktopClient
         comm.ScreenDataReceived += OnScreenDataReceived;
         comm.ConnectionStateChanged += OnCommConnectionStateChanged;
         comm.PairingResponseReceived += OnPairingResponseReceived;
+        comm.ConnectionQualityReceived += OnConnectionQualityReceived;
         comm.SessionControlResponseReceived += OnSessionControlResponseReceived;
 
         bool tcpConnected;
@@ -282,6 +289,7 @@ public class RemoteDesktopClient
         _pairingTcs?.TrySetCanceled();
         _pairingTcs = null;
         CancelPendingSessionControlRequests();
+        CurrentConnectionQuality = null;
 
         SessionToken = null;
         ConnectedHost = null;
@@ -373,6 +381,7 @@ public class RemoteDesktopClient
         {
             _logger.LogWarning("Lost TCP connection to {Host}", ConnectedHost?.DeviceName);
             CancelPendingSessionControlRequests();
+            CurrentConnectionQuality = null;
             SetState(ClientConnectionState.Disconnected);
             ServiceStatusChanged?.Invoke(this, "Disconnected from host.");
         }
@@ -381,6 +390,12 @@ public class RemoteDesktopClient
     private void OnPairingResponseReceived(object? sender, PairingResponse response)
     {
         _pairingTcs?.TrySetResult(response);
+    }
+
+    private void OnConnectionQualityReceived(object? sender, ConnectionQuality quality)
+    {
+        CurrentConnectionQuality = quality;
+        ConnectionQualityUpdated?.Invoke(this, quality);
     }
 
     private void OnSessionControlResponseReceived(object? sender, SessionControlResponse response)
@@ -418,6 +433,7 @@ public class RemoteDesktopClient
         comm.ScreenDataReceived -= OnScreenDataReceived;
         comm.ConnectionStateChanged -= OnCommConnectionStateChanged;
         comm.PairingResponseReceived -= OnPairingResponseReceived;
+        comm.ConnectionQualityReceived -= OnConnectionQualityReceived;
         comm.SessionControlResponseReceived -= OnSessionControlResponseReceived;
 
         try { await comm.DisconnectAsync(); } catch { /* ignore */ }

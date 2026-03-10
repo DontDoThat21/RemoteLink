@@ -46,6 +46,9 @@ public static class MauiProgram
         // Connection history
         builder.Services.AddSingleton<IConnectionHistoryService, ConnectionHistoryService>();
 
+        // Shared application settings
+        builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
+
         // Remote desktop client (singleton shared across all pages)
         builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
         {
