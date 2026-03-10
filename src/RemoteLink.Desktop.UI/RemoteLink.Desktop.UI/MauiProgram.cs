@@ -66,6 +66,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IPerformanceMonitor, PerformanceMonitor>();
         builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
         builder.Services.AddSingleton<IMessagingService, MessagingService>();
+        builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
 
         // Network discovery
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>

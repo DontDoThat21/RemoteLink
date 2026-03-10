@@ -83,6 +83,7 @@ class Program
         builder.Services.AddSingleton<IPerformanceMonitor, PerformanceMonitor>();
         builder.Services.AddSingleton<IWakeOnLanService, WakeOnLanService>();
         builder.Services.AddSingleton<IMessagingService, MessagingService>();
+        builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
         
         // Use Windows print service on Windows; fall back to mock on Linux/macOS.
         if (OperatingSystem.IsWindows())

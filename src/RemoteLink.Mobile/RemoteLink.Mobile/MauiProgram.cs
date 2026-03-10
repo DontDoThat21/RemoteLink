@@ -57,6 +57,7 @@ public static class MauiProgram
 
         // Connection history
         builder.Services.AddSingleton<IConnectionHistoryService, ConnectionHistoryService>();
+        builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
 
         // Shared application settings
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
