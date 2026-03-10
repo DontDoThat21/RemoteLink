@@ -38,6 +38,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
 
     private readonly RelayConfiguration _configuration;
     private readonly SecureTunnelConfiguration _secureTunnelConfiguration;
+    private readonly ProxyConfiguration _proxyConfiguration;
     private readonly DeviceInfo _localDevice;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
@@ -60,11 +61,13 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
     public RelayCommunicationService(
         DeviceInfo localDevice,
         RelayConfiguration? configuration = null,
-        SecureTunnelConfiguration? secureTunnelConfiguration = null)
+        SecureTunnelConfiguration? secureTunnelConfiguration = null,
+        ProxyConfiguration? proxyConfiguration = null)
     {
         _localDevice = localDevice ?? throw new ArgumentNullException(nameof(localDevice));
         _configuration = configuration ?? new RelayConfiguration();
         _secureTunnelConfiguration = secureTunnelConfiguration ?? new SecureTunnelConfiguration();
+        _proxyConfiguration = proxyConfiguration ?? new ProxyConfiguration();
         _configuration.ApplyTo(_localDevice);
         _secureTunnelConfiguration.ApplyTo(_localDevice);
     }
@@ -238,11 +241,9 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
 
         await CloseRelayConnectionAsync();
 
-        _relayClient = new TcpClient();
-        _cts = new CancellationTokenSource();
-
         using var timeoutCts = new CancellationTokenSource(_configuration.ConnectTimeout);
-        await _relayClient.ConnectAsync(relayHost, relayPort, timeoutCts.Token);
+        _relayClient = await ProxyTcpClientFactory.ConnectAsync(relayHost, relayPort, _proxyConfiguration, timeoutCts.Token);
+        _cts = new CancellationTokenSource();
 
         _connectedRelayHost = relayHost;
         _connectedRelayPort = relayPort;

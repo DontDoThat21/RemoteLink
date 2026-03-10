@@ -29,6 +29,7 @@ public static class MauiProgram
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
         var signalingConfiguration = SignalingConfiguration.FromEnvironment();
+        var proxyConfiguration = ProxyConfiguration.FromEnvironment();
         var secureTunnelConfiguration = SecureTunnelConfiguration.FromEnvironment();
         var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
             "mobile-client",
@@ -40,6 +41,7 @@ public static class MauiProgram
 
         builder.Services.AddSingleton(relayConfiguration);
         builder.Services.AddSingleton(signalingConfiguration);
+        builder.Services.AddSingleton(proxyConfiguration);
         builder.Services.AddSingleton(secureTunnelConfiguration);
         builder.Services.AddSingleton(localDevice);
         builder.Services.AddSingleton<ISignalingService, SignalingService>();

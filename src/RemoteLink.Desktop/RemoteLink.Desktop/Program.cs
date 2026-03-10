@@ -57,6 +57,7 @@ class Program
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
         var signalingConfiguration = SignalingConfiguration.FromEnvironment();
+        var proxyConfiguration = ProxyConfiguration.FromEnvironment();
         var secureTunnelConfiguration = SecureTunnelConfiguration.FromEnvironment();
         var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
             "desktop-host",
@@ -68,6 +69,7 @@ class Program
 
         builder.Services.AddSingleton(relayConfiguration);
         builder.Services.AddSingleton(signalingConfiguration);
+        builder.Services.AddSingleton(proxyConfiguration);
         builder.Services.AddSingleton(secureTunnelConfiguration);
         builder.Services.AddSingleton(localDevice);
         builder.Services.AddSingleton<ISignalingService, SignalingService>();

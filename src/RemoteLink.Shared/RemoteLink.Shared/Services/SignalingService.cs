@@ -11,6 +11,7 @@ namespace RemoteLink.Shared.Services;
 public sealed class SignalingService : ISignalingService, IDisposable
 {
     private readonly SignalingConfiguration _configuration;
+    private readonly ProxyConfiguration _proxyConfiguration;
     private readonly SemaphoreSlim _sync = new(1, 1);
 
     private DeviceInfo? _registeredDevice;
@@ -18,9 +19,10 @@ public sealed class SignalingService : ISignalingService, IDisposable
     private Task? _refreshTask;
     private bool _disposed;
 
-    public SignalingService(SignalingConfiguration? configuration = null)
+    public SignalingService(SignalingConfiguration? configuration = null, ProxyConfiguration? proxyConfiguration = null)
     {
         _configuration = configuration ?? new SignalingConfiguration();
+        _proxyConfiguration = proxyConfiguration ?? new ProxyConfiguration();
     }
 
     public bool IsConfigured => _configuration.IsConfigured;
@@ -162,11 +164,10 @@ public sealed class SignalingService : ISignalingService, IDisposable
 
     private async Task<SignalingFrame> ExchangeFrameAsync(SignalingFrame frame, CancellationToken cancellationToken)
     {
-        using var client = new TcpClient();
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(_configuration.ConnectTimeout);
 
-        await client.ConnectAsync(_configuration.ServerHost, _configuration.ServerPort, timeoutCts.Token);
+        using var client = await ProxyTcpClientFactory.ConnectAsync(_configuration.ServerHost, _configuration.ServerPort, _proxyConfiguration, timeoutCts.Token);
         await using var stream = client.GetStream();
         await SendFrameAsync(stream, frame, timeoutCts.Token);
         return await ReadFrameAsync(stream, timeoutCts.Token)

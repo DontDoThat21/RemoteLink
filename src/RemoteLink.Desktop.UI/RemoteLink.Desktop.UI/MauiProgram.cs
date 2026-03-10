@@ -37,6 +37,7 @@ public static class MauiProgram
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
         var signalingConfiguration = SignalingConfiguration.FromEnvironment();
+        var proxyConfiguration = ProxyConfiguration.FromEnvironment();
         var secureTunnelConfiguration = SecureTunnelConfiguration.FromEnvironment();
         var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
             "desktop-ui",

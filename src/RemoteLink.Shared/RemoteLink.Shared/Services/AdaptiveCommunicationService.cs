@@ -15,6 +15,7 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
     private readonly TcpCommunicationService _tcpService;
     private readonly UdpNatCommunicationService _udpService;
     private readonly RelayCommunicationService? _relayService;
+    private readonly ProxyConfiguration? _proxyConfiguration;
     private readonly SecureTunnelConfiguration? _secureTunnelConfiguration;
     private readonly ISignalingService? _signalingService;
     private ICommunicationService? _activeService;
@@ -25,18 +26,20 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
         DeviceInfo? localDevice = null,
         RelayConfiguration? relayConfiguration = null,
         ISignalingService? signalingService = null,
+        ProxyConfiguration? proxyConfiguration = null,
         SecureTunnelConfiguration? secureTunnelConfiguration = null,
         ILogger<AdaptiveCommunicationService>? logger = null)
     {
         _logger = logger ?? NullLogger<AdaptiveCommunicationService>.Instance;
         _localDevice = localDevice;
+        _proxyConfiguration = proxyConfiguration;
         _secureTunnelConfiguration = secureTunnelConfiguration;
         if (_localDevice is not null && _secureTunnelConfiguration is not null)
             _secureTunnelConfiguration.ApplyTo(_localDevice);
         _tcpService = new TcpCommunicationService();
         _udpService = new UdpNatCommunicationService(natTraversalService);
         _relayService = localDevice is not null && relayConfiguration?.IsConfigured == true
-            ? new RelayCommunicationService(localDevice, relayConfiguration, secureTunnelConfiguration)
+            ? new RelayCommunicationService(localDevice, relayConfiguration, secureTunnelConfiguration, _proxyConfiguration)
             : null;
         _signalingService = signalingService;
 
