@@ -23,14 +23,16 @@ public class RecentConnectionsPage : ContentPage
         _historyService = historyService;
 
         Title = "Recent Connections";
-        BackgroundColor = Colors.White;
-
-        Content = BuildLayout();
+        RefreshTheme();
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        ThemeColors.ThemeChanged += OnThemeChanged;
+
+        RefreshTheme();
 
         if (!_loaded)
         {
@@ -39,6 +41,27 @@ public class RecentConnectionsPage : ContentPage
         }
 
         RefreshList();
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        ThemeColors.ThemeChanged -= OnThemeChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshTheme();
+            RefreshList();
+        });
+    }
+
+    private void RefreshTheme()
+    {
+        BackgroundColor = ThemeColors.PageBackground;
+        Content = BuildLayout();
     }
 
     private View BuildLayout()
@@ -55,7 +78,7 @@ public class RecentConnectionsPage : ContentPage
             Text = "Recent Connections",
             FontSize = 24,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4"),
+            TextColor = ThemeColors.Accent,
             Margin = new Thickness(0, 8, 0, 0)
         });
 
@@ -63,7 +86,7 @@ public class RecentConnectionsPage : ContentPage
         {
             Text = "Your past remote desktop sessions",
             FontSize = 13,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 0, 0, 4)
         });
 
@@ -72,8 +95,8 @@ public class RecentConnectionsPage : ContentPage
         {
             Text = "Clear History",
             FontSize = 13,
-            BackgroundColor = Color.FromArgb("#FFE8E8"),
-            TextColor = Color.FromArgb("#C62828"),
+            BackgroundColor = ThemeColors.DangerSoft,
+            TextColor = ThemeColors.Danger,
             CornerRadius = 6,
             HeightRequest = 36,
             HorizontalOptions = LayoutOptions.End,
@@ -85,7 +108,7 @@ public class RecentConnectionsPage : ContentPage
         // Separator
         root.Add(new BoxView
         {
-            Color = Color.FromArgb("#E0E0E0"),
+            Color = ThemeColors.Divider,
             HeightRequest = 1,
             HorizontalOptions = LayoutOptions.Fill
         });
@@ -95,7 +118,7 @@ public class RecentConnectionsPage : ContentPage
         {
             Text = "No connection history yet.\nConnect to a remote host to see your sessions here.",
             FontSize = 14,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             HorizontalTextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 40, 0, 0)
         };
@@ -135,7 +158,7 @@ public class RecentConnectionsPage : ContentPage
                 Text = dateText,
                 FontSize = 14,
                 FontAttributes = FontAttributes.Bold,
-                TextColor = Color.FromArgb("#666666"),
+                TextColor = ThemeColors.TextSecondary,
                 Margin = new Thickness(0, 8, 0, 4)
             });
 
@@ -148,23 +171,23 @@ public class RecentConnectionsPage : ContentPage
     {
         var (outcomeColor, outcomeText) = record.Outcome switch
         {
-            ConnectionOutcome.Success => (Color.FromArgb("#4CAF50"), "Connected"),
-            ConnectionOutcome.Failed => (Color.FromArgb("#C62828"), "Failed"),
-            ConnectionOutcome.Disconnected => (Color.FromArgb("#FF8F00"), "Disconnected"),
-            ConnectionOutcome.Error => (Color.FromArgb("#C62828"), "Error"),
-            _ => (Colors.Gray, "Unknown")
+            ConnectionOutcome.Success => (ThemeColors.SuccessText, "Connected"),
+            ConnectionOutcome.Failed => (ThemeColors.DangerText, "Failed"),
+            ConnectionOutcome.Disconnected => (ThemeColors.WarningText, "Disconnected"),
+            ConnectionOutcome.Error => (ThemeColors.DangerText, "Error"),
+            _ => (ThemeColors.TextSecondary, "Unknown")
         };
 
         var card = new Border
         {
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#DADCE0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
             Padding = new Thickness(14),
             Shadow = new Shadow
             {
-                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Offset = new Point(0, 2),
                 Radius = 6
             }
@@ -199,14 +222,14 @@ public class RecentConnectionsPage : ContentPage
             Text = record.DeviceName,
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.Black
+            TextColor = ThemeColors.TextPrimary
         });
 
         infoStack.Add(new Label
         {
             Text = $"{record.IPAddress}:{record.Port}",
             FontSize = 12,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         });
 
         // Time
@@ -214,7 +237,7 @@ public class RecentConnectionsPage : ContentPage
         {
             Text = record.ConnectedAt.ToLocalTime().ToString("h:mm tt"),
             FontSize = 12,
-            TextColor = Color.FromArgb("#888888")
+            TextColor = ThemeColors.TextMuted
         });
 
         // Duration
@@ -228,7 +251,7 @@ public class RecentConnectionsPage : ContentPage
             {
                 Text = $"Duration: {durationText}",
                 FontSize = 11,
-                TextColor = Color.FromArgb("#888888")
+                TextColor = ThemeColors.TextMuted
             });
         }
 

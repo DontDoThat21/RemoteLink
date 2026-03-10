@@ -14,11 +14,8 @@ public class AppShell : Shell
     {
         _chatSession = chatSession;
 
-        // Shell styling
         Shell.SetFlyoutBehavior(this, FlyoutBehavior.Disabled);
-        Shell.SetTabBarBackgroundColor(this, Color.FromArgb("#FFFFFF"));
-        Shell.SetTabBarTitleColor(this, Color.FromArgb("#512BD4"));
-        Shell.SetTabBarUnselectedColor(this, Color.FromArgb("#999999"));
+        ApplyTheme();
 
         var tabBar = new TabBar();
 
@@ -35,7 +32,21 @@ public class AppShell : Shell
         Routing.RegisterRoute("RecentConnections", typeof(RecentConnectionsPage));
 
         _chatSession.UnreadCountChanged += OnUnreadCountChanged;
+        ThemeColors.ThemeChanged += OnThemeChanged;
         UpdateChatTabTitle();
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(ApplyTheme);
+    }
+
+    private void ApplyTheme()
+    {
+        BackgroundColor = ThemeColors.PageBackground;
+        Shell.SetTabBarBackgroundColor(this, ThemeColors.TabBarBackground);
+        Shell.SetTabBarTitleColor(this, ThemeColors.Accent);
+        Shell.SetTabBarUnselectedColor(this, ThemeColors.TabBarUnselected);
     }
 
     private void OnUnreadCountChanged(object? sender, int unreadCount)
@@ -74,7 +85,7 @@ public class AppShell : Shell
             },
             FontFamily = null, // uses system default
             Size = 22,
-            Color = Color.FromArgb("#512BD4")
+            Color = ThemeColors.Accent
         };
 
         return content;

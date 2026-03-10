@@ -10,6 +10,7 @@ public class MobileSettingsPage : ContentPage
 {
     private readonly IAppSettingsService _settingsService;
 
+    private Picker _themePicker = null!;
     private Switch _adaptiveQualitySwitch = null!;
     private Slider _qualitySlider = null!;
     private Label _qualityValueLabel = null!;
@@ -25,13 +26,15 @@ public class MobileSettingsPage : ContentPage
         _settingsService = settingsService;
 
         Title = "Settings";
-        BackgroundColor = Colors.White;
-        Content = BuildLayout();
+        RefreshTheme();
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        ThemeColors.ThemeChanged += OnThemeChanged;
+        RefreshTheme();
 
         try
         {
@@ -44,20 +47,46 @@ public class MobileSettingsPage : ContentPage
         }
     }
 
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        ThemeColors.ThemeChanged -= OnThemeChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshTheme();
+            PopulateControls(_settingsService.Current);
+        });
+    }
+
+    private void RefreshTheme()
+    {
+        BackgroundColor = ThemeColors.PageBackground;
+        Content = BuildLayout();
+    }
+
     private View BuildLayout()
     {
-        _adaptiveQualitySwitch = new Switch { OnColor = Color.FromArgb("#512BD4") };
-        _qualitySlider = new Slider { Minimum = 50, Maximum = 85, ThumbColor = Color.FromArgb("#512BD4"), MinimumTrackColor = Color.FromArgb("#512BD4") };
+        _themePicker = new Picker { Title = "Theme" };
+        _themePicker.Items.Add("System");
+        _themePicker.Items.Add("Light");
+        _themePicker.Items.Add("Dark");
+
+        _adaptiveQualitySwitch = new Switch { OnColor = ThemeColors.Accent };
+        _qualitySlider = new Slider { Minimum = 50, Maximum = 85, ThumbColor = ThemeColors.Accent, MinimumTrackColor = ThemeColors.Accent };
         _qualityValueLabel = BuildValueLabel();
         _imageFormatPicker = new Picker { Title = "Preferred image format" };
         _imageFormatPicker.Items.Add("JPEG");
         _imageFormatPicker.Items.Add("PNG");
 
-        _gestureSensitivitySlider = new Slider { Minimum = 0.5, Maximum = 2.0, ThumbColor = Color.FromArgb("#512BD4"), MinimumTrackColor = Color.FromArgb("#512BD4") };
+        _gestureSensitivitySlider = new Slider { Minimum = 0.5, Maximum = 2.0, ThumbColor = ThemeColors.Accent, MinimumTrackColor = ThemeColors.Accent };
         _gestureSensitivityValueLabel = BuildValueLabel();
 
-        _notificationsSwitch = new Switch { OnColor = Color.FromArgb("#512BD4") };
-        _audioSwitch = new Switch { OnColor = Color.FromArgb("#512BD4") };
+        _notificationsSwitch = new Switch { OnColor = ThemeColors.Accent };
+        _audioSwitch = new Switch { OnColor = ThemeColors.Accent };
 
         _qualitySlider.ValueChanged += (_, e) => _qualityValueLabel.Text = $"{Math.Round(e.NewValue):0}%";
         _gestureSensitivitySlider.ValueChanged += (_, e) => _gestureSensitivityValueLabel.Text = $"{e.NewValue:0.00}×";
@@ -66,14 +95,14 @@ public class MobileSettingsPage : ContentPage
         {
             IsVisible = false,
             FontSize = 12,
-            TextColor = Color.FromArgb("#2E7D32"),
+            TextColor = ThemeColors.Success,
             VerticalOptions = LayoutOptions.Center
         };
 
         var saveButton = new Button
         {
             Text = "Save",
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 10,
             HeightRequest = 44
@@ -83,8 +112,8 @@ public class MobileSettingsPage : ContentPage
         var resetButton = new Button
         {
             Text = "Reset",
-            BackgroundColor = Color.FromArgb("#EFEAFF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
             CornerRadius = 10,
             HeightRequest = 44
         };
@@ -101,14 +130,18 @@ public class MobileSettingsPage : ContentPage
                     Text = "Mobile Settings",
                     FontSize = 24,
                     FontAttributes = FontAttributes.Bold,
-                    TextColor = Color.FromArgb("#512BD4")
+                    TextColor = ThemeColors.Accent
                 },
                 new Label
                 {
-                    Text = "Tune connection quality, touch sensitivity, notifications, and audio behavior.",
+                    Text = "Tune appearance, connection quality, touch sensitivity, notifications, and audio behavior.",
                     FontSize = 13,
-                    TextColor = Colors.Gray
+                    TextColor = ThemeColors.TextSecondary
                 },
+                BuildCard(
+                    "General",
+                    "App-wide appearance preferences.",
+                    BuildPickerRow("Theme", "Follow the OS theme or force light/dark mode.", _themePicker)),
                 BuildCard(
                     "Display",
                     "Remote session quality preferences.",
@@ -154,6 +187,12 @@ public class MobileSettingsPage : ContentPage
         try
         {
             var settings = _settingsService.Current;
+            settings.General.Theme = _themePicker.SelectedIndex switch
+            {
+                1 => ThemeMode.Light,
+                2 => ThemeMode.Dark,
+                _ => ThemeMode.System
+            };
             settings.Display.EnableAdaptiveQuality = _adaptiveQualitySwitch.IsToggled;
             settings.Display.ImageQuality = (int)Math.Round(_qualitySlider.Value);
             settings.Display.ImageFormat = _imageFormatPicker.SelectedIndex == 1
@@ -197,6 +236,12 @@ public class MobileSettingsPage : ContentPage
 
     private void PopulateControls(AppSettings settings)
     {
+        _themePicker.SelectedIndex = settings.General.Theme switch
+        {
+            ThemeMode.Light => 1,
+            ThemeMode.Dark => 2,
+            _ => 0
+        };
         _adaptiveQualitySwitch.IsToggled = settings.Display.EnableAdaptiveQuality;
         _qualitySlider.Value = Math.Clamp(settings.Display.ImageQuality, _qualitySlider.Minimum, _qualitySlider.Maximum);
         _qualityValueLabel.Text = $"{Math.Round(_qualitySlider.Value):0}%";
@@ -220,7 +265,7 @@ public class MobileSettingsPage : ContentPage
     {
         FontSize = 12,
         FontAttributes = FontAttributes.Bold,
-        TextColor = Color.FromArgb("#512BD4"),
+        TextColor = ThemeColors.Accent,
         HorizontalOptions = LayoutOptions.End,
         VerticalOptions = LayoutOptions.Center
     };
@@ -233,13 +278,13 @@ public class MobileSettingsPage : ContentPage
             Text = title,
             FontSize = 18,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4")
+            TextColor = ThemeColors.Accent
         });
         stack.Add(new Label
         {
             Text = subtitle,
             FontSize = 12,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         });
 
         foreach (var child in children)
@@ -247,8 +292,8 @@ public class MobileSettingsPage : ContentPage
 
         return new Border
         {
-            BackgroundColor = Color.FromArgb("#F8F6FF"),
-            Stroke = Color.FromArgb("#D7CCFF"),
+            BackgroundColor = ThemeColors.CardBackgroundAlt,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
             Padding = new Thickness(16),
@@ -302,13 +347,13 @@ public class MobileSettingsPage : ContentPage
                     Text = title,
                     FontSize = 14,
                     FontAttributes = FontAttributes.Bold,
-                    TextColor = Colors.Black
+                    TextColor = ThemeColors.TextPrimary
                 },
                 new Label
                 {
                     Text = description,
                     FontSize = 12,
-                    TextColor = Colors.Gray
+                    TextColor = ThemeColors.TextSecondary
                 }
             }
         };
@@ -340,7 +385,7 @@ public class MobileSettingsPage : ContentPage
             {
                 new BoxView
                 {
-                    Color = Color.FromArgb("#E0E0E0"),
+                    Color = ThemeColors.Divider,
                     HeightRequest = 1,
                     HorizontalOptions = LayoutOptions.Fill
                 },
@@ -348,14 +393,14 @@ public class MobileSettingsPage : ContentPage
                 {
                     Text = "RemoteLink Mobile v1.0",
                     FontSize = 12,
-                    TextColor = Colors.Gray,
+                    TextColor = ThemeColors.TextSecondary,
                     HorizontalTextAlignment = TextAlignment.Center
                 },
                 new Label
                 {
                     Text = "Display, input, audio, and notification preferences are stored per device.",
                     FontSize = 11,
-                    TextColor = Colors.Gray,
+                    TextColor = ThemeColors.TextMuted,
                     HorizontalTextAlignment = TextAlignment.Center
                 }
             }

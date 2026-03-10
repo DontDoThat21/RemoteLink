@@ -34,8 +34,7 @@ public class FilesPage : ContentPage
         _client = client;
 
         Title = "Files";
-        BackgroundColor = Colors.White;
-        Content = new ScrollView { Content = BuildLayout() };
+        RefreshTheme();
 
         _client.ConnectionStateChanged += OnConnectionStateChanged;
     }
@@ -43,10 +42,35 @@ public class FilesPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
+        ThemeColors.ThemeChanged += OnThemeChanged;
+        RefreshTheme();
         EnsureFileTransferService();
         UpdateConnectionUi();
         RefreshIncomingRequests();
         RefreshTransfers();
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        ThemeColors.ThemeChanged -= OnThemeChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshTheme();
+            UpdateConnectionUi();
+            RefreshIncomingRequests();
+            RefreshTransfers();
+        });
+    }
+
+    private void RefreshTheme()
+    {
+        BackgroundColor = ThemeColors.PageBackground;
+        Content = new ScrollView { Content = BuildLayout() };
     }
 
     private View BuildLayout()
@@ -62,7 +86,7 @@ public class FilesPage : ContentPage
             Text = "Files",
             FontSize = 24,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4"),
+            TextColor = ThemeColors.Accent,
             Margin = new Thickness(0, 8, 0, 0)
         });
 
@@ -70,7 +94,7 @@ public class FilesPage : ContentPage
         {
             Text = "Send files to your connected desktop host or accept incoming transfers.",
             FontSize = 13,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         });
 
         root.Add(BuildConnectionCard());
@@ -85,8 +109,8 @@ public class FilesPage : ContentPage
     {
         var border = new Border
         {
-            BackgroundColor = Color.FromArgb("#F5F3FF"),
-            Stroke = Color.FromArgb("#D9CCFF"),
+            BackgroundColor = ThemeColors.SurfaceBackground,
+            Stroke = ThemeColors.ToolbarBorder,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(14)
         };
@@ -94,7 +118,7 @@ public class FilesPage : ContentPage
         _connectionLabel = new Label
         {
             FontSize = 14,
-            TextColor = Color.FromArgb("#512BD4")
+            TextColor = ThemeColors.Accent
         };
 
         border.Content = new StackLayout
@@ -107,7 +131,7 @@ public class FilesPage : ContentPage
                     Text = "Connection",
                     FontSize = 16,
                     FontAttributes = FontAttributes.Bold,
-                    TextColor = Color.FromArgb("#333333")
+                    TextColor = ThemeColors.TextPrimary
                 },
                 _connectionLabel
             }
@@ -120,8 +144,8 @@ public class FilesPage : ContentPage
     {
         var border = new Border
         {
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(14)
         };
@@ -129,14 +153,14 @@ public class FilesPage : ContentPage
         _savePathLabel = new Label
         {
             FontSize = 12,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             Text = $"Incoming files are saved to: {GetReceiveDirectory()}"
         };
 
         _sendButton = new Button
         {
             Text = "Browse and Send File",
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 10,
             HeightRequest = 46
@@ -153,13 +177,13 @@ public class FilesPage : ContentPage
                     Text = "Send to Desktop",
                     FontSize = 16,
                     FontAttributes = FontAttributes.Bold,
-                    TextColor = Color.FromArgb("#333333")
+                    TextColor = ThemeColors.TextPrimary
                 },
                 new Label
                 {
                     Text = "Choose a local file and upload it to the connected RemoteLink desktop session.",
                     FontSize = 13,
-                    TextColor = Colors.Gray
+                    TextColor = ThemeColors.TextSecondary
                 },
                 _sendButton,
                 _savePathLabel
@@ -176,15 +200,15 @@ public class FilesPage : ContentPage
         {
             Text = "No incoming file requests.",
             FontSize = 13,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             HorizontalTextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 8, 0, 0)
         };
 
         return new Border
         {
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(14),
             Content = new StackLayout
@@ -197,13 +221,13 @@ public class FilesPage : ContentPage
                         Text = "Incoming Requests",
                         FontSize = 16,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#333333")
+                        TextColor = ThemeColors.TextPrimary
                     },
                     new Label
                     {
                         Text = "Approve or decline files sent from the connected desktop host.",
                         FontSize = 13,
-                        TextColor = Colors.Gray
+                        TextColor = ThemeColors.TextSecondary
                     },
                     _incomingRequestsLayout
                 }
@@ -218,15 +242,15 @@ public class FilesPage : ContentPage
         {
             Text = "No transfers yet.",
             FontSize = 13,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             HorizontalTextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 8, 0, 0)
         };
 
         return new Border
         {
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(14),
             Content = new StackLayout
@@ -239,13 +263,13 @@ public class FilesPage : ContentPage
                         Text = "Transfer Activity",
                         FontSize = 16,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#333333")
+                        TextColor = ThemeColors.TextPrimary
                     },
                     new Label
                     {
                         Text = "Track upload and download progress for this mobile session.",
                         FontSize = 13,
-                        TextColor = Colors.Gray
+                        TextColor = ThemeColors.TextSecondary
                     },
                     _transfersLayout
                 }
@@ -302,7 +326,7 @@ public class FilesPage : ContentPage
             : "Connect to a desktop host first to send or receive files.";
 
         _sendButton.IsEnabled = isConnected;
-        _sendButton.BackgroundColor = isConnected ? Color.FromArgb("#512BD4") : Color.FromArgb("#BDBDBD");
+        _sendButton.BackgroundColor = isConnected ? ThemeColors.Accent : ThemeColors.NeutralButtonBackground;
         _savePathLabel.Text = $"Incoming files are saved to: {GetReceiveDirectory()}";
 
         if (!isConnected)
@@ -617,7 +641,7 @@ public class FilesPage : ContentPage
             var acceptButton = new Button
             {
                 Text = "Accept",
-                BackgroundColor = Color.FromArgb("#2E7D32"),
+                BackgroundColor = ThemeColors.Success,
                 TextColor = Colors.White,
                 CornerRadius = 8,
                 HorizontalOptions = LayoutOptions.Fill,
@@ -628,7 +652,7 @@ public class FilesPage : ContentPage
             var rejectButton = new Button
             {
                 Text = "Decline",
-                BackgroundColor = Color.FromArgb("#C62828"),
+                BackgroundColor = ThemeColors.Danger,
                 TextColor = Colors.White,
                 CornerRadius = 8,
                 HorizontalOptions = LayoutOptions.Fill,
@@ -638,8 +662,8 @@ public class FilesPage : ContentPage
 
             _incomingRequestsLayout.Children.Add(new Border
             {
-                BackgroundColor = Color.FromArgb("#FAFAFA"),
-                Stroke = Color.FromArgb("#E0E0E0"),
+                BackgroundColor = ThemeColors.PlaceholderBackground,
+                Stroke = ThemeColors.CardBorder,
                 StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
                 Padding = new Thickness(12),
                 Content = new StackLayout
@@ -652,13 +676,13 @@ public class FilesPage : ContentPage
                             Text = request.FileName,
                             FontSize = 15,
                             FontAttributes = FontAttributes.Bold,
-                            TextColor = Color.FromArgb("#333333")
+                            TextColor = ThemeColors.TextPrimary
                         },
                         new Label
                         {
                             Text = $"{FormatBytes(request.FileSize)} • {request.MimeType}",
                             FontSize = 12,
-                            TextColor = Colors.Gray
+                            TextColor = ThemeColors.TextSecondary
                         },
                         new HorizontalStackLayout
                         {
@@ -688,8 +712,8 @@ public class FilesPage : ContentPage
                 : 0;
 
             var statusColor = item.IsCompleted
-                ? (item.IsSuccessful ? Color.FromArgb("#2E7D32") : Color.FromArgb("#C62828"))
-                : Color.FromArgb("#512BD4");
+                ? (item.IsSuccessful ? ThemeColors.SuccessText : ThemeColors.DangerText)
+                : ThemeColors.Accent;
 
             var detailsText = item.TotalBytes > 0
                 ? $"{FormatBytes(item.BytesTransferred)} / {FormatBytes(item.TotalBytes)}"
@@ -708,13 +732,13 @@ public class FilesPage : ContentPage
                         Text = item.FileName,
                         FontSize = 15,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#333333")
+                        TextColor = ThemeColors.TextPrimary
                     },
                     new Label
                     {
                         Text = item.DirectionLabel,
                         FontSize = 12,
-                        TextColor = Colors.Gray
+                        TextColor = ThemeColors.TextSecondary
                     },
                     new Label
                     {
@@ -727,14 +751,14 @@ public class FilesPage : ContentPage
                     {
                         Progress = progress,
                         ProgressColor = statusColor,
-                        BackgroundColor = Color.FromArgb("#ECECEC"),
+                        BackgroundColor = ThemeColors.Divider,
                         HeightRequest = 8
                     },
                     new Label
                     {
                         Text = detailsText,
                         FontSize = 12,
-                        TextColor = Colors.Gray
+                        TextColor = ThemeColors.TextSecondary
                     }
                 }
             };
@@ -745,7 +769,7 @@ public class FilesPage : ContentPage
                 {
                     Text = $"Saved to: {item.SavedPath}",
                     FontSize = 11,
-                    TextColor = Colors.Gray,
+                    TextColor = ThemeColors.TextSecondary,
                     LineBreakMode = LineBreakMode.CharacterWrap
                 });
             }
@@ -755,8 +779,8 @@ public class FilesPage : ContentPage
                 var cancelButton = new Button
                 {
                     Text = "Cancel",
-                    BackgroundColor = Color.FromArgb("#FBE9E7"),
-                    TextColor = Color.FromArgb("#C62828"),
+                    BackgroundColor = ThemeColors.DangerSoft,
+                    TextColor = ThemeColors.Danger,
                     CornerRadius = 8,
                     HorizontalOptions = LayoutOptions.Start,
                     Padding = new Thickness(14, 8)
@@ -769,8 +793,8 @@ public class FilesPage : ContentPage
                 var openButton = new Button
                 {
                     Text = "Open",
-                    BackgroundColor = Color.FromArgb("#E8F5E9"),
-                    TextColor = Color.FromArgb("#2E7D32"),
+                    BackgroundColor = ThemeColors.SuccessBackground,
+                    TextColor = ThemeColors.SuccessText,
                     CornerRadius = 8,
                     HorizontalOptions = LayoutOptions.Fill,
                     WidthRequest = 110
@@ -780,8 +804,8 @@ public class FilesPage : ContentPage
                 var shareButton = new Button
                 {
                     Text = "Share",
-                    BackgroundColor = Color.FromArgb("#E3F2FD"),
-                    TextColor = Color.FromArgb("#1565C0"),
+                    BackgroundColor = ThemeColors.InfoSoft,
+                    TextColor = ThemeColors.InfoText,
                     CornerRadius = 8,
                     HorizontalOptions = LayoutOptions.Fill,
                     WidthRequest = 110
@@ -797,8 +821,8 @@ public class FilesPage : ContentPage
 
             _transfersLayout.Children.Add(new Border
             {
-                BackgroundColor = Color.FromArgb("#FAFAFA"),
-                Stroke = Color.FromArgb("#E0E0E0"),
+                BackgroundColor = ThemeColors.PlaceholderBackground,
+                Stroke = ThemeColors.CardBorder,
                 StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
                 Padding = new Thickness(12),
                 Content = cardStack

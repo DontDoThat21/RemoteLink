@@ -24,6 +24,11 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private readonly INetworkDiscovery _networkDiscovery;
     private readonly IConnectionHistoryService _connectionHistory;
     private readonly IAppSettingsService _settingsService;
+    private string _manualStatusText = string.Empty;
+    private Color _manualStatusColor = Colors.Transparent;
+    private bool _manualStatusVisible;
+    private string _monitorStatusText = "Loading remote monitors...";
+    private Color _monitorStatusColor = Colors.Gray;
 
     // Touch-to-mouse translation
     private readonly TouchToMouseTranslator _touchTranslator = new();
@@ -130,9 +135,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         _settingsService = settingsService;
 
         Title = "Connect";
-        BackgroundColor = Colors.White;
-
-        Content = BuildLayout();
+        RefreshTheme();
 
         // Subscribe to client events
         _client.DeviceDiscovered += OnDeviceDiscovered;
@@ -151,13 +154,17 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     {
         base.OnAppearing();
 
+        ThemeColors.ThemeChanged += OnThemeChanged;
+
+        RefreshTheme();
+
         await LoadSettingsAsync();
 
         // Reset manual connect UI when returning from a disconnected state
         if (!_client.IsConnected && _isManualConnecting)
         {
             _isManualConnecting = false;
-            SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
+            SetManualConnectButtonState("Connect", ThemeColors.Accent, true);
             _manualStatusLabel.Text = "";
             _manualStatusLabel.IsVisible = false;
         }
@@ -178,6 +185,78 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 _logger.LogError(ex, "Failed to start discovery");
             }
         }
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        ThemeColors.ThemeChanged -= OnThemeChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(RefreshTheme);
+    }
+
+    private void RefreshTheme()
+    {
+        var partnerId = _partnerIdEntry?.Text;
+        var pin = _pinEntry?.Text;
+
+        BackgroundColor = ThemeColors.PageBackground;
+        Content = BuildLayout();
+
+        if (_partnerIdEntry != null)
+            _partnerIdEntry.Text = partnerId;
+
+        if (_pinEntry != null)
+            _pinEntry.Text = pin;
+
+        _hostListContainer.Children.Clear();
+        if (_availableHosts.Count == 0)
+        {
+            _hostListContainer.Add(_noHostsLabel);
+        }
+        else
+        {
+            foreach (var host in _availableHosts)
+                AddHostCard(host);
+        }
+
+        _connectedBanner.IsVisible = _client.IsConnected;
+        _remoteViewer.IsVisible = _client.IsConnected;
+        _manualConnectCard.IsVisible = !_client.IsConnected;
+        _scanQrButton.IsVisible = !_client.IsConnected;
+        _discoveredSection.IsVisible = !_client.IsConnected;
+
+        if (_client.IsConnected)
+            _connectedHostLabel.Text = $"Connected to {_client.ConnectedHost?.DeviceName ?? "Unknown"}";
+
+        if (_manualStatusVisible)
+        {
+            _manualStatusLabel.Text = _manualStatusText;
+            _manualStatusLabel.TextColor = _manualStatusColor;
+            _manualStatusLabel.IsVisible = true;
+        }
+
+        if (_isManualConnecting)
+        {
+            _manualConnectButton.Text = "Connecting...";
+            _manualConnectButton.BackgroundColor = ThemeColors.NeutralButtonBackground;
+            _manualConnectButton.IsEnabled = false;
+        }
+        else
+        {
+            _manualConnectButton.Text = "Connect";
+            _manualConnectButton.BackgroundColor = ThemeColors.Accent;
+            OnManualEntryChanged(null, null!);
+        }
+
+        SetMonitorStatus(_monitorStatusText, _monitorStatusColor);
+        RebuildMonitorCarousel();
+        ApplyConnectionQuality(_client.CurrentConnectionQuality);
+        UpdateSessionOverlayVisibility();
+        UpdateSessionActionButtonStates();
     }
 
     private async Task LoadSettingsAsync()
@@ -233,7 +312,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             FontSize = 26,
             FontAttributes = FontAttributes.Bold,
             HorizontalOptions = LayoutOptions.Center,
-            TextColor = Color.FromArgb("#512BD4"),
+            TextColor = ThemeColors.Accent,
             Margin = new Thickness(0, 8, 0, 0)
         });
 
@@ -242,7 +321,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         _activityIndicator = new ActivityIndicator
         {
             VerticalOptions = LayoutOptions.Center,
-            Color = Color.FromArgb("#512BD4"),
+            Color = ThemeColors.Accent,
             WidthRequest = 20,
             HeightRequest = 20
         };
@@ -253,7 +332,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             FontSize = 14,
             VerticalOptions = LayoutOptions.Center,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         };
         _statusLabel.SetBinding(Label.TextProperty,
             new Binding(nameof(StatusMessage), source: this));
@@ -265,7 +344,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         // Connected banner (hidden until connected)
         _connectedBanner = new StackLayout
         {
-            BackgroundColor = Color.FromArgb("#E8F5E9"),
+            BackgroundColor = ThemeColors.SuccessBackground,
             Padding = new Thickness(12),
             Spacing = 6,
             IsVisible = false
@@ -275,13 +354,13 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             FontSize = 14,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#2E7D32")
+            TextColor = ThemeColors.SuccessText
         };
 
         var disconnectButton = new Button
         {
             Text = "Disconnect",
-            BackgroundColor = Color.FromArgb("#C62828"),
+            BackgroundColor = ThemeColors.Danger,
             TextColor = Colors.White,
             FontSize = 14,
             CornerRadius = 6,
@@ -310,7 +389,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Remote Desktop",
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.DarkGray
+            TextColor = ThemeColors.TextPrimary
         });
         root.Add(_remoteViewer);
 
@@ -355,20 +434,20 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         var qualityButton = BuildSessionActionButton("📊 Quality", OnQualityClicked);
         _monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
-        var disconnectButton = BuildSessionActionButton("✕ Disconnect", OnToolbarDisconnectClicked, Color.FromArgb("#C62828"));
+        var disconnectButton = BuildSessionActionButton("✕ Disconnect", OnToolbarDisconnectClicked, ThemeColors.Danger);
         disconnectButton.TextColor = Colors.White;
 
         return new Border
         {
             IsVisible = false,
-            BackgroundColor = Color.FromArgb("#F8F6FF"),
-            Stroke = Color.FromArgb("#D7CCFF"),
+            BackgroundColor = ThemeColors.ToolbarBackground,
+            Stroke = ThemeColors.ToolbarBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 18 },
             Padding = new Thickness(12, 10),
             Shadow = new Shadow
             {
-                Brush = Brush.Black,
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Opacity = 0.12f,
                 Radius = 16,
                 Offset = new Point(0, 6)
@@ -383,7 +462,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                         Text = "Session Actions",
                         FontSize = 11,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#6B5FB5")
+                        TextColor = ThemeColors.AccentText
                     },
                     new ScrollView
                     {
@@ -413,14 +492,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Quality: --",
             FontSize = 12,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#616161")
+            TextColor = ThemeColors.TextMuted
         };
 
         _qualityDetailsLabel = new Label
         {
             Text = "Connect to see live quality.",
             FontSize = 11,
-            TextColor = Color.FromArgb("#616161")
+            TextColor = ThemeColors.TextMuted
         };
 
         return new Border
@@ -428,14 +507,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             IsVisible = false,
             HorizontalOptions = LayoutOptions.End,
             MaximumWidthRequest = 260,
-            BackgroundColor = Color.FromArgb("#F5F5F5"),
-            Stroke = Color.FromArgb("#D0D0D0"),
+            BackgroundColor = ThemeColors.SurfaceBackgroundAlt,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
             Padding = new Thickness(12, 8),
             Shadow = new Shadow
             {
-                Brush = Brush.Black,
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Opacity = 0.10f,
                 Radius = 12,
                 Offset = new Point(0, 4)
@@ -455,8 +534,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Refresh",
             FontSize = 12,
             FontAttributes = FontAttributes.Bold,
-            BackgroundColor = Color.FromArgb("#EFEAFF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
             CornerRadius = 14,
             HeightRequest = 32,
             Padding = new Thickness(12, 4)
@@ -468,8 +547,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Done",
             FontSize = 12,
             FontAttributes = FontAttributes.Bold,
-            BackgroundColor = Color.FromArgb("#EFEAFF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
             CornerRadius = 14,
             HeightRequest = 32,
             Padding = new Thickness(12, 4)
@@ -478,9 +557,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         _monitorSelectorStatusLabel = new Label
         {
-            Text = "Loading remote monitors...",
+            Text = _monitorStatusText,
             FontSize = 12,
-            TextColor = Colors.Gray
+            TextColor = _monitorStatusColor
         };
 
         _monitorCarousel = new HorizontalStackLayout
@@ -502,7 +581,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Monitor selector",
             FontSize = 13,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#6B5FB5")
+            TextColor = ThemeColors.AccentText
         });
         header.Add(new HorizontalStackLayout
         {
@@ -513,14 +592,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         return new Border
         {
             IsVisible = false,
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#D7CCFF"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.ToolbarBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 18 },
             Padding = new Thickness(12, 10),
             Shadow = new Shadow
             {
-                Brush = Brush.Black,
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Opacity = 0.12f,
                 Radius = 16,
                 Offset = new Point(0, 6)
@@ -548,8 +627,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             WidthRequest = 220,
             MinimumHeightRequest = 138,
-            BackgroundColor = Color.FromArgb("#FAFAFA"),
-            Stroke = Color.FromArgb("#E0E0E0"),
+            BackgroundColor = ThemeColors.PlaceholderBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 14 },
             Padding = new Thickness(16),
@@ -557,7 +636,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             {
                 Text = text,
                 FontSize = 13,
-                TextColor = Colors.Gray,
+                TextColor = ThemeColors.TextSecondary,
                 HorizontalTextAlignment = TextAlignment.Center,
                 VerticalTextAlignment = TextAlignment.Center,
                 VerticalOptions = LayoutOptions.Center,
@@ -586,15 +665,15 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         var badgeRow = new HorizontalStackLayout { Spacing = 6 };
         if (monitor.IsPrimary)
-            badgeRow.Children.Add(BuildMonitorBadge("Primary", "#FFF3E0", "#EF6C00"));
+            badgeRow.Children.Add(BuildMonitorBadge("Primary", ThemeColors.WarningSoft, ThemeColors.WarningText));
         if (isSelected)
-            badgeRow.Children.Add(BuildMonitorBadge("Current", "#E8F5E9", "#2E7D32"));
+            badgeRow.Children.Add(BuildMonitorBadge("Current", ThemeColors.SuccessBackground, ThemeColors.SuccessText));
 
         var card = new Border
         {
             WidthRequest = 220,
-            BackgroundColor = isSelected ? Color.FromArgb("#F4F0FF") : Colors.White,
-            Stroke = isSelected ? Color.FromArgb("#512BD4") : Color.FromArgb("#DADCE0"),
+            BackgroundColor = isSelected ? ThemeColors.SelectedCardBackground : ThemeColors.CardBackground,
+            Stroke = isSelected ? ThemeColors.SelectedCardBorder : ThemeColors.CardBorder,
             StrokeThickness = isSelected ? 2 : 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 14 },
             Padding = new Thickness(12),
@@ -609,7 +688,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                         Text = monitor.Name,
                         FontSize = 14,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Colors.Black,
+                        TextColor = ThemeColors.TextPrimary,
                         LineBreakMode = LineBreakMode.TailTruncation
                     },
                     badgeRow,
@@ -617,13 +696,13 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     {
                         Text = $"{monitor.Width} × {monitor.Height}",
                         FontSize = 12,
-                        TextColor = Color.FromArgb("#5F6368")
+                        TextColor = ThemeColors.TextSecondary
                     },
                     new Label
                     {
                         Text = $"Position {monitor.Left}, {monitor.Top}",
                         FontSize = 11,
-                        TextColor = Colors.Gray
+                        TextColor = ThemeColors.TextMuted
                     }
                 }
             }
@@ -647,7 +726,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         return new Grid
         {
             HeightRequest = 94,
-            BackgroundColor = isSelected ? Color.FromArgb("#6B46D1") : Color.FromArgb("#F3EEFF"),
+            BackgroundColor = isSelected ? ThemeColors.Accent : ThemeColors.AccentSoft,
             Padding = new Thickness(12, 8),
             Children =
             {
@@ -658,7 +737,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     HorizontalOptions = LayoutOptions.Center,
                     VerticalOptions = LayoutOptions.Center,
                     BackgroundColor = isSelected ? Color.FromArgb("#8E73E6") : Color.FromArgb("#D9CFFF"),
-                    Stroke = isSelected ? Colors.White : Color.FromArgb("#9E8BDF"),
+                    Stroke = isSelected ? Colors.White : ThemeColors.ToolbarBorder,
                     StrokeThickness = 1,
                     StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
                     Content = new Label
@@ -666,7 +745,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                         Text = GetCompactMonitorName(monitor),
                         FontSize = 12,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = isSelected ? Colors.White : Color.FromArgb("#512BD4"),
+                        TextColor = isSelected ? Colors.White : ThemeColors.Accent,
                         HorizontalOptions = LayoutOptions.Center,
                         VerticalOptions = LayoutOptions.Center,
                         HorizontalTextAlignment = TextAlignment.Center,
@@ -677,11 +756,11 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         };
     }
 
-    private static View BuildMonitorBadge(string text, string backgroundColor, string textColor)
+    private static View BuildMonitorBadge(string text, Color backgroundColor, Color textColor)
     {
         return new Border
         {
-            BackgroundColor = Color.FromArgb(backgroundColor),
+            BackgroundColor = backgroundColor,
             StrokeThickness = 0,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
             Padding = new Thickness(8, 2),
@@ -690,7 +769,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 Text = text,
                 FontSize = 10,
                 FontAttributes = FontAttributes.Bold,
-                TextColor = Color.FromArgb(textColor)
+                TextColor = textColor
             }
         };
     }
@@ -712,7 +791,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         if (!_client.IsConnected)
         {
             _monitorButton.Text = "🖥 Monitor";
-            _monitorButton.BackgroundColor = Color.FromArgb("#512BD4");
+            _monitorButton.BackgroundColor = ThemeColors.Accent;
             return;
         }
 
@@ -724,8 +803,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 : "🖥 Monitor";
 
         _monitorButton.BackgroundColor = _isMonitorSelectorVisible
-            ? Color.FromArgb("#1565C0")
-            : Color.FromArgb("#512BD4");
+            ? ThemeColors.Info
+            : ThemeColors.Accent;
     }
 
     private void HideMonitorSelector()
@@ -745,8 +824,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            _monitorSelectorStatusLabel.Text = "Loading remote monitors...";
-            _monitorSelectorStatusLabel.TextColor = Colors.Gray;
+            SetMonitorStatus("Loading remote monitors...", ThemeColors.TextSecondary);
             _monitorCarousel.Children.Clear();
             _monitorCarousel.Children.Add(BuildMonitorPlaceholder("Loading remote monitors..."));
         });
@@ -766,12 +844,11 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             MainThread.BeginInvokeOnMainThread(() =>
             {
                 RebuildMonitorCarousel();
-                _monitorSelectorStatusLabel.Text = _remoteMonitors.Count == 0
-                    ? "No monitors found on the remote host."
-                    : "Swipe through the displays and tap one to switch instantly.";
-                _monitorSelectorStatusLabel.TextColor = _remoteMonitors.Count == 0
-                    ? Colors.Gray
-                    : Color.FromArgb("#5F6368");
+                SetMonitorStatus(
+                    _remoteMonitors.Count == 0
+                        ? "No monitors found on the remote host."
+                        : "Swipe through the displays and tap one to switch instantly.",
+                    _remoteMonitors.Count == 0 ? ThemeColors.TextSecondary : ThemeColors.TextSecondary);
                 UpdateMonitorButtonState();
             });
         }
@@ -810,8 +887,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to refresh remote monitor list");
-            _monitorSelectorStatusLabel.Text = $"Failed to refresh monitors: {ex.Message}";
-            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#C62828");
+            SetMonitorStatus($"Failed to refresh monitors: {ex.Message}", ThemeColors.Danger);
             await DisplayAlertAsync("Monitor", $"Failed to refresh remote monitors: {ex.Message}", "OK");
         }
     }
@@ -825,20 +901,17 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             _isMonitorSelectorLoading = true;
             UpdateMonitorButtonState();
-            _monitorSelectorStatusLabel.Text = $"Switching to {monitor.Name}...";
-            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#1565C0");
+            SetMonitorStatus($"Switching to {monitor.Name}...", ThemeColors.Info);
 
             _selectedMonitorId = await _client.SelectRemoteMonitorAsync(monitor.Id);
             RebuildMonitorCarousel();
-            _monitorSelectorStatusLabel.Text = $"Switched to {monitor.Name}.";
-            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#2E7D32");
+            SetMonitorStatus($"Switched to {monitor.Name}.", ThemeColors.SuccessText);
             StatusMessage = $"Remote monitor switched to {monitor.Name}.";
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to switch remote monitor");
-            _monitorSelectorStatusLabel.Text = $"Failed to switch monitor: {ex.Message}";
-            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#C62828");
+            SetMonitorStatus($"Failed to switch monitor: {ex.Message}", ThemeColors.Danger);
             await DisplayAlertAsync("Monitor", $"Failed to switch remote monitor: {ex.Message}", "OK");
         }
         finally
@@ -853,14 +926,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         return new Border
         {
             IsVisible = false,
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E0E0E0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
             Padding = new Thickness(10, 8),
             Shadow = new Shadow
             {
-                Brush = Brush.Black,
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Opacity = 0.10f,
                 Radius = 12,
                 Offset = new Point(0, 4)
@@ -875,7 +948,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                         Text = "Virtual keyboard",
                         FontSize = 11,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#6B5FB5")
+                        TextColor = ThemeColors.AccentText
                     },
                     BuildKeyRow(
                         BuildModifierButton("Ctrl"),
@@ -954,7 +1027,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = text,
             FontSize = 13,
             FontAttributes = FontAttributes.Bold,
-            BackgroundColor = backgroundColor ?? Color.FromArgb("#512BD4"),
+            BackgroundColor = backgroundColor ?? ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 20,
             HeightRequest = 40,
@@ -971,8 +1044,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             Text = text,
             FontSize = 12,
-            BackgroundColor = Color.FromArgb("#EFEAFF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.ChipBackground,
+            TextColor = ThemeColors.ChipText,
             CornerRadius = 14,
             HeightRequest = 36,
             Padding = new Thickness(12, 6)
@@ -988,8 +1061,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             Text = label,
             FontSize = 12,
-            BackgroundColor = Color.FromArgb("#EFEAFF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.ChipBackground,
+            TextColor = ThemeColors.ChipText,
             CornerRadius = 14,
             HeightRequest = 36,
             Padding = new Thickness(12, 6)
@@ -1047,10 +1120,10 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private void UpdateSessionActionButtonStates()
     {
         if (_keyboardToggleButton != null)
-            _keyboardToggleButton.BackgroundColor = _isKeyboardVisible ? Color.FromArgb("#2E7D32") : Color.FromArgb("#512BD4");
+            _keyboardToggleButton.BackgroundColor = _isKeyboardVisible ? ThemeColors.Success : ThemeColors.Accent;
 
         if (_specialKeysToggleButton != null)
-            _specialKeysToggleButton.BackgroundColor = _isSpecialKeysVisible ? Color.FromArgb("#7B1FA2") : Color.FromArgb("#512BD4");
+            _specialKeysToggleButton.BackgroundColor = _isSpecialKeysVisible ? Color.FromArgb("#7B1FA2") : ThemeColors.Accent;
 
         UpdateMonitorButtonState();
         UpdateModifierButtonStates();
@@ -1061,8 +1134,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         foreach (var modifier in _modifierButtons)
         {
             bool isActive = _activeModifiers.Contains(modifier.Key);
-            modifier.Value.BackgroundColor = isActive ? Color.FromArgb("#2E7D32") : Color.FromArgb("#EFEAFF");
-            modifier.Value.TextColor = isActive ? Colors.White : Color.FromArgb("#512BD4");
+            modifier.Value.BackgroundColor = isActive ? ThemeColors.Success : ThemeColors.ChipBackground;
+            modifier.Value.TextColor = isActive ? Colors.White : ThemeColors.ChipText;
         }
     }
 
@@ -1088,14 +1161,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     private void ApplyQualityPalette(QualityRating? rating)
     {
-        var (background, border, text) = rating switch
-        {
-            QualityRating.Excellent => (Color.FromArgb("#E8F5E9"), Color.FromArgb("#2E7D32"), Color.FromArgb("#1B5E20")),
-            QualityRating.Good => (Color.FromArgb("#E3F2FD"), Color.FromArgb("#1565C0"), Color.FromArgb("#0D47A1")),
-            QualityRating.Fair => (Color.FromArgb("#FFF8E1"), Color.FromArgb("#EF6C00"), Color.FromArgb("#E65100")),
-            QualityRating.Poor => (Color.FromArgb("#FFEBEE"), Color.FromArgb("#C62828"), Color.FromArgb("#B71C1C")),
-            _ => (Color.FromArgb("#F5F5F5"), Color.FromArgb("#D0D0D0"), Color.FromArgb("#616161"))
-        };
+        var (background, border, text) = ThemeColors.GetQualityPalette(rating);
 
         _qualityOverlay.BackgroundColor = background;
         _qualityOverlay.Stroke = border;
@@ -1195,8 +1261,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to switch remote monitor");
-            _monitorSelectorStatusLabel.Text = $"Failed to load monitors: {ex.Message}";
-            _monitorSelectorStatusLabel.TextColor = Color.FromArgb("#C62828");
+            SetMonitorStatus($"Failed to load monitors: {ex.Message}", ThemeColors.Danger);
             await DisplayAlertAsync("Monitor", $"Failed to switch remote monitor: {ex.Message}", "OK");
         }
     }
@@ -1390,8 +1455,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     {
         var card = new Border
         {
-            BackgroundColor = Color.FromArgb("#F8F6FF"),
-            Stroke = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.CardBackgroundAlt,
+            Stroke = ThemeColors.Accent,
             StrokeThickness = 1.5,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(16),
@@ -1406,14 +1471,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Connect to Remote Host",
             FontSize = 17,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4")
+            TextColor = ThemeColors.Accent
         });
 
         stack.Add(new Label
         {
             Text = "Enter the Partner ID and PIN displayed on the desktop host.",
             FontSize = 12,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 0, 0, 4)
         });
 
@@ -1423,7 +1488,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Partner ID",
             FontSize = 13,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#333333")
+            TextColor = ThemeColors.TextPrimary
         });
 
         _partnerIdEntry = new Entry
@@ -1431,7 +1496,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Placeholder = "IP address, IP:Port, or 9-digit ID",
             FontSize = 15,
             Keyboard = Keyboard.Text,
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.InputBackground,
+            TextColor = ThemeColors.TextPrimary,
             HeightRequest = 44,
             ClearButtonVisibility = ClearButtonVisibility.WhileEditing
         };
@@ -1444,7 +1510,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "PIN",
             FontSize = 13,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#333333"),
+            TextColor = ThemeColors.TextPrimary,
             Margin = new Thickness(0, 4, 0, 0)
         });
 
@@ -1455,7 +1521,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Keyboard = Keyboard.Numeric,
             MaxLength = 6,
             IsPassword = true,
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.InputBackground,
+            TextColor = ThemeColors.TextPrimary,
             HeightRequest = 44
         };
         _pinEntry.TextChanged += OnManualEntryChanged;
@@ -1467,7 +1534,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Connect",
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 8,
             HeightRequest = 48,
@@ -1512,13 +1579,13 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         var targetDevice = ResolvePartner(partnerId);
         if (targetDevice == null)
         {
-            SetManualStatus("Invalid Partner ID. Use IP, IP:Port, or 9-digit ID.", Color.FromArgb("#C62828"));
+            SetManualStatus("Invalid Partner ID. Use IP, IP:Port, or 9-digit ID.", ThemeColors.Danger);
             return;
         }
 
         _isManualConnecting = true;
-        SetManualConnectButtonState("Connecting...", Color.FromArgb("#999999"), false);
-        SetManualStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", Color.FromArgb("#FF8F00"));
+        SetManualConnectButtonState("Connecting...", ThemeColors.NeutralButtonBackground, false);
+        SetManualStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", ThemeColors.WarningText);
         StatusMessage = $"Connecting to {targetDevice.DeviceName}...";
         IsDiscovering = true;
 
@@ -1530,15 +1597,15 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             _connectionStartedAt = DateTime.UtcNow;
             await RecordConnectionAsync(targetDevice, ConnectionOutcome.Success);
-            SetManualStatus("Connected!", Color.FromArgb("#2E7D32"));
+            SetManualStatus("Connected!", ThemeColors.SuccessText);
             // Button stays disabled while connected; will reset on disconnect via OnAppearing
         }
         else
         {
             await RecordConnectionAsync(targetDevice, ConnectionOutcome.Failed);
             _isManualConnecting = false;
-            SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
-            SetManualStatus("Connection failed. Check Partner ID and PIN.", Color.FromArgb("#C62828"));
+            SetManualConnectButtonState("Connect", ThemeColors.Accent, true);
+            SetManualStatus("Connection failed. Check Partner ID and PIN.", ThemeColors.Danger);
             OnManualEntryChanged(null, null!); // Re-evaluate button enabled state
         }
     }
@@ -1560,6 +1627,9 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
+            _manualStatusText = message;
+            _manualStatusColor = color;
+            _manualStatusVisible = true;
             if (_manualStatusLabel != null)
             {
                 _manualStatusLabel.Text = message;
@@ -1567,6 +1637,18 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 _manualStatusLabel.IsVisible = true;
             }
         });
+    }
+
+    private void SetMonitorStatus(string message, Color color)
+    {
+        _monitorStatusText = message;
+        _monitorStatusColor = color;
+
+        if (_monitorSelectorStatusLabel != null)
+        {
+            _monitorSelectorStatusLabel.Text = message;
+            _monitorSelectorStatusLabel.TextColor = color;
+        }
     }
 
     /// <summary>
@@ -1640,7 +1722,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "\ud83d\udcf7  Scan QR Code",
             FontSize = 15,
             FontAttributes = FontAttributes.Bold,
-            BackgroundColor = Color.FromArgb("#7C4DFF"),
+            BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
             CornerRadius = 8,
             HeightRequest = 48,
@@ -1669,11 +1751,11 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             {
                 _partnerIdEntry.Text = host;
                 _pinEntry.Text = pin;
-                SetManualStatus("QR code scanned — tap Connect", Color.FromArgb("#2E7D32"));
+                SetManualStatus("QR code scanned — tap Connect", ThemeColors.SuccessText);
             }
             else
             {
-                SetManualStatus("Invalid QR code format.", Color.FromArgb("#C62828"));
+                SetManualStatus("Invalid QR code format.", ThemeColors.Danger);
             }
         });
     }
@@ -1716,7 +1798,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             {
                 new BoxView
                 {
-                    Color = Color.FromArgb("#E0E0E0"),
+                    Color = ThemeColors.Divider,
                     HeightRequest = 1,
                     VerticalOptions = LayoutOptions.Center,
                     HorizontalOptions = LayoutOptions.Fill
@@ -1725,12 +1807,12 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 {
                     Text = "or quick connect",
                     FontSize = 12,
-                    TextColor = Colors.Gray,
+                    TextColor = ThemeColors.TextSecondary,
                     VerticalOptions = LayoutOptions.Center
                 },
                 new BoxView
                 {
-                    Color = Color.FromArgb("#E0E0E0"),
+                    Color = ThemeColors.Divider,
                     HeightRequest = 1,
                     VerticalOptions = LayoutOptions.Center,
                     HorizontalOptions = LayoutOptions.Fill
@@ -1743,7 +1825,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = "Discovered Hosts",
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.DarkGray,
+            TextColor = ThemeColors.TextPrimary,
             Margin = new Thickness(0, 4, 0, 0)
         });
 
@@ -1751,7 +1833,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             Text = "Scanning for desktop hosts...",
             FontSize = 13,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(4, 0)
         };
 
@@ -1770,8 +1852,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         var card = new Border
         {
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#DADCE0"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
             Padding = new Thickness(12),
             AutomationId = $"host-{device.DeviceId}"
@@ -1793,20 +1875,20 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             Text = device.DeviceName,
             FontSize = 15,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.Black
+            TextColor = ThemeColors.TextPrimary
         });
         infoStack.Add(new Label
         {
             Text = $"{device.IPAddress}:{device.Port}",
             FontSize = 12,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         });
 
         var connectLabel = new Label
         {
             Text = "Connect >",
             FontSize = 13,
-            TextColor = Color.FromArgb("#512BD4"),
+            TextColor = ThemeColors.Accent,
             VerticalOptions = LayoutOptions.Center
         };
         Grid.SetColumn(connectLabel, 1);
@@ -1957,13 +2039,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     _scanQrButton.IsVisible = true;
                     _discoveredSection.IsVisible = true;
                     _isManualConnecting = false;
-                    SetManualConnectButtonState("Connect", Color.FromArgb("#512BD4"), true);
+                    SetManualConnectButtonState("Connect", ThemeColors.Accent, true);
+                    _manualStatusVisible = false;
+                    _manualStatusText = string.Empty;
                     _manualStatusLabel.IsVisible = false;
                     OnManualEntryChanged(null, null!);
                     _selectedMonitorId = null;
                     _selectedQuality = 75;
-                    _monitorSelectorStatusLabel.Text = "Loading remote monitors...";
-                    _monitorSelectorStatusLabel.TextColor = Colors.Gray;
+                    SetMonitorStatus("Loading remote monitors...", ThemeColors.TextSecondary);
                     ApplyConnectionQuality(null);
                     UpdateSessionOverlayVisibility();
                     if (StatusMessage.StartsWith("Connected"))

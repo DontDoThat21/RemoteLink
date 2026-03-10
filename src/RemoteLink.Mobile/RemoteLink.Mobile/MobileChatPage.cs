@@ -25,12 +25,12 @@ public class MobileChatPage : ContentPage
         _logger = logger;
 
         Title = "Chat";
-        BackgroundColor = Colors.White;
+        BackgroundColor = ThemeColors.PageBackground;
 
         _statusLabel = new Label
         {
             FontSize = 14,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         };
 
         _unreadBadgeLabel = new Label
@@ -38,7 +38,7 @@ public class MobileChatPage : ContentPage
             FontSize = 12,
             FontAttributes = FontAttributes.Bold,
             TextColor = Colors.White,
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.Accent,
             Padding = new Thickness(10, 4),
             HorizontalOptions = LayoutOptions.End,
             IsVisible = false
@@ -54,7 +54,7 @@ public class MobileChatPage : ContentPage
         {
             Text = "No messages yet. Say hello to the connected host.",
             FontSize = 14,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             HorizontalTextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 24, 0, 0)
         };
@@ -67,7 +67,8 @@ public class MobileChatPage : ContentPage
         _messageEntry = new Entry
         {
             Placeholder = "Type a message...",
-            BackgroundColor = Colors.White,
+            BackgroundColor = ThemeColors.InputBackground,
+            TextColor = ThemeColors.TextPrimary,
             ReturnType = ReturnType.Send,
             ClearButtonVisibility = ClearButtonVisibility.WhileEditing
         };
@@ -77,7 +78,7 @@ public class MobileChatPage : ContentPage
         _sendButton = new Button
         {
             Text = "Send",
-            BackgroundColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.NeutralButtonBackground,
             TextColor = Colors.White,
             CornerRadius = 8,
             WidthRequest = 88,
@@ -85,7 +86,54 @@ public class MobileChatPage : ContentPage
         };
         _sendButton.Clicked += OnSendClicked;
 
-        Content = new Grid
+        Content = BuildContent();
+    }
+
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+
+        ThemeColors.ThemeChanged += OnThemeChanged;
+
+        _chatSession.SessionStateChanged += OnSessionStateChanged;
+        _chatSession.MessagesChanged += OnMessagesChanged;
+        _chatSession.UnreadCountChanged += OnUnreadCountChanged;
+
+        RefreshTheme();
+        RefreshUi();
+        await _chatSession.MarkAllAsReadAsync();
+        RefreshUi();
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+
+        ThemeColors.ThemeChanged -= OnThemeChanged;
+        _chatSession.SessionStateChanged -= OnSessionStateChanged;
+        _chatSession.MessagesChanged -= OnMessagesChanged;
+        _chatSession.UnreadCountChanged -= OnUnreadCountChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshTheme();
+            RefreshUi();
+        });
+    }
+
+    private void RefreshTheme()
+    {
+        BackgroundColor = ThemeColors.PageBackground;
+        if (_statusLabel != null)
+            Content = BuildContent();
+    }
+
+    private View BuildContent()
+    {
+        return new Grid
         {
             RowDefinitions =
             {
@@ -103,34 +151,12 @@ public class MobileChatPage : ContentPage
         };
     }
 
-    protected override async void OnAppearing()
-    {
-        base.OnAppearing();
-
-        _chatSession.SessionStateChanged += OnSessionStateChanged;
-        _chatSession.MessagesChanged += OnMessagesChanged;
-        _chatSession.UnreadCountChanged += OnUnreadCountChanged;
-
-        RefreshUi();
-        await _chatSession.MarkAllAsReadAsync();
-        RefreshUi();
-    }
-
-    protected override void OnDisappearing()
-    {
-        base.OnDisappearing();
-
-        _chatSession.SessionStateChanged -= OnSessionStateChanged;
-        _chatSession.MessagesChanged -= OnMessagesChanged;
-        _chatSession.UnreadCountChanged -= OnUnreadCountChanged;
-    }
-
     private View BuildHeader()
     {
         return new Border
         {
-            BackgroundColor = Color.FromArgb("#F8F6FF"),
-            Stroke = Color.FromArgb("#DDD6FE"),
+            BackgroundColor = ThemeColors.CardBackgroundAlt,
+            Stroke = ThemeColors.ToolbarBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(16, 14),
@@ -154,7 +180,7 @@ public class MobileChatPage : ContentPage
                         Text = "💬 Chat",
                         FontSize = 22,
                         FontAttributes = FontAttributes.Bold,
-                        TextColor = Color.FromArgb("#512BD4")
+                        TextColor = ThemeColors.Accent
                     },
                     CreateGridChild(_unreadBadgeLabel, column: 1),
                     CreateGridChild(_statusLabel, row: 1)
@@ -167,8 +193,8 @@ public class MobileChatPage : ContentPage
     {
         return new Border
         {
-            BackgroundColor = Color.FromArgb("#FAFAFA"),
-            Stroke = Color.FromArgb("#E5E7EB"),
+            BackgroundColor = ThemeColors.PlaceholderBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(14, 8),
@@ -202,8 +228,8 @@ public class MobileChatPage : ContentPage
 
         return new Border
         {
-            BackgroundColor = Colors.White,
-            Stroke = Color.FromArgb("#E5E7EB"),
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
             StrokeThickness = 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
             Padding = new Thickness(12),
@@ -273,14 +299,14 @@ public class MobileChatPage : ContentPage
             Text = message.SenderName,
             FontSize = 11,
             FontAttributes = FontAttributes.Bold,
-            TextColor = isLocal ? Color.FromArgb("#D9CCFF") : Color.FromArgb("#6B7280")
+            TextColor = isLocal ? ThemeColors.AccentText : ThemeColors.TextSecondary
         });
 
         bubbleStack.Add(new Label
         {
             Text = message.Text,
             FontSize = 15,
-            TextColor = isLocal ? Colors.White : Color.FromArgb("#111827")
+            TextColor = isLocal ? Colors.White : ThemeColors.TextPrimary
         });
 
         bubbleStack.Add(new Label
@@ -288,13 +314,13 @@ public class MobileChatPage : ContentPage
             Text = message.Timestamp.ToLocalTime().ToString("HH:mm"),
             FontSize = 10,
             HorizontalOptions = LayoutOptions.End,
-            TextColor = isLocal ? Color.FromArgb("#D9CCFF") : Color.FromArgb("#9CA3AF")
+            TextColor = isLocal ? ThemeColors.AccentText : ThemeColors.TextMuted
         });
 
         var bubble = new Border
         {
-            BackgroundColor = isLocal ? Color.FromArgb("#512BD4") : Colors.White,
-            Stroke = isLocal ? Colors.Transparent : Color.FromArgb("#E5E7EB"),
+            BackgroundColor = isLocal ? ThemeColors.Accent : ThemeColors.CardBackground,
+            Stroke = isLocal ? Colors.Transparent : ThemeColors.CardBorder,
             StrokeThickness = isLocal ? 0 : 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 16 },
             Padding = new Thickness(12, 10),
@@ -340,6 +366,7 @@ public class MobileChatPage : ContentPage
     private void UpdateSendButtonState()
     {
         _sendButton.IsEnabled = _chatSession.HasActiveSession && !string.IsNullOrWhiteSpace(_messageEntry.Text);
+        _sendButton.BackgroundColor = _sendButton.IsEnabled ? ThemeColors.Accent : ThemeColors.NeutralButtonBackground;
     }
 
     private void UpdateUnreadBadge()

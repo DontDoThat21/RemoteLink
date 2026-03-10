@@ -18,6 +18,8 @@ public class DevicesPage : ContentPage
     private readonly ISavedDevicesService _savedDevices;
     private readonly IConnectionHistoryService _connectionHistory;
     private readonly List<DeviceInfo> _devices = new();
+    private Border _connectionBanner = null!;
+    private Label _connectionBannerLabel = null!;
 
     // UI references — address book
     private StackLayout _savedDeviceListLayout = null!;
@@ -41,9 +43,7 @@ public class DevicesPage : ContentPage
         _connectionHistory = connectionHistory;
 
         Title = "Devices";
-        BackgroundColor = Colors.White;
-
-        Content = BuildLayout();
+        RefreshTheme();
 
         _client.DeviceDiscovered += OnDeviceDiscovered;
         _client.DeviceLost += OnDeviceLost;
@@ -54,6 +54,10 @@ public class DevicesPage : ContentPage
     {
         base.OnAppearing();
 
+        ThemeColors.ThemeChanged += OnThemeChanged;
+
+        RefreshTheme();
+
         if (!_loaded)
         {
             await _savedDevices.LoadAsync();
@@ -62,6 +66,30 @@ public class DevicesPage : ContentPage
 
         RefreshSavedDeviceList();
         RefreshDeviceList();
+        UpdateConnectionBanner();
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        ThemeColors.ThemeChanged -= OnThemeChanged;
+    }
+
+    private void OnThemeChanged()
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshTheme();
+            RefreshSavedDeviceList();
+            RefreshDeviceList();
+            UpdateConnectionBanner();
+        });
+    }
+
+    private void RefreshTheme()
+    {
+        BackgroundColor = ThemeColors.PageBackground;
+        Content = BuildLayout();
     }
 
     // ── Layout ─────────────────────────────────────────────────────────
@@ -80,7 +108,7 @@ public class DevicesPage : ContentPage
             Text = "Devices",
             FontSize = 24,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#512BD4"),
+            TextColor = ThemeColors.Accent,
             Margin = new Thickness(0, 8, 0, 0)
         });
 
@@ -92,8 +120,8 @@ public class DevicesPage : ContentPage
         {
             Text = "\ud83d\udd52  Recent Connections",
             FontSize = 14,
-            BackgroundColor = Color.FromArgb("#F0EDFF"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.AccentSoft,
+            TextColor = ThemeColors.Accent,
             CornerRadius = 8,
             HeightRequest = 42,
             HorizontalOptions = LayoutOptions.Fill
@@ -112,7 +140,7 @@ public class DevicesPage : ContentPage
             Text = "Address Book",
             FontSize = 18,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#333333"),
+            TextColor = ThemeColors.TextPrimary,
             Margin = new Thickness(0, 4, 0, 0)
         });
 
@@ -120,7 +148,7 @@ public class DevicesPage : ContentPage
         {
             Text = "Saved devices for quick reconnection",
             FontSize = 12,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 0, 0, 4)
         });
 
@@ -128,7 +156,7 @@ public class DevicesPage : ContentPage
         {
             Text = "No saved devices yet.\nConnect to a host and tap \u2b50 to save it.",
             FontSize = 13,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             HorizontalTextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 8, 0, 8)
         };
@@ -140,7 +168,7 @@ public class DevicesPage : ContentPage
         // Separator
         root.Add(new BoxView
         {
-            Color = Color.FromArgb("#E0E0E0"),
+            Color = ThemeColors.Divider,
             HeightRequest = 1,
             HorizontalOptions = LayoutOptions.Fill,
             Margin = new Thickness(0, 4, 0, 4)
@@ -152,7 +180,7 @@ public class DevicesPage : ContentPage
             Text = "Nearby Devices",
             FontSize = 18,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#333333"),
+            TextColor = ThemeColors.TextPrimary,
             Margin = new Thickness(0, 0, 0, 0)
         });
 
@@ -160,7 +188,7 @@ public class DevicesPage : ContentPage
         {
             Text = "Scanning for devices on your network...",
             FontSize = 13,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             Margin = new Thickness(0, 0, 0, 4)
         };
         root.Add(_countLabel);
@@ -169,7 +197,7 @@ public class DevicesPage : ContentPage
         {
             Text = "No devices found yet.\nMake sure RemoteLink Desktop is running on the same network.",
             FontSize = 14,
-            TextColor = Colors.Gray,
+            TextColor = ThemeColors.TextSecondary,
             HorizontalTextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, 20, 0, 0)
         };
@@ -183,43 +211,37 @@ public class DevicesPage : ContentPage
 
     private View BuildConnectionBanner()
     {
-        var banner = new Border
+        _connectionBanner = new Border
         {
-            BackgroundColor = Color.FromArgb("#E8F5E9"),
-            Stroke = Color.FromArgb("#4CAF50"),
+            BackgroundColor = ThemeColors.SuccessBackground,
+            Stroke = ThemeColors.SuccessBorder,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
             Padding = new Thickness(12),
             IsVisible = false,
             AutomationId = "connection-banner"
         };
 
-        var label = new Label
+        _connectionBannerLabel = new Label
         {
             FontSize = 14,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Color.FromArgb("#2E7D32"),
+            TextColor = ThemeColors.SuccessText,
             AutomationId = "connection-label"
         };
 
-        banner.Content = label;
+        _connectionBanner.Content = _connectionBannerLabel;
+        return _connectionBanner;
+    }
 
-        _client.ConnectionStateChanged += (_, state) =>
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                banner.IsVisible = state == ClientConnectionState.Connected;
-                if (state == ClientConnectionState.Connected)
-                    label.Text = $"Connected to {_client.ConnectedHost?.DeviceName ?? "Unknown"}";
-            });
-        };
+    private void UpdateConnectionBanner()
+    {
+        if (_connectionBanner == null || _connectionBannerLabel == null)
+            return;
 
-        if (_client.IsConnected)
-        {
-            banner.IsVisible = true;
-            label.Text = $"Connected to {_client.ConnectedHost?.DeviceName ?? "Unknown"}";
-        }
-
-        return banner;
+        _connectionBanner.IsVisible = _client.IsConnected;
+        _connectionBannerLabel.Text = _client.IsConnected
+            ? $"Connected to {_client.ConnectedHost?.DeviceName ?? "Unknown"}"
+            : string.Empty;
     }
 
     // ── Saved device cards ─────────────────────────────────────────────
@@ -245,14 +267,14 @@ public class DevicesPage : ContentPage
 
         var card = new Border
         {
-            BackgroundColor = isConnected ? Color.FromArgb("#F3E8FF") : Color.FromArgb("#FFFBF0"),
-            Stroke = isConnected ? Color.FromArgb("#512BD4") : Color.FromArgb("#E0D6B8"),
+            BackgroundColor = isConnected ? ThemeColors.SelectedCardBackground : ThemeColors.AddressBookBackground,
+            Stroke = isConnected ? ThemeColors.SelectedCardBorder : ThemeColors.AddressBookBorder,
             StrokeThickness = isConnected ? 2 : 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
             Padding = new Thickness(14),
             Shadow = new Shadow
             {
-                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Offset = new Point(0, 2),
                 Radius = 6
             }
@@ -291,7 +313,7 @@ public class DevicesPage : ContentPage
             Text = displayName,
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.Black
+            TextColor = ThemeColors.TextPrimary
         });
 
         if (!string.IsNullOrWhiteSpace(saved.FriendlyName) && saved.FriendlyName != saved.DeviceName)
@@ -300,7 +322,7 @@ public class DevicesPage : ContentPage
             {
                 Text = saved.DeviceName,
                 FontSize = 11,
-                TextColor = Colors.Gray,
+                TextColor = ThemeColors.TextSecondary,
                 FontAttributes = FontAttributes.Italic
             });
         }
@@ -309,7 +331,7 @@ public class DevicesPage : ContentPage
         {
             Text = $"{saved.IPAddress}:{saved.Port}",
             FontSize = 12,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         });
 
         if (saved.LastConnected.HasValue)
@@ -318,7 +340,7 @@ public class DevicesPage : ContentPage
             {
                 Text = $"Last connected: {FormatRelativeTime(saved.LastConnected.Value)}",
                 FontSize = 10,
-                TextColor = Color.FromArgb("#888888")
+                TextColor = ThemeColors.TextMuted
             });
         }
 
@@ -328,7 +350,7 @@ public class DevicesPage : ContentPage
             {
                 Text = "Currently connected",
                 FontSize = 11,
-                TextColor = Color.FromArgb("#512BD4"),
+                TextColor = ThemeColors.Accent,
                 FontAttributes = FontAttributes.Italic
             });
         }
@@ -345,8 +367,8 @@ public class DevicesPage : ContentPage
         {
             Text = "\u270f",
             FontSize = 14,
-            BackgroundColor = Color.FromArgb("#E8E0F0"),
-            TextColor = Color.FromArgb("#512BD4"),
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
             CornerRadius = 4,
             WidthRequest = 36,
             HeightRequest = 32,
@@ -358,8 +380,8 @@ public class DevicesPage : ContentPage
         {
             Text = "\ud83d\uddd1",
             FontSize = 14,
-            BackgroundColor = Color.FromArgb("#FFE8E8"),
-            TextColor = Color.FromArgb("#C62828"),
+            BackgroundColor = ThemeColors.DangerSoft,
+            TextColor = ThemeColors.Danger,
             CornerRadius = 4,
             WidthRequest = 36,
             HeightRequest = 32,
@@ -484,14 +506,14 @@ public class DevicesPage : ContentPage
 
         var card = new Border
         {
-            BackgroundColor = isConnected ? Color.FromArgb("#F3E8FF") : Colors.White,
-            Stroke = isConnected ? Color.FromArgb("#512BD4") : Color.FromArgb("#DADCE0"),
+            BackgroundColor = isConnected ? ThemeColors.SelectedCardBackground : ThemeColors.CardBackground,
+            Stroke = isConnected ? ThemeColors.SelectedCardBorder : ThemeColors.CardBorder,
             StrokeThickness = isConnected ? 2 : 1,
             StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
             Padding = new Thickness(14),
             Shadow = new Shadow
             {
-                Brush = new SolidColorBrush(Color.FromArgb("#20000000")),
+                Brush = new SolidColorBrush(ThemeColors.ShadowColor),
                 Offset = new Point(0, 2),
                 Radius = 6
             }
@@ -525,13 +547,13 @@ public class DevicesPage : ContentPage
             Text = device.DeviceName,
             FontSize = 16,
             FontAttributes = FontAttributes.Bold,
-            TextColor = Colors.Black
+            TextColor = ThemeColors.TextPrimary
         });
         infoStack.Add(new Label
         {
             Text = $"{device.IPAddress}:{device.Port}",
             FontSize = 12,
-            TextColor = Colors.Gray
+            TextColor = ThemeColors.TextSecondary
         });
         if (isConnected)
         {
@@ -539,7 +561,7 @@ public class DevicesPage : ContentPage
             {
                 Text = "Currently connected",
                 FontSize = 11,
-                TextColor = Color.FromArgb("#512BD4"),
+                TextColor = ThemeColors.Accent,
                 FontAttributes = FontAttributes.Italic
             });
         }
@@ -559,8 +581,8 @@ public class DevicesPage : ContentPage
             {
                 Text = "\u2b50 Save",
                 FontSize = 11,
-                BackgroundColor = Color.FromArgb("#FFF3E0"),
-                TextColor = Color.FromArgb("#E65100"),
+                BackgroundColor = ThemeColors.WarningSoft,
+                TextColor = ThemeColors.WarningText,
                 CornerRadius = 4,
                 HeightRequest = 28,
                 Padding = new Thickness(8, 0)
@@ -574,7 +596,7 @@ public class DevicesPage : ContentPage
             {
                 Text = "\u2b50 Saved",
                 FontSize = 11,
-                TextColor = Color.FromArgb("#E65100")
+                TextColor = ThemeColors.WarningText
             });
         }
 
@@ -582,7 +604,7 @@ public class DevicesPage : ContentPage
         {
             Text = isConnected ? "Connected" : "Connect >",
             FontSize = 13,
-            TextColor = isConnected ? Color.FromArgb("#512BD4") : Color.FromArgb("#999999")
+            TextColor = isConnected ? ThemeColors.Accent : ThemeColors.TextMuted
         });
         Grid.SetColumn(rightStack, 2);
 
@@ -730,6 +752,7 @@ public class DevicesPage : ContentPage
                 _connectionStartedAt = null;
             }
 
+            UpdateConnectionBanner();
             RefreshSavedDeviceList();
             RefreshDeviceList();
         });
