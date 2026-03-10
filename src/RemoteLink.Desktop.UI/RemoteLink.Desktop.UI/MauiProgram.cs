@@ -35,12 +35,21 @@ public static class MauiProgram
         // Session recorder (mock by default; swap for SessionRecorder when FFmpeg is available)
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
+        builder.Services.AddSingleton(new Shared.Models.DeviceInfo
+        {
+            DeviceId = Environment.MachineName + "_UI_" + Guid.NewGuid().ToString("N")[..8],
+            DeviceName = Environment.MachineName,
+            Type = Shared.Models.DeviceType.Desktop,
+            Port = 12346
+        });
+
         // File transfer (chunked streaming with progress tracking)
         builder.Services.AddSingleton<IFileTransferService, FileTransferService>();
 
         // Core shared services
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();
+        builder.Services.AddSingleton<INatTraversalService, NatTraversalService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();
         builder.Services.AddSingleton<IDeltaFrameEncoder, DeltaFrameEncoder>();
@@ -51,14 +60,7 @@ public static class MauiProgram
         // Network discovery
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
-            var localDevice = new Shared.Models.DeviceInfo
-            {
-                DeviceId = Environment.MachineName + "_UI_" + Guid.NewGuid().ToString("N")[..8],
-                DeviceName = Environment.MachineName,
-                Type = Shared.Models.DeviceType.Desktop,
-                Port = 12346
-            };
-            return new UdpNetworkDiscovery(localDevice);
+            return new UdpNetworkDiscovery(provider.GetRequiredService<Shared.Models.DeviceInfo>());
         });
 
         // The background host service that manages the remote desktop server
@@ -70,7 +72,9 @@ public static class MauiProgram
         {
             var logger = provider.GetRequiredService<ILogger<RemoteDesktopClient>>();
             var discovery = provider.GetRequiredService<INetworkDiscovery>();
-            return new RemoteDesktopClient(logger, discovery);
+            var natTraversal = provider.GetRequiredService<INatTraversalService>();
+            var localDevice = provider.GetRequiredService<Shared.Models.DeviceInfo>();
+            return new RemoteDesktopClient(logger, discovery, null, natTraversal, localDevice);
         });
 
         // System tray service (minimize to tray, context menu)

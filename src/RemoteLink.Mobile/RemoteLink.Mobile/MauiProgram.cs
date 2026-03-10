@@ -27,17 +27,18 @@ public static class MauiProgram
         builder.Services.AddLogging();
         builder.Logging.AddDebug();
 
+        builder.Services.AddSingleton(new DeviceInfo
+        {
+            DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
+            DeviceName = Environment.MachineName + " Mobile",
+            Type = DeviceType.Mobile,
+            Port = 12347
+        });
+
         // Network discovery service
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
-            var localDevice = new DeviceInfo
-            {
-                DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
-                DeviceName = Environment.MachineName + " Mobile",
-                Type = DeviceType.Mobile,
-                Port = 12347
-            };
-            return new UdpNetworkDiscovery(localDevice);
+            return new UdpNetworkDiscovery(provider.GetRequiredService<DeviceInfo>());
         });
 
         // Saved devices address book
@@ -50,13 +51,16 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
         builder.Services.AddSingleton<IAppLockService, AppLockService>();
         builder.Services.AddSingleton<IncomingConnectionNotificationListener>();
+        builder.Services.AddSingleton<INatTraversalService, NatTraversalService>();
 
         // Remote desktop client (singleton shared across all pages)
         builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
         {
             var logger = provider.GetRequiredService<ILogger<RemoteDesktopClient>>();
             var discovery = provider.GetRequiredService<INetworkDiscovery>();
-            return new RemoteDesktopClient(logger, discovery);
+            var natTraversal = provider.GetRequiredService<INatTraversalService>();
+            var localDevice = provider.GetRequiredService<DeviceInfo>();
+            return new RemoteDesktopClient(logger, discovery, null, natTraversal, localDevice);
         });
 
         builder.Services.AddSingleton<MobileChatSession>();

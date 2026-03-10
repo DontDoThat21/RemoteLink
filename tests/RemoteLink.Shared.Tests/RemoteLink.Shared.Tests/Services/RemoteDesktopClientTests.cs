@@ -112,6 +112,57 @@ public class RemoteDesktopClientTests
         }
     }
 
+    private sealed class FakeNatTraversalService : INatTraversalService
+    {
+        public bool IsRunning { get; private set; }
+        public NatDiscoveryResult? CurrentDiscovery { get; private set; }
+        public int? StartedPort { get; private set; }
+
+        public Task<NatDiscoveryResult> StartAsync(int localPort, CancellationToken cancellationToken = default)
+        {
+            IsRunning = true;
+            StartedPort = localPort;
+            CurrentDiscovery = new NatDiscoveryResult
+            {
+                LocalPort = localPort,
+                PublicIPAddress = "198.51.100.10",
+                PublicPort = localPort,
+                NatType = NatTraversalType.BehindNat,
+                Candidates = new List<NatEndpointCandidate>
+                {
+                    new()
+                    {
+                        IPAddress = "10.0.0.25",
+                        Port = localPort,
+                        Type = NatCandidateType.Host,
+                        Priority = 200
+                    },
+                    new()
+                    {
+                        IPAddress = "198.51.100.10",
+                        Port = localPort,
+                        Type = NatCandidateType.ServerReflexive,
+                        Priority = 100
+                    }
+                }
+            };
+
+            return Task.FromResult(CurrentDiscovery);
+        }
+
+        public Task<NatDiscoveryResult> RefreshCandidatesAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(CurrentDiscovery!);
+
+        public Task StopAsync()
+        {
+            IsRunning = false;
+            return Task.CompletedTask;
+        }
+
+        public Task<NatTraversalConnectResult> TryConnectAsync(IEnumerable<NatEndpointCandidate> remoteCandidates, CancellationToken cancellationToken = default)
+            => Task.FromResult(new NatTraversalConnectResult { Success = true });
+    }
+
     [Fact]
     public async Task ConnectToHostAsync_WhenQualityReceived_UpdatesCurrentConnectionQuality()
     {
@@ -240,5 +291,37 @@ public class RemoteDesktopClientTests
         Assert.NotNull(comm.LastSessionControlRequest);
         Assert.Equal(SessionControlCommand.SetAudioEnabled, comm.LastSessionControlRequest!.Command);
         Assert.False(comm.LastSessionControlRequest.AudioEnabled);
+    }
+
+    [Fact]
+    public async Task GetNatTraversalInfoAsync_WhenConfigured_UpdatesLocalDeviceMetadata()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var natTraversal = new FakeNatTraversalService();
+        var localDevice = new DeviceInfo
+        {
+            DeviceId = "mobile-1",
+            DeviceName = "Phone",
+            IPAddress = "10.0.0.25",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        };
+
+        var client = new RemoteDesktopClient(
+            NullLogger<RemoteDesktopClient>.Instance,
+            discovery,
+            () => new FakeCommunicationService(),
+            natTraversal,
+            localDevice);
+
+        var result = await client.GetNatTraversalInfoAsync();
+
+        Assert.NotNull(result);
+        Assert.True(natTraversal.IsRunning);
+        Assert.Equal(12347, natTraversal.StartedPort);
+        Assert.Equal("198.51.100.10", localDevice.PublicIPAddress);
+        Assert.Equal(12347, localDevice.PublicPort);
+        Assert.Equal(NatTraversalType.BehindNat, localDevice.NatType);
+        Assert.Contains(localDevice.NatCandidates, candidate => candidate.Type == NatCandidateType.ServerReflexive);
     }
 }

@@ -55,8 +55,17 @@ class Program
         // TODO: Add configuration to choose SessionRecorder vs MockSessionRecorder
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
+        builder.Services.AddSingleton(new DeviceInfo
+        {
+            DeviceId = Environment.MachineName + "_" + Guid.NewGuid().ToString("N")[..8],
+            DeviceName = Environment.MachineName,
+            Type = DeviceType.Desktop,
+            Port = 12346
+        });
+
         builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
         builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();
+        builder.Services.AddSingleton<INatTraversalService, NatTraversalService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
         builder.Services.AddSingleton<ISessionManager, SessionManager>();
         builder.Services.AddSingleton<IDeltaFrameEncoder, DeltaFrameEncoder>();
@@ -72,14 +81,7 @@ class Program
         
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>
         {
-            var localDevice = new DeviceInfo
-            {
-                DeviceId = Environment.MachineName + "_" + Guid.NewGuid().ToString("N")[..8],
-                DeviceName = Environment.MachineName,
-                Type = DeviceType.Desktop,
-                Port = 12346
-            };
-            return new UdpNetworkDiscovery(localDevice);
+            return new UdpNetworkDiscovery(provider.GetRequiredService<DeviceInfo>());
         });
         
         builder.Services.AddHostedService<RemoteDesktopHost>();

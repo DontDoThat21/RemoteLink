@@ -10,6 +10,10 @@ public class DeviceInfo
     public string IPAddress { get; set; } = string.Empty;
     public string? MacAddress { get; set; }
     public int Port { get; set; }
+    public string? PublicIPAddress { get; set; }
+    public int? PublicPort { get; set; }
+    public NatTraversalType NatType { get; set; }
+    public List<NatEndpointCandidate> NatCandidates { get; set; } = new();
     public DeviceType Type { get; set; }
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; }

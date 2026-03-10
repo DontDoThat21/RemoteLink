@@ -33,6 +33,8 @@ public class RemoteDesktopClient
     private readonly ILogger<RemoteDesktopClient> _logger;
     private readonly INetworkDiscovery _networkDiscovery;
     private readonly Func<ICommunicationService> _commFactory;
+    private readonly INatTraversalService? _natTraversalService;
+    private readonly DeviceInfo? _localDevice;
     private ICommunicationService? _communicationService;
     private bool _isStarted;
     private TaskCompletionSource<PairingResponse>? _pairingTcs;
@@ -99,11 +101,15 @@ public class RemoteDesktopClient
     public RemoteDesktopClient(
         ILogger<RemoteDesktopClient>? logger,
         INetworkDiscovery networkDiscovery,
-        Func<ICommunicationService>? commFactory = null)
+        Func<ICommunicationService>? commFactory = null,
+        INatTraversalService? natTraversalService = null,
+        DeviceInfo? localDevice = null)
     {
         _logger = logger ?? NullLogger<RemoteDesktopClient>.Instance;
         _networkDiscovery = networkDiscovery;
         _commFactory = commFactory ?? (() => new TcpCommunicationService());
+        _natTraversalService = natTraversalService;
+        _localDevice = localDevice;
 
         _networkDiscovery.DeviceDiscovered += OnDeviceDiscovered;
         _networkDiscovery.DeviceLost += OnDeviceLost;
@@ -124,6 +130,12 @@ public class RemoteDesktopClient
         {
             await _networkDiscovery.StartBroadcastingAsync();
             await _networkDiscovery.StartListeningAsync();
+
+            if (_natTraversalService is not null && _localDevice is not null)
+            {
+                var natDiscovery = await _natTraversalService.StartAsync(_localDevice.Port);
+                ApplyNatDiscoveryResult(_localDevice, natDiscovery);
+            }
 
             _isStarted = true;
             ServiceStatusChanged?.Invoke(this, "Searching for desktop hosts...");
@@ -150,6 +162,8 @@ public class RemoteDesktopClient
         {
             await _networkDiscovery.StopBroadcastingAsync();
             await _networkDiscovery.StopListeningAsync();
+            if (_natTraversalService is not null)
+                await _natTraversalService.StopAsync();
         }
         catch { /* ignore shutdown errors */ }
 
@@ -394,6 +408,58 @@ public class RemoteDesktopClient
         return response.AppliedAudioEnabled ?? enabled;
     }
 
+    /// <summary>
+    /// Returns the latest local NAT traversal candidates, starting discovery if needed.
+    /// </summary>
+    public async Task<NatDiscoveryResult?> GetNatTraversalInfoAsync(CancellationToken ct = default)
+    {
+        if (_natTraversalService is null || _localDevice is null)
+            return null;
+
+        var result = _natTraversalService.IsRunning
+            ? await _natTraversalService.RefreshCandidatesAsync(ct)
+            : await _natTraversalService.StartAsync(_localDevice.Port, ct);
+
+        ApplyNatDiscoveryResult(_localDevice, result);
+        return result;
+    }
+
+    /// <summary>
+    /// Attempts a direct UDP hole-punch connectivity check against a remote host.
+    /// </summary>
+    public async Task<NatTraversalConnectResult> TryNatTraversalAsync(DeviceInfo host, CancellationToken ct = default)
+    {
+        if (host is null)
+            throw new ArgumentNullException(nameof(host));
+
+        if (_natTraversalService is null || _localDevice is null)
+        {
+            return new NatTraversalConnectResult
+            {
+                Success = false,
+                FailureReason = "NAT traversal is not configured for this client."
+            };
+        }
+
+        if (!_natTraversalService.IsRunning)
+        {
+            var discovery = await _natTraversalService.StartAsync(_localDevice.Port, ct);
+            ApplyNatDiscoveryResult(_localDevice, discovery);
+        }
+
+        var candidates = BuildRemoteNatCandidates(host);
+        if (candidates.Count == 0)
+        {
+            return new NatTraversalConnectResult
+            {
+                Success = false,
+                FailureReason = "The remote host has not published any NAT traversal candidates."
+            };
+        }
+
+        return await _natTraversalService.TryConnectAsync(candidates, ct);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private void SetState(ClientConnectionState state)
@@ -536,4 +602,49 @@ public class RemoteDesktopClient
 
     private static string BuildDeviceName() =>
         $"{Environment.MachineName} (Mobile)";
+
+    private static List<NatEndpointCandidate> BuildRemoteNatCandidates(DeviceInfo host)
+    {
+        var candidates = host.NatCandidates?
+            .Where(candidate =>
+                candidate.Port > 0 &&
+                !string.IsNullOrWhiteSpace(candidate.IPAddress) &&
+                string.Equals(candidate.Protocol, "udp", StringComparison.OrdinalIgnoreCase))
+            .Select(CloneCandidate)
+            .ToList() ?? new List<NatEndpointCandidate>();
+
+        if (candidates.Count == 0 && !string.IsNullOrWhiteSpace(host.PublicIPAddress) && host.PublicPort is > 0)
+        {
+            candidates.Add(new NatEndpointCandidate
+            {
+                IPAddress = host.PublicIPAddress,
+                Port = host.PublicPort.Value,
+                Type = NatCandidateType.ServerReflexive,
+                Priority = 100,
+                Source = "device-info"
+            });
+        }
+
+        return candidates;
+    }
+
+    private static void ApplyNatDiscoveryResult(DeviceInfo device, NatDiscoveryResult result)
+    {
+        device.PublicIPAddress = result.PublicIPAddress;
+        device.PublicPort = result.PublicPort;
+        device.NatType = result.NatType;
+        device.NatCandidates = result.Candidates.Select(CloneCandidate).ToList();
+    }
+
+    private static NatEndpointCandidate CloneCandidate(NatEndpointCandidate candidate) =>
+        new()
+        {
+            CandidateId = candidate.CandidateId,
+            IPAddress = candidate.IPAddress,
+            Port = candidate.Port,
+            Protocol = candidate.Protocol,
+            Type = candidate.Type,
+            Priority = candidate.Priority,
+            Source = candidate.Source
+        };
 }

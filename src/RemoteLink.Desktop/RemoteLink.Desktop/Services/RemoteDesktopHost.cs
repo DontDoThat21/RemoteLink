@@ -35,6 +35,8 @@ public class RemoteDesktopHost : BackgroundService
     private readonly ISessionRecorder _sessionRecorder;
     private readonly IMessagingService _messagingService;
     private readonly IConnectionRequestNotificationPublisher? _connectionRequestNotificationPublisher;
+    private readonly INatTraversalService? _natTraversalService;
+    private readonly DeviceInfo? _localDevice;
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -67,7 +69,9 @@ public class RemoteDesktopHost : BackgroundService
         IAudioCaptureService audioCapture,
         ISessionRecorder sessionRecorder,
         IMessagingService messagingService,
-        IConnectionRequestNotificationPublisher? connectionRequestNotificationPublisher = null)
+        IConnectionRequestNotificationPublisher? connectionRequestNotificationPublisher = null,
+        INatTraversalService? natTraversalService = null,
+        DeviceInfo? localDevice = null)
     {
         _logger = logger;
         _networkDiscovery = networkDiscovery;
@@ -83,6 +87,8 @@ public class RemoteDesktopHost : BackgroundService
         _sessionRecorder = sessionRecorder;
         _messagingService = messagingService;
         _connectionRequestNotificationPublisher = connectionRequestNotificationPublisher;
+        _natTraversalService = natTraversalService;
+        _localDevice = localDevice;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -126,6 +132,25 @@ public class RemoteDesktopHost : BackgroundService
             // Start TCP listener
             await _communication.StartAsync(HostPort);
             _logger.LogInformation("TCP listener started on port {Port}", HostPort);
+
+            if (_natTraversalService is not null && _localDevice is not null)
+            {
+                try
+                {
+                    var natDiscovery = await _natTraversalService.StartAsync(HostPort, stoppingToken);
+                    ApplyNatDiscoveryResult(_localDevice, natDiscovery);
+                    _logger.LogInformation(
+                        "NAT traversal ready. Type={NatType}, public endpoint={PublicIPAddress}:{PublicPort}, candidates={CandidateCount}",
+                        natDiscovery.NatType,
+                        natDiscovery.PublicIPAddress ?? "unknown",
+                        natDiscovery.PublicPort?.ToString() ?? "-",
+                        natDiscovery.Candidates.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to initialize NAT traversal. Continuing with LAN-only connectivity.");
+                }
+            }
 
             // Start network discovery (UDP broadcast so mobile clients can find us)
             await _networkDiscovery.StartBroadcastingAsync();
@@ -176,6 +201,8 @@ public class RemoteDesktopHost : BackgroundService
             await _clipboardService.StopAsync();
             await _inputHandler.StopAsync();
             await _screenCapture.StopCaptureAsync();
+            if (_natTraversalService is not null)
+                await _natTraversalService.StopAsync();
             await _communication.StopAsync();
             await _networkDiscovery.StopBroadcastingAsync();
             await _networkDiscovery.StopListeningAsync();
@@ -299,6 +326,25 @@ public class RemoteDesktopHost : BackgroundService
         {
             _logger.LogDebug(ex, "Failed to publish incoming connection notification");
         }
+    }
+
+    private static void ApplyNatDiscoveryResult(DeviceInfo device, NatDiscoveryResult result)
+    {
+        device.PublicIPAddress = result.PublicIPAddress;
+        device.PublicPort = result.PublicPort;
+        device.NatType = result.NatType;
+        device.NatCandidates = result.Candidates
+            .Select(candidate => new NatEndpointCandidate
+            {
+                CandidateId = candidate.CandidateId,
+                IPAddress = candidate.IPAddress,
+                Port = candidate.Port,
+                Protocol = candidate.Protocol,
+                Type = candidate.Type,
+                Priority = candidate.Priority,
+                Source = candidate.Source
+            })
+            .ToList();
     }
 
     /// <summary>
