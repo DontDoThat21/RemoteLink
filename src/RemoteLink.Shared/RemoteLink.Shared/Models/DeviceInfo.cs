@@ -14,6 +14,9 @@ public class DeviceInfo
     public int? PublicPort { get; set; }
     public NatTraversalType NatType { get; set; }
     public List<NatEndpointCandidate> NatCandidates { get; set; } = new();
+    public bool SupportsRelay { get; set; }
+    public string? RelayServerHost { get; set; }
+    public int? RelayServerPort { get; set; }
     public DeviceType Type { get; set; }
     public DateTime LastSeen { get; set; }
     public bool IsOnline { get; set; }

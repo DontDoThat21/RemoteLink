@@ -35,13 +35,18 @@ public static class MauiProgram
         // Session recorder (mock by default; swap for SessionRecorder when FFmpeg is available)
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
-        builder.Services.AddSingleton(new Shared.Models.DeviceInfo
+        var relayConfiguration = RelayConfiguration.FromEnvironment();
+        var localDevice = new Shared.Models.DeviceInfo
         {
             DeviceId = Environment.MachineName + "_UI_" + Guid.NewGuid().ToString("N")[..8],
             DeviceName = Environment.MachineName,
             Type = Shared.Models.DeviceType.Desktop,
             Port = 12346
-        });
+        };
+        relayConfiguration.ApplyTo(localDevice);
+
+        builder.Services.AddSingleton(relayConfiguration);
+        builder.Services.AddSingleton(localDevice);
 
         // File transfer (chunked streaming with progress tracking)
         builder.Services.AddSingleton<IFileTransferService, FileTransferService>();

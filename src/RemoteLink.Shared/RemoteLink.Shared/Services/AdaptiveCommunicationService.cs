@@ -6,26 +6,34 @@ using RemoteLink.Shared.Models;
 namespace RemoteLink.Shared.Services;
 
 /// <summary>
-/// Composite communication service that keeps the existing TCP path and adds a UDP NAT-traversed path.
+/// Composite communication service that prefers direct UDP/TCP paths and falls back to relay transport when needed.
 /// </summary>
 public sealed class AdaptiveCommunicationService : ICommunicationService, IDisposable
 {
     private readonly ILogger<AdaptiveCommunicationService> _logger;
     private readonly TcpCommunicationService _tcpService;
     private readonly UdpNatCommunicationService _udpService;
+    private readonly RelayCommunicationService? _relayService;
     private ICommunicationService? _activeService;
     private bool _disposed;
 
     public AdaptiveCommunicationService(
         INatTraversalService natTraversalService,
+        DeviceInfo? localDevice = null,
+        RelayConfiguration? relayConfiguration = null,
         ILogger<AdaptiveCommunicationService>? logger = null)
     {
         _logger = logger ?? NullLogger<AdaptiveCommunicationService>.Instance;
         _tcpService = new TcpCommunicationService();
         _udpService = new UdpNatCommunicationService(natTraversalService);
+        _relayService = localDevice is not null && relayConfiguration?.IsConfigured == true
+            ? new RelayCommunicationService(localDevice, relayConfiguration)
+            : null;
 
         WireTransport(_tcpService);
         WireTransport(_udpService);
+        if (_relayService is not null)
+            WireTransport(_relayService);
     }
 
     public bool IsConnected => _activeService?.IsConnected == true;
@@ -53,12 +61,16 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
     public async Task StartAsync(int port)
     {
         ThrowIfDisposed();
+        if (_relayService is not null)
+            await _relayService.StartAsync(port);
         await _udpService.StartAsync(port);
         await _tcpService.StartAsync(port);
     }
 
     public async Task StopAsync()
     {
+        if (_relayService is not null)
+            await _relayService.StopAsync();
         await _udpService.StopAsync();
         await _tcpService.StopAsync();
         _activeService = null;
@@ -95,11 +107,31 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             return true;
         }
 
+        if (_relayService is not null &&
+            (device.SupportsRelay || !string.IsNullOrWhiteSpace(device.RelayServerHost) || _relayService.IsRelayConfigured))
+        {
+            try
+            {
+                if (await _relayService.ConnectToDeviceAsync(device))
+                {
+                    _activeService = _relayService;
+                    _logger.LogInformation("Connected to {Device} over relay transport", device.DeviceName);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Relay transport failed for {Device}", device.DeviceName);
+            }
+        }
+
         return false;
     }
 
     public async Task DisconnectAsync()
     {
+        if (_relayService is not null)
+            await _relayService.DisconnectAsync();
         await _udpService.DisconnectAsync();
         await _tcpService.DisconnectAsync();
         _activeService = null;
@@ -125,7 +157,7 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
     public Task SendPrintJobStatusAsync(PrintJobStatus status) => ActiveOrDefault().SendPrintJobStatusAsync(status);
 
     private ICommunicationService ActiveOrDefault()
-        => _activeService ?? (_udpService.IsConnected ? _udpService : _tcpService);
+        => _activeService ?? (_udpService.IsConnected ? _udpService : _relayService?.IsConnected == true ? _relayService : _tcpService);
 
     private void WireTransport(ICommunicationService transport)
     {
@@ -134,7 +166,11 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             if (connected)
                 _activeService = transport;
             else if (_activeService == transport)
-                _activeService = _udpService.IsConnected ? _udpService : (_tcpService.IsConnected ? _tcpService : null);
+                _activeService = _udpService.IsConnected
+                    ? _udpService
+                    : _relayService?.IsConnected == true
+                        ? _relayService
+                        : (_tcpService.IsConnected ? _tcpService : null);
 
             ConnectionStateChanged?.Invoke(this, _activeService?.IsConnected == true);
         };
@@ -183,6 +219,7 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             return;
 
         _disposed = true;
+        _relayService?.Dispose();
         _udpService.Dispose();
         _tcpService.Dispose();
     }

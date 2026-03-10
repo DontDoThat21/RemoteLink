@@ -27,13 +27,18 @@ public static class MauiProgram
         builder.Services.AddLogging();
         builder.Logging.AddDebug();
 
-        builder.Services.AddSingleton(new DeviceInfo
+        var relayConfiguration = RelayConfiguration.FromEnvironment();
+        var localDevice = new DeviceInfo
         {
             DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
             DeviceName = Environment.MachineName + " Mobile",
             Type = DeviceType.Mobile,
             Port = 12347
-        });
+        };
+        relayConfiguration.ApplyTo(localDevice);
+
+        builder.Services.AddSingleton(relayConfiguration);
+        builder.Services.AddSingleton(localDevice);
 
         // Network discovery service
         builder.Services.AddSingleton<INetworkDiscovery>(provider =>

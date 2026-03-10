@@ -55,13 +55,18 @@ class Program
         // TODO: Add configuration to choose SessionRecorder vs MockSessionRecorder
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
-        builder.Services.AddSingleton(new DeviceInfo
+        var relayConfiguration = RelayConfiguration.FromEnvironment();
+        var localDevice = new DeviceInfo
         {
             DeviceId = Environment.MachineName + "_" + Guid.NewGuid().ToString("N")[..8],
             DeviceName = Environment.MachineName,
             Type = DeviceType.Desktop,
             Port = 12346
-        });
+        };
+        relayConfiguration.ApplyTo(localDevice);
+
+        builder.Services.AddSingleton(relayConfiguration);
+        builder.Services.AddSingleton(localDevice);
 
         builder.Services.AddSingleton<ICommunicationService, AdaptiveCommunicationService>();
         builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();
