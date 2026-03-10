@@ -298,4 +298,200 @@ public class RelayTransportTests
         Assert.Equal("client-adaptive-global", request.ClientDeviceId);
         Assert.Equal("777777", request.Pin);
     }
+
+    [Fact]
+    public async Task RelayCommunicationService_CanBridgePairingRequestThroughSecureTunnel()
+    {
+        await using var relayServer = new RelayServer();
+        await relayServer.StartAsync(0);
+
+        var relayConfiguration = new RelayConfiguration
+        {
+            Enabled = true,
+            ServerHost = "127.0.0.1",
+            ServerPort = relayServer.Port,
+            ConnectTimeout = TimeSpan.FromSeconds(3)
+        };
+
+        var secureTunnelConfiguration = new SecureTunnelConfiguration
+        {
+            Mode = SecureTunnelMode.Required,
+            SharedSecret = "shared-tunnel-secret"
+        };
+
+        var hostDevice = new DeviceInfo
+        {
+            DeviceId = "host-secure-relay",
+            DeviceName = "Secure Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+        relayConfiguration.ApplyTo(hostDevice);
+        secureTunnelConfiguration.ApplyTo(hostDevice);
+
+        var clientDevice = new DeviceInfo
+        {
+            DeviceId = "client-secure-relay",
+            DeviceName = "Secure Client",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        };
+        relayConfiguration.ApplyTo(clientDevice);
+        secureTunnelConfiguration.ApplyTo(clientDevice);
+
+        using var host = new RelayCommunicationService(hostDevice, relayConfiguration, secureTunnelConfiguration);
+        using var client = new RelayCommunicationService(clientDevice, relayConfiguration, secureTunnelConfiguration);
+
+        await host.StartAsync(hostDevice.Port);
+
+        var pairingTcs = new TaskCompletionSource<PairingRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.PairingRequestReceived += (_, request) => pairingTcs.TrySetResult(request);
+
+        var connected = await client.ConnectToDeviceAsync(hostDevice);
+        Assert.True(connected);
+
+        await client.SendPairingRequestAsync(new PairingRequest
+        {
+            ClientDeviceId = clientDevice.DeviceId,
+            ClientDeviceName = clientDevice.DeviceName,
+            Pin = "314159",
+            RequestedAt = DateTime.UtcNow
+        });
+
+        var request = await pairingTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("client-secure-relay", request.ClientDeviceId);
+        Assert.Equal("314159", request.Pin);
+    }
+
+    [Fact]
+    public async Task RelayCommunicationService_RejectsConnection_WhenTargetRequiresSecureTunnel()
+    {
+        await using var relayServer = new RelayServer();
+        await relayServer.StartAsync(0);
+
+        var relayConfiguration = new RelayConfiguration
+        {
+            Enabled = true,
+            ServerHost = "127.0.0.1",
+            ServerPort = relayServer.Port,
+            ConnectTimeout = TimeSpan.FromSeconds(3)
+        };
+
+        var hostTunnelConfiguration = new SecureTunnelConfiguration
+        {
+            Mode = SecureTunnelMode.Required,
+            SharedSecret = "required-secret"
+        };
+
+        var hostDevice = new DeviceInfo
+        {
+            DeviceId = "host-secure-required",
+            DeviceName = "Strict Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+        relayConfiguration.ApplyTo(hostDevice);
+        hostTunnelConfiguration.ApplyTo(hostDevice);
+
+        var clientDevice = new DeviceInfo
+        {
+            DeviceId = "client-no-secure",
+            DeviceName = "Plain Client",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        };
+        relayConfiguration.ApplyTo(clientDevice);
+
+        using var host = new RelayCommunicationService(hostDevice, relayConfiguration, hostTunnelConfiguration);
+        using var client = new RelayCommunicationService(clientDevice, relayConfiguration);
+
+        await host.StartAsync(hostDevice.Port);
+
+        var connected = await client.ConnectToDeviceAsync(hostDevice);
+        Assert.False(connected);
+    }
+
+    [Fact]
+    public async Task AdaptiveCommunicationService_UsesSecureTunnel_WhenTargetRequiresIt()
+    {
+        await using var relayServer = new RelayServer();
+        await relayServer.StartAsync(0);
+
+        var relayConfiguration = new RelayConfiguration
+        {
+            Enabled = true,
+            ServerHost = "127.0.0.1",
+            ServerPort = relayServer.Port,
+            ConnectTimeout = TimeSpan.FromSeconds(3)
+        };
+
+        var secureTunnelConfiguration = new SecureTunnelConfiguration
+        {
+            Mode = SecureTunnelMode.Required,
+            SharedSecret = "adaptive-secure-secret"
+        };
+
+        var hostDevice = new DeviceInfo
+        {
+            DeviceId = "host-adaptive-secure",
+            DeviceName = "Adaptive Secure Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+        relayConfiguration.ApplyTo(hostDevice);
+        secureTunnelConfiguration.ApplyTo(hostDevice);
+
+        var clientDevice = new DeviceInfo
+        {
+            DeviceId = "client-adaptive-secure",
+            DeviceName = "Adaptive Secure Client",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        };
+        relayConfiguration.ApplyTo(clientDevice);
+        secureTunnelConfiguration.ApplyTo(clientDevice);
+
+        using var host = new AdaptiveCommunicationService(new NoOpNatTraversalService(), hostDevice, relayConfiguration, secureTunnelConfiguration: secureTunnelConfiguration);
+        using var client = new AdaptiveCommunicationService(new NoOpNatTraversalService(), clientDevice, relayConfiguration, secureTunnelConfiguration: secureTunnelConfiguration);
+
+        await host.StartAsync(hostDevice.Port);
+
+        var pairingTcs = new TaskCompletionSource<PairingRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.PairingRequestReceived += (_, request) => pairingTcs.TrySetResult(request);
+
+        var advertisedHost = new DeviceInfo
+        {
+            DeviceId = hostDevice.DeviceId,
+            DeviceName = hostDevice.DeviceName,
+            IPAddress = "127.0.0.1",
+            Port = 9,
+            Type = DeviceType.Desktop,
+            SupportsRelay = true,
+            RelayServerHost = relayConfiguration.ServerHost,
+            RelayServerPort = relayConfiguration.ServerPort,
+            SupportsSecureTunnel = true,
+            RequiresSecureTunnel = true
+        };
+
+        var connected = await client.ConnectToDeviceAsync(advertisedHost);
+        Assert.True(connected);
+
+        await client.SendPairingRequestAsync(new PairingRequest
+        {
+            ClientDeviceId = clientDevice.DeviceId,
+            ClientDeviceName = clientDevice.DeviceName,
+            Pin = "271828",
+            RequestedAt = DateTime.UtcNow
+        });
+
+        var request = await pairingTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("client-adaptive-secure", request.ClientDeviceId);
+        Assert.Equal("271828", request.Pin);
+    }
 }

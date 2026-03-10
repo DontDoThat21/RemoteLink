@@ -23,6 +23,8 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
         public string DeviceName { get; set; } = string.Empty;
         public string? SessionId { get; set; }
         public string? PeerDeviceId { get; set; }
+        public bool SupportsSecureTunnel { get; set; }
+        public bool RequiresSecureTunnel { get; set; }
     }
 
     private sealed class RelayDeviceRegistryEntry
@@ -200,6 +202,8 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
         connection.DeviceId = frame.SourceDeviceId;
         connection.InternetDeviceId = assignedInternetDeviceId;
         connection.DeviceName = frame.Peer?.DeviceName ?? frame.SourceDeviceId;
+        connection.SupportsSecureTunnel = frame.Peer?.SupportsSecureTunnel == true;
+        connection.RequiresSecureTunnel = frame.Peer?.RequiresSecureTunnel == true;
         _registeredClients[frame.SourceDeviceId] = connection;
 
         await SendFrameAsync(connection, new RelayFrame
@@ -210,7 +214,9 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             {
                 DeviceId = frame.SourceDeviceId,
                 InternetDeviceId = assignedInternetDeviceId,
-                DeviceName = connection.DeviceName
+                DeviceName = connection.DeviceName,
+                SupportsSecureTunnel = connection.SupportsSecureTunnel,
+                RequiresSecureTunnel = connection.RequiresSecureTunnel
             }
         }, cancellationToken);
     }
@@ -251,6 +257,28 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             return;
         }
 
+        if (target.RequiresSecureTunnel && !source.SupportsSecureTunnel)
+        {
+            await SendFrameAsync(source, new RelayFrame
+            {
+                MessageType = "ConnectAck",
+                Success = false,
+                ErrorMessage = "The target device requires secure tunnel mode."
+            }, cancellationToken);
+            return;
+        }
+
+        if (source.RequiresSecureTunnel && !target.SupportsSecureTunnel)
+        {
+            await SendFrameAsync(source, new RelayFrame
+            {
+                MessageType = "ConnectAck",
+                Success = false,
+                ErrorMessage = "The target device does not support secure tunnel mode."
+            }, cancellationToken);
+            return;
+        }
+
         await CloseSessionAsync(source, notifyPeer: true, cancellationToken);
         await CloseSessionAsync(target, notifyPeer: true, cancellationToken);
 
@@ -270,7 +298,9 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             {
                 DeviceId = target.DeviceId ?? string.Empty,
                 InternetDeviceId = target.InternetDeviceId,
-                DeviceName = target.DeviceName
+                DeviceName = target.DeviceName,
+                SupportsSecureTunnel = target.SupportsSecureTunnel,
+                RequiresSecureTunnel = target.RequiresSecureTunnel
             }
         }, cancellationToken);
 
@@ -284,7 +314,9 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             {
                 DeviceId = source.DeviceId,
                 InternetDeviceId = source.InternetDeviceId,
-                DeviceName = source.DeviceName
+                DeviceName = source.DeviceName,
+                SupportsSecureTunnel = source.SupportsSecureTunnel,
+                RequiresSecureTunnel = source.RequiresSecureTunnel
             }
         }, cancellationToken);
     }

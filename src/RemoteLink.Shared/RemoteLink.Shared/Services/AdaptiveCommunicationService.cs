@@ -15,6 +15,7 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
     private readonly TcpCommunicationService _tcpService;
     private readonly UdpNatCommunicationService _udpService;
     private readonly RelayCommunicationService? _relayService;
+    private readonly SecureTunnelConfiguration? _secureTunnelConfiguration;
     private readonly ISignalingService? _signalingService;
     private ICommunicationService? _activeService;
     private bool _disposed;
@@ -24,14 +25,18 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
         DeviceInfo? localDevice = null,
         RelayConfiguration? relayConfiguration = null,
         ISignalingService? signalingService = null,
+        SecureTunnelConfiguration? secureTunnelConfiguration = null,
         ILogger<AdaptiveCommunicationService>? logger = null)
     {
         _logger = logger ?? NullLogger<AdaptiveCommunicationService>.Instance;
         _localDevice = localDevice;
+        _secureTunnelConfiguration = secureTunnelConfiguration;
+        if (_localDevice is not null && _secureTunnelConfiguration is not null)
+            _secureTunnelConfiguration.ApplyTo(_localDevice);
         _tcpService = new TcpCommunicationService();
         _udpService = new UdpNatCommunicationService(natTraversalService);
         _relayService = localDevice is not null && relayConfiguration?.IsConfigured == true
-            ? new RelayCommunicationService(localDevice, relayConfiguration)
+            ? new RelayCommunicationService(localDevice, relayConfiguration, secureTunnelConfiguration)
             : null;
         _signalingService = signalingService;
 
@@ -92,6 +97,57 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
 
         device = await EnrichDeviceAsync(device);
 
+        var localCanUseSecureTunnel = _secureTunnelConfiguration?.IsConfigured == true;
+        var localRequiresSecureTunnel = _secureTunnelConfiguration?.RequiresTunnel == true;
+        var remoteSupportsSecureTunnel = device.SupportsSecureTunnel;
+        var remoteRequiresSecureTunnel = device.RequiresSecureTunnel;
+        var mustUseSecureTunnel = remoteRequiresSecureTunnel || localRequiresSecureTunnel;
+        var shouldPreferSecureTunnel = localCanUseSecureTunnel &&
+            (mustUseSecureTunnel || (_secureTunnelConfiguration?.Mode == SecureTunnelMode.Preferred && remoteSupportsSecureTunnel));
+        var relayAvailable = _relayService is not null &&
+            (device.SupportsRelay || !string.IsNullOrWhiteSpace(device.RelayServerHost) || _relayService.IsRelayConfigured);
+        var relayAttempted = false;
+
+        if (mustUseSecureTunnel && !localCanUseSecureTunnel)
+        {
+            _logger.LogWarning("Secure tunnel is required for {Device} but no local tunnel secret is configured", device.DeviceName);
+            return false;
+        }
+
+        if (shouldPreferSecureTunnel)
+        {
+            relayAttempted = true;
+
+            if (!relayAvailable)
+            {
+                _logger.LogWarning("Secure tunnel requested for {Device} but relay transport is unavailable", device.DeviceName);
+                if (mustUseSecureTunnel)
+                    return false;
+            }
+            else
+            {
+                try
+                {
+                    if (_relayService is not null && await _relayService.ConnectToDeviceAsync(device))
+                    {
+                        _activeService = _relayService;
+                        _logger.LogInformation("Connected to {Device} over secure relay tunnel", device.DeviceName);
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Secure relay tunnel failed for {Device}", device.DeviceName);
+                }
+
+                if (mustUseSecureTunnel)
+                    return false;
+            }
+        }
+
+        if (mustUseSecureTunnel)
+            return false;
+
         var shouldTryUdp = (device.NatCandidates?.Count > 0) || (!string.IsNullOrWhiteSpace(device.PublicIPAddress) && device.PublicPort is > 0);
         if (shouldTryUdp)
         {
@@ -129,7 +185,8 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             }
         }
 
-        if (_relayService is not null &&
+        if (!relayAttempted &&
+            _relayService is not null &&
             (device.SupportsRelay || !string.IsNullOrWhiteSpace(device.RelayServerHost) || _relayService.IsRelayConfigured))
         {
             try
@@ -221,6 +278,8 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             SupportsRelay = requested.SupportsRelay || resolved.SupportsRelay,
             RelayServerHost = requested.RelayServerHost ?? resolved.RelayServerHost,
             RelayServerPort = requested.RelayServerPort ?? resolved.RelayServerPort,
+            SupportsSecureTunnel = requested.SupportsSecureTunnel || resolved.SupportsSecureTunnel,
+            RequiresSecureTunnel = requested.RequiresSecureTunnel || resolved.RequiresSecureTunnel,
             Type = requested.Type != DeviceType.Unknown ? requested.Type : resolved.Type,
             LastSeen = resolved.LastSeen != default ? resolved.LastSeen : requested.LastSeen,
             IsOnline = requested.IsOnline || resolved.IsOnline

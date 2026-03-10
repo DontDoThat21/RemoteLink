@@ -57,15 +57,18 @@ class Program
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
         var signalingConfiguration = SignalingConfiguration.FromEnvironment();
+        var secureTunnelConfiguration = SecureTunnelConfiguration.FromEnvironment();
         var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
             "desktop-host",
             Environment.MachineName,
             DeviceType.Desktop,
             12346);
         relayConfiguration.ApplyTo(localDevice);
+        secureTunnelConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);
         builder.Services.AddSingleton(signalingConfiguration);
+        builder.Services.AddSingleton(secureTunnelConfiguration);
         builder.Services.AddSingleton(localDevice);
         builder.Services.AddSingleton<ISignalingService, SignalingService>();
 

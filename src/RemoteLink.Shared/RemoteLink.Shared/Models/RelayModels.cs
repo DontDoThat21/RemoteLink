@@ -57,6 +57,8 @@ public sealed class RelayPeerInfo
     public string DeviceId { get; set; } = string.Empty;
     public string? InternetDeviceId { get; set; }
     public string DeviceName { get; set; } = string.Empty;
+    public bool SupportsSecureTunnel { get; set; }
+    public bool RequiresSecureTunnel { get; set; }
 }
 
 /// <summary>

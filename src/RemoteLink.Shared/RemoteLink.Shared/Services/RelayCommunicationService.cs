@@ -37,6 +37,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
     private const string MsgTypePrintJobStatus = "PrintJobStatus";
 
     private readonly RelayConfiguration _configuration;
+    private readonly SecureTunnelConfiguration _secureTunnelConfiguration;
     private readonly DeviceInfo _localDevice;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
@@ -51,13 +52,21 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
     private int? _connectedRelayPort;
     private string? _sessionId;
     private string? _remoteDeviceId;
+    private bool _useSecureTunnel;
+    private bool _remoteSupportsSecureTunnel;
+    private bool _remoteRequiresSecureTunnel;
     private bool _disposed;
 
-    public RelayCommunicationService(DeviceInfo localDevice, RelayConfiguration? configuration = null)
+    public RelayCommunicationService(
+        DeviceInfo localDevice,
+        RelayConfiguration? configuration = null,
+        SecureTunnelConfiguration? secureTunnelConfiguration = null)
     {
         _localDevice = localDevice ?? throw new ArgumentNullException(nameof(localDevice));
         _configuration = configuration ?? new RelayConfiguration();
+        _secureTunnelConfiguration = secureTunnelConfiguration ?? new SecureTunnelConfiguration();
         _configuration.ApplyTo(_localDevice);
+        _secureTunnelConfiguration.ApplyTo(_localDevice);
     }
 
     public bool IsRelayConfigured => _configuration.IsConfigured;
@@ -90,6 +99,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
             return;
 
         _configuration.ApplyTo(_localDevice);
+        _secureTunnelConfiguration.ApplyTo(_localDevice);
         await EnsureRelayConnectionAsync();
     }
 
@@ -105,6 +115,9 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
         ArgumentNullException.ThrowIfNull(device);
 
         if (!IsRelayAvailableFor(device))
+            return false;
+
+        if (device.RequiresSecureTunnel && !_secureTunnelConfiguration.IsConfigured)
             return false;
 
         await _connectionLock.WaitAsync();
@@ -130,7 +143,9 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
                 {
                     DeviceId = _localDevice.DeviceId,
                     InternetDeviceId = _localDevice.InternetDeviceId,
-                    DeviceName = _localDevice.DeviceName
+                    DeviceName = _localDevice.DeviceName,
+                    SupportsSecureTunnel = _localDevice.SupportsSecureTunnel,
+                    RequiresSecureTunnel = _localDevice.RequiresSecureTunnel
                 }
             }, _cts?.Token ?? CancellationToken.None);
 
@@ -192,13 +207,15 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
             Payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(payload))
         };
 
+        var messagePayload = JsonSerializer.SerializeToUtf8Bytes(message);
+
         await SendRelayFrameAsync(new RelayFrame
         {
             MessageType = "Payload",
             SessionId = _sessionId,
             SourceDeviceId = _localDevice.DeviceId,
             TargetDeviceId = _remoteDeviceId,
-            Payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(message))
+            Payload = EncodeApplicationPayload(messagePayload)
         }, _cts?.Token ?? CancellationToken.None);
     }
 
@@ -240,7 +257,9 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
             Peer = new RelayPeerInfo
             {
                 DeviceId = _localDevice.DeviceId,
-                DeviceName = _localDevice.DeviceName
+                DeviceName = _localDevice.DeviceName,
+                SupportsSecureTunnel = _localDevice.SupportsSecureTunnel,
+                RequiresSecureTunnel = _localDevice.RequiresSecureTunnel
             }
         }, _cts.Token);
 
@@ -293,6 +312,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
                 {
                     _sessionId = frame.SessionId;
                     _remoteDeviceId = frame.TargetDeviceId ?? frame.Peer?.DeviceId;
+                    UpdateSecureTunnelState(frame.Peer);
                     ConnectionStateChanged?.Invoke(this, true);
                 }
                 _connectTcs?.TrySetResult(frame);
@@ -301,6 +321,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
             case "IncomingConnection":
                 _sessionId = frame.SessionId;
                 _remoteDeviceId = frame.SourceDeviceId ?? frame.Peer?.DeviceId;
+                UpdateSecureTunnelState(frame.Peer);
                 ConnectionStateChanged?.Invoke(this, true);
                 return;
 
@@ -309,6 +330,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
                 {
                     _sessionId = null;
                     _remoteDeviceId = null;
+                    ResetSecureTunnelState();
                     ConnectionStateChanged?.Invoke(this, false);
                 }
                 return;
@@ -326,7 +348,10 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
 
         try
         {
-            var message = JsonSerializer.Deserialize<NetworkMessage>(Convert.FromBase64String(payload));
+            if (!TryDecodeApplicationPayload(payload, out var decodedPayload))
+                return;
+
+            var message = JsonSerializer.Deserialize<NetworkMessage>(decodedPayload);
             if (message is null)
                 return;
 
@@ -504,6 +529,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
 
         _sessionId = null;
         _remoteDeviceId = null;
+        ResetSecureTunnelState();
         ConnectionStateChanged?.Invoke(this, false);
     }
 
@@ -532,11 +558,68 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
         _relayClient = null;
         _connectedRelayHost = null;
         _connectedRelayPort = null;
+        ResetSecureTunnelState();
         _registerTcs?.TrySetCanceled();
         _connectTcs?.TrySetCanceled();
         _registerTcs = null;
         _connectTcs = null;
         cts?.Dispose();
+    }
+
+    private string EncodeApplicationPayload(byte[] payload)
+    {
+        if (!_useSecureTunnel)
+            return Convert.ToBase64String(payload);
+
+        if (string.IsNullOrWhiteSpace(_sessionId) || string.IsNullOrWhiteSpace(_remoteDeviceId))
+            throw new InvalidOperationException("Secure tunnel is not ready.");
+
+        return SecureTunnelPayloadCodec.Encode(
+            payload,
+            _secureTunnelConfiguration.SharedSecret,
+            _sessionId,
+            _localDevice.DeviceId,
+            _remoteDeviceId);
+    }
+
+    private bool TryDecodeApplicationPayload(string payload, out byte[] decodedPayload)
+    {
+        if (!_useSecureTunnel)
+        {
+            decodedPayload = Convert.FromBase64String(payload);
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(_sessionId) || string.IsNullOrWhiteSpace(_remoteDeviceId))
+        {
+            decodedPayload = Array.Empty<byte>();
+            return false;
+        }
+
+        return SecureTunnelPayloadCodec.TryDecode(
+            payload,
+            _secureTunnelConfiguration.SharedSecret,
+            _sessionId,
+            _localDevice.DeviceId,
+            _remoteDeviceId,
+            out decodedPayload);
+    }
+
+    private void UpdateSecureTunnelState(RelayPeerInfo? peer)
+    {
+        _remoteSupportsSecureTunnel = peer?.SupportsSecureTunnel == true;
+        _remoteRequiresSecureTunnel = peer?.RequiresSecureTunnel == true;
+        _useSecureTunnel = _secureTunnelConfiguration.IsConfigured &&
+            (_remoteRequiresSecureTunnel ||
+             _secureTunnelConfiguration.RequiresTunnel ||
+             (_secureTunnelConfiguration.Mode == SecureTunnelMode.Preferred && _remoteSupportsSecureTunnel));
+    }
+
+    private void ResetSecureTunnelState()
+    {
+        _useSecureTunnel = false;
+        _remoteSupportsSecureTunnel = false;
+        _remoteRequiresSecureTunnel = false;
     }
 
     private void ThrowIfDisposed()
