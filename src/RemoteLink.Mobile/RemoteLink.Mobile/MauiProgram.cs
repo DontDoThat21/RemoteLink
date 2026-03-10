@@ -48,6 +48,7 @@ public static class MauiProgram
 
         // Shared application settings
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
+        builder.Services.AddSingleton<IAppLockService, AppLockService>();
 
         // Remote desktop client (singleton shared across all pages)
         builder.Services.AddSingleton<RemoteDesktopClient>(provider =>
@@ -69,6 +70,7 @@ public static class MauiProgram
         builder.Services.AddTransient<MobileChatPage>();
         builder.Services.AddTransient<MobileSettingsPage>();
         builder.Services.AddTransient<RecentConnectionsPage>();
+        builder.Services.AddTransient<AppLockPage>();
 
         return builder.Build();
     }

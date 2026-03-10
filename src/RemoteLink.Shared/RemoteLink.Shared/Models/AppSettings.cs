@@ -65,6 +65,12 @@ public class AppSettings
 
         /// <summary>Lock the local workstation when a remote session ends.</summary>
         public bool LockOnSessionEnd { get; set; } = false;
+
+        /// <summary>Require the mobile client to unlock with a local PIN after inactivity/backgrounding.</summary>
+        public bool EnableAppLock { get; set; } = false;
+
+        /// <summary>Minutes the mobile app may stay in the background before locking again (0 = immediately).</summary>
+        public int AppLockTimeoutMinutes { get; set; } = 1;
     }
 
     /// <summary>Network and connectivity settings.</summary>

@@ -1,3 +1,4 @@
+using RemoteLink.Mobile.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 
@@ -9,8 +10,15 @@ namespace RemoteLink.Mobile;
 public class MobileSettingsPage : ContentPage
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly IAppLockService _appLockService;
 
     private Picker _themePicker = null!;
+    private Switch _appLockSwitch = null!;
+    private Stepper _appLockTimeoutStepper = null!;
+    private Label _appLockTimeoutValueLabel = null!;
+    private Label _pinStatusLabel = null!;
+    private Button _setPinButton = null!;
+    private Button _removePinButton = null!;
     private Switch _adaptiveQualitySwitch = null!;
     private Slider _qualitySlider = null!;
     private Label _qualityValueLabel = null!;
@@ -21,9 +29,10 @@ public class MobileSettingsPage : ContentPage
     private Switch _audioSwitch = null!;
     private Label _feedbackLabel = null!;
 
-    public MobileSettingsPage(IAppSettingsService settingsService)
+    public MobileSettingsPage(IAppSettingsService settingsService, IAppLockService appLockService)
     {
         _settingsService = settingsService;
+        _appLockService = appLockService;
 
         Title = "Settings";
         RefreshTheme();
@@ -40,6 +49,8 @@ public class MobileSettingsPage : ContentPage
         {
             await _settingsService.LoadAsync();
             PopulateControls(_settingsService.Current);
+            await _appLockService.InitializeAsync();
+            await RefreshAppLockUiAsync();
         }
         catch (Exception ex)
         {
@@ -59,6 +70,7 @@ public class MobileSettingsPage : ContentPage
         {
             RefreshTheme();
             PopulateControls(_settingsService.Current);
+            _ = RefreshAppLockUiAsync();
         });
     }
 
@@ -74,6 +86,33 @@ public class MobileSettingsPage : ContentPage
         _themePicker.Items.Add("System");
         _themePicker.Items.Add("Light");
         _themePicker.Items.Add("Dark");
+
+        _appLockSwitch = new Switch { OnColor = ThemeColors.Accent };
+        _appLockTimeoutStepper = new Stepper { Minimum = 0, Maximum = 60, Increment = 1 };
+        _appLockTimeoutValueLabel = BuildValueLabel();
+        _appLockTimeoutStepper.ValueChanged += (_, e) => _appLockTimeoutValueLabel.Text = FormatTimeout((int)e.NewValue);
+        _pinStatusLabel = new Label
+        {
+            FontSize = 12,
+            TextColor = ThemeColors.TextSecondary
+        };
+        _setPinButton = new Button
+        {
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
+            CornerRadius = 8,
+            HeightRequest = 40
+        };
+        _setPinButton.Clicked += OnSetPinClicked;
+        _removePinButton = new Button
+        {
+            Text = "Remove PIN",
+            BackgroundColor = ThemeColors.DangerSoft,
+            TextColor = ThemeColors.Danger,
+            CornerRadius = 8,
+            HeightRequest = 40
+        };
+        _removePinButton.Clicked += OnRemovePinClicked;
 
         _adaptiveQualitySwitch = new Switch { OnColor = ThemeColors.Accent };
         _qualitySlider = new Slider { Minimum = 50, Maximum = 85, ThumbColor = ThemeColors.Accent, MinimumTrackColor = ThemeColors.Accent };
@@ -143,6 +182,26 @@ public class MobileSettingsPage : ContentPage
                     "App-wide appearance preferences.",
                     BuildPickerRow("Theme", "Follow the OS theme or force light/dark mode.", _themePicker)),
                 BuildCard(
+                    "Security",
+                    "Protect the mobile client and saved devices with a local PIN app lock.",
+                    BuildSettingRow("App lock", "Require your local app PIN when returning to the app.", _appLockSwitch),
+                    BuildStepperRow("Lock timeout", "Minutes the app can stay in the background before it locks again. Use 0 to lock immediately.", _appLockTimeoutStepper, _appLockTimeoutValueLabel),
+                    new VerticalStackLayout
+                    {
+                        Spacing = 8,
+                        Children =
+                        {
+                            BuildSettingText("App lock PIN", "Set, change, or remove the 6-digit PIN used to unlock the app."),
+                            _pinStatusLabel,
+                            new Grid
+                            {
+                                ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) },
+                                ColumnSpacing = 12,
+                                Children = { _setPinButton, CreateGridChild(_removePinButton, 1) }
+                            }
+                        }
+                    }),
+                BuildCard(
                     "Display",
                     "Remote session quality preferences.",
                     BuildSettingRow("Adaptive quality", "Let the host adjust image quality automatically.", _adaptiveQualitySwitch),
@@ -193,6 +252,15 @@ public class MobileSettingsPage : ContentPage
                 2 => ThemeMode.Dark,
                 _ => ThemeMode.System
             };
+            if (_appLockSwitch.IsToggled && !await _appLockService.HasPinAsync())
+            {
+                var pinConfigured = await PromptForPinAsync("Set App Lock PIN", "Create a 6-digit PIN to unlock RemoteLink on this device.");
+                if (!pinConfigured)
+                    return;
+            }
+
+            settings.Security.EnableAppLock = _appLockSwitch.IsToggled;
+            settings.Security.AppLockTimeoutMinutes = (int)_appLockTimeoutStepper.Value;
             settings.Display.EnableAdaptiveQuality = _adaptiveQualitySwitch.IsToggled;
             settings.Display.ImageQuality = (int)Math.Round(_qualitySlider.Value);
             settings.Display.ImageFormat = _imageFormatPicker.SelectedIndex == 1
@@ -203,6 +271,8 @@ public class MobileSettingsPage : ContentPage
             settings.Audio.EnableAudio = _audioSwitch.IsToggled;
 
             await _settingsService.SaveAsync();
+            await _appLockService.InitializeAsync();
+            await RefreshAppLockUiAsync();
             ShowFeedback("Settings saved.");
         }
         catch (Exception ex)
@@ -226,6 +296,8 @@ public class MobileSettingsPage : ContentPage
         {
             await _settingsService.ResetAsync();
             PopulateControls(_settingsService.Current);
+            await _appLockService.InitializeAsync();
+            await RefreshAppLockUiAsync();
             ShowFeedback("Settings reset to defaults.");
         }
         catch (Exception ex)
@@ -242,6 +314,9 @@ public class MobileSettingsPage : ContentPage
             ThemeMode.Dark => 2,
             _ => 0
         };
+        _appLockSwitch.IsToggled = settings.Security.EnableAppLock;
+        _appLockTimeoutStepper.Value = Math.Clamp(settings.Security.AppLockTimeoutMinutes, _appLockTimeoutStepper.Minimum, _appLockTimeoutStepper.Maximum);
+        _appLockTimeoutValueLabel.Text = FormatTimeout((int)_appLockTimeoutStepper.Value);
         _adaptiveQualitySwitch.IsToggled = settings.Display.EnableAdaptiveQuality;
         _qualitySlider.Value = Math.Clamp(settings.Display.ImageQuality, _qualitySlider.Minimum, _qualitySlider.Maximum);
         _qualityValueLabel.Text = $"{Math.Round(_qualitySlider.Value):0}%";
@@ -254,6 +329,59 @@ public class MobileSettingsPage : ContentPage
         _audioSwitch.IsToggled = settings.Audio.EnableAudio;
         _feedbackLabel.IsVisible = false;
     }
+
+    private async Task RefreshAppLockUiAsync()
+    {
+        var hasPin = await _appLockService.HasPinAsync();
+        _pinStatusLabel.Text = hasPin ? "PIN configured for this device." : "No app lock PIN configured yet.";
+        _pinStatusLabel.TextColor = hasPin ? ThemeColors.SuccessText : ThemeColors.TextSecondary;
+        _setPinButton.Text = hasPin ? "Change PIN" : "Set PIN";
+        _removePinButton.IsEnabled = hasPin;
+        _removePinButton.Opacity = hasPin ? 1.0 : 0.55;
+    }
+
+    private async void OnSetPinClicked(object? sender, EventArgs e)
+    {
+        if (await PromptForPinAsync("Set App Lock PIN", "Enter a new 6-digit app PIN."))
+            ShowFeedback("App lock PIN updated.");
+    }
+
+    private async void OnRemovePinClicked(object? sender, EventArgs e)
+    {
+        if (!await _appLockService.HasPinAsync())
+            return;
+
+        var confirmed = await DisplayAlertAsync("Remove App Lock PIN", "Disable the local app PIN on this device?", "Remove", "Cancel");
+        if (!confirmed)
+            return;
+
+        await _appLockService.ClearPinAsync();
+        _appLockSwitch.IsToggled = false;
+        await RefreshAppLockUiAsync();
+        ShowFeedback("App lock PIN removed.");
+    }
+
+    private async Task<bool> PromptForPinAsync(string title, string message)
+    {
+        var firstPin = await DisplayPromptAsync(title, message, "Save", "Cancel", "123456", maxLength: 6, keyboard: Keyboard.Numeric);
+        if (!IsValidPin(firstPin))
+            return false;
+
+        var confirmPin = await DisplayPromptAsync(title, "Confirm the same 6-digit PIN.", "Confirm", "Cancel", "123456", maxLength: 6, keyboard: Keyboard.Numeric);
+        if (!string.Equals(firstPin, confirmPin, StringComparison.Ordinal))
+        {
+            await DisplayAlertAsync("App Lock PIN", "The PIN entries did not match.", "OK");
+            return false;
+        }
+
+        await _appLockService.SetPinAsync(firstPin!);
+        await RefreshAppLockUiAsync();
+        return true;
+    }
+
+    private static bool IsValidPin(string? pin) => !string.IsNullOrWhiteSpace(pin) && pin.Length == 6 && pin.All(char.IsDigit);
+
+    private static string FormatTimeout(int minutes) => minutes == 0 ? "Immediate" : $"{minutes} min";
 
     private void ShowFeedback(string message)
     {
@@ -332,6 +460,19 @@ public class MobileSettingsPage : ContentPage
         {
             Spacing = 6,
             Children = { header, slider }
+        };
+    }
+
+    private static View BuildStepperRow(string title, string description, Stepper stepper, Label valueLabel)
+    {
+        var header = CreateTwoColumnGrid();
+        header.Add(BuildSettingText(title, description));
+        header.Add(CreateGridChild(valueLabel, 1));
+
+        return new VerticalStackLayout
+        {
+            Spacing = 6,
+            Children = { header, stepper }
         };
     }
 
