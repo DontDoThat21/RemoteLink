@@ -1374,17 +1374,31 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         // Don't show ourselves in the discovered list
         if (host.DeviceName == Environment.MachineName) return;
 
+        var discoveredIndex = -1;
+        var isNewHost = false;
         lock (_discoveredHosts)
         {
-            if (_discoveredHosts.Any(h => h.DeviceId == host.DeviceId))
-                return;
-            _discoveredHosts.Add(host);
+            discoveredIndex = _discoveredHosts.FindIndex(h => h.DeviceId == host.DeviceId);
+            if (discoveredIndex >= 0)
+                _discoveredHosts[discoveredIndex] = host;
+            else
+            {
+                _discoveredHosts.Add(host);
+                discoveredIndex = _discoveredHosts.Count - 1;
+                isNewHost = true;
+            }
         }
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            var displayName = $"{host.DeviceName} ({host.IPAddress}:{host.Port})";
-            _discoveredHostsPicker?.Items.Add(displayName);
+            if (_discoveredHostsPicker == null)
+                return;
+
+            var displayName = BuildDiscoveredHostDisplayName(host);
+            if (isNewHost || discoveredIndex >= _discoveredHostsPicker.Items.Count)
+                _discoveredHostsPicker.Items.Add(displayName);
+            else
+                _discoveredHostsPicker.Items[discoveredIndex] = displayName;
         });
 
         _logger.LogInformation("Discovered remote host: {Name} at {IP}:{Port}",
@@ -1409,6 +1423,14 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     _discoveredHostsPicker.Items.RemoveAt(removedIndex);
             });
         }
+    }
+
+    private static string BuildDiscoveredHostDisplayName(DeviceInfo host)
+    {
+        var formattedInternetId = DeviceIdentityManager.FormatInternetDeviceId(host.InternetDeviceId);
+        return string.IsNullOrWhiteSpace(formattedInternetId)
+            ? $"{host.DeviceName} ({host.IPAddress}:{host.Port})"
+            : $"{host.DeviceName} ({formattedInternetId} • {host.IPAddress}:{host.Port})";
     }
 
     private void OnDiscoveredHostSelected(object? sender, EventArgs e)

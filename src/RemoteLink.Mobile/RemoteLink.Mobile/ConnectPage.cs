@@ -1883,6 +1883,17 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             TextColor = ThemeColors.TextSecondary
         });
 
+        var formattedInternetId = DeviceIdentityManager.FormatInternetDeviceId(device.InternetDeviceId);
+        if (!string.IsNullOrWhiteSpace(formattedInternetId))
+        {
+            infoStack.Add(new Label
+            {
+                Text = $"ID: {formattedInternetId}",
+                FontSize = 11,
+                TextColor = ThemeColors.Accent
+            });
+        }
+
         var connectLabel = new Label
         {
             Text = "Connect >",
@@ -1968,12 +1979,21 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            if (!_availableHosts.Any(h => h.DeviceId == device.DeviceId))
+            var existing = _availableHosts.FirstOrDefault(h => h.DeviceId == device.DeviceId);
+            if (existing == null)
             {
                 _availableHosts.Add(device);
                 AddHostCard(device);
-                StatusMessage = $"Found {_availableHosts.Count} host(s). Tap to connect.";
             }
+            else
+            {
+                var index = _availableHosts.IndexOf(existing);
+                _availableHosts[index] = device;
+                RemoveHostCard(existing);
+                AddHostCard(device);
+            }
+
+            StatusMessage = $"Found {_availableHosts.Count} host(s). Tap to connect.";
         });
     }
 

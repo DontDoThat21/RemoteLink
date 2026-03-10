@@ -84,13 +84,20 @@ public sealed class SavedDevicesService : ISavedDevicesService
 
     public async Task AddOrUpdateAsync(SavedDevice device, CancellationToken cancellationToken = default)
     {
-        var existing = _devices.FirstOrDefault(d => d.DeviceId == device.DeviceId);
+        device.InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId);
+
+        var existing = FindExistingDevice(device);
         if (existing != null)
         {
             existing.FriendlyName = device.FriendlyName;
             existing.DeviceName = device.DeviceName;
+            existing.DeviceId = string.IsNullOrWhiteSpace(device.DeviceId) ? existing.DeviceId : device.DeviceId;
+            existing.InternetDeviceId = device.InternetDeviceId ?? existing.InternetDeviceId;
             existing.IPAddress = device.IPAddress;
             existing.Port = device.Port;
+            existing.SupportsRelay = device.SupportsRelay;
+            existing.RelayServerHost = device.RelayServerHost;
+            existing.RelayServerPort = device.RelayServerPort;
             existing.Type = device.Type;
             if (device.LastConnected.HasValue)
                 existing.LastConnected = device.LastConnected;
@@ -114,6 +121,12 @@ public sealed class SavedDevicesService : ISavedDevicesService
         return _devices.FirstOrDefault(d => d.DeviceId == deviceId);
     }
 
+    public SavedDevice? FindMatchingDevice(DeviceInfo device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        return _devices.FirstOrDefault(saved => DeviceIdentityManager.MatchesDevice(saved, device));
+    }
+
     public async Task TouchLastConnectedAsync(string deviceId, CancellationToken cancellationToken = default)
     {
         var device = _devices.FirstOrDefault(d => d.DeviceId == deviceId);
@@ -122,5 +135,25 @@ public sealed class SavedDevicesService : ISavedDevicesService
             device.LastConnected = DateTime.UtcNow;
             await SaveAsync(cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private SavedDevice? FindExistingDevice(SavedDevice device)
+    {
+        if (!string.IsNullOrWhiteSpace(device.DeviceId))
+        {
+            var existing = _devices.FirstOrDefault(d => d.DeviceId == device.DeviceId);
+            if (existing != null)
+                return existing;
+        }
+
+        var internetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId);
+        if (internetDeviceId is null)
+            return null;
+
+        return _devices.FirstOrDefault(existing =>
+            string.Equals(
+                DeviceIdentityManager.NormalizeInternetDeviceId(existing.InternetDeviceId),
+                internetDeviceId,
+                StringComparison.Ordinal));
     }
 }

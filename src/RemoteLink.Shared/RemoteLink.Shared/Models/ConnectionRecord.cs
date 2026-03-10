@@ -19,6 +19,7 @@ public class ConnectionRecord
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string DeviceName { get; set; } = string.Empty;
     public string DeviceId { get; set; } = string.Empty;
+    public string? InternetDeviceId { get; set; }
     public string IPAddress { get; set; } = string.Empty;
     public int Port { get; set; }
     public DateTime ConnectedAt { get; set; } = DateTime.UtcNow;

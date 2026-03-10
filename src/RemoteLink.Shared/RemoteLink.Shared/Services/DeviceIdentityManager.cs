@@ -94,6 +94,43 @@ public static class DeviceIdentityManager
         return $"{normalized[..3]} {normalized[3..6]} {normalized[6..]}";
     }
 
+    public static bool MatchesDevice(DeviceInfo? left, DeviceInfo? right)
+    {
+        if (left is null || right is null)
+            return false;
+
+        return MatchesIdentifiers(left.DeviceId, left.InternetDeviceId, right.DeviceId, right.InternetDeviceId);
+    }
+
+    public static bool MatchesDevice(SavedDevice? savedDevice, DeviceInfo? device)
+    {
+        if (savedDevice is null || device is null)
+            return false;
+
+        return MatchesIdentifiers(savedDevice.DeviceId, savedDevice.InternetDeviceId, device.DeviceId, device.InternetDeviceId);
+    }
+
+    private static bool MatchesIdentifiers(
+        string? leftDeviceId,
+        string? leftInternetDeviceId,
+        string? rightDeviceId,
+        string? rightInternetDeviceId)
+    {
+        if (!string.IsNullOrWhiteSpace(leftDeviceId) &&
+            !string.IsNullOrWhiteSpace(rightDeviceId) &&
+            string.Equals(leftDeviceId, rightDeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var normalizedLeft = NormalizeInternetDeviceId(leftInternetDeviceId) ?? NormalizeInternetDeviceId(leftDeviceId);
+        var normalizedRight = NormalizeInternetDeviceId(rightInternetDeviceId) ?? NormalizeInternetDeviceId(rightDeviceId);
+
+        return normalizedLeft is not null &&
+               normalizedRight is not null &&
+               string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal);
+    }
+
     private static string GetIdentityPath(string profileName)
     {
         var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

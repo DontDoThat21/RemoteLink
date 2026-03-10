@@ -146,10 +146,15 @@ public class UdpNetworkDiscovery : INetworkDiscovery
 
         lock (_lockObject)
         {
-            var isNewDevice = !_discoveredDevices.ContainsKey(device.DeviceId);
+            var isNewDevice = !_discoveredDevices.TryGetValue(device.DeviceId, out var existingDevice);
+            var metadataChanged = !isNewDevice &&
+                                  (!string.Equals(existingDevice?.InternetDeviceId, device.InternetDeviceId, StringComparison.Ordinal) ||
+                                   existingDevice?.SupportsRelay != device.SupportsRelay ||
+                                   !string.Equals(existingDevice?.RelayServerHost, device.RelayServerHost, StringComparison.OrdinalIgnoreCase) ||
+                                   existingDevice?.RelayServerPort != device.RelayServerPort);
             _discoveredDevices[device.DeviceId] = device;
             
-            if (isNewDevice)
+            if (isNewDevice || metadataChanged)
             {
                 DeviceDiscovered?.Invoke(this, device);
             }

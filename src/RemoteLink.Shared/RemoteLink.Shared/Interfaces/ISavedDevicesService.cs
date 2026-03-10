@@ -26,6 +26,9 @@ public interface ISavedDevicesService
     /// <summary>Finds a saved device by its network DeviceId.</summary>
     SavedDevice? FindByDeviceId(string deviceId);
 
+    /// <summary>Finds a saved device by matching local or internet-facing device IDs.</summary>
+    SavedDevice? FindMatchingDevice(DeviceInfo device);
+
     /// <summary>Updates the <see cref="SavedDevice.LastConnected"/> timestamp for the given DeviceId.</summary>
     Task TouchLastConnectedAsync(string deviceId, CancellationToken cancellationToken = default);
 }

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
+using RemoteLink.Shared.Services;
 
 namespace RemoteLink.Mobile;
 
@@ -231,6 +232,17 @@ public class RecentConnectionsPage : ContentPage
             FontSize = 12,
             TextColor = ThemeColors.TextSecondary
         });
+
+        var formattedInternetId = DeviceIdentityManager.FormatInternetDeviceId(record.InternetDeviceId);
+        if (!string.IsNullOrWhiteSpace(formattedInternetId))
+        {
+            infoStack.Add(new Label
+            {
+                Text = $"ID: {formattedInternetId}",
+                FontSize = 11,
+                TextColor = ThemeColors.Accent
+            });
+        }
 
         // Time
         infoStack.Add(new Label

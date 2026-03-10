@@ -17,11 +17,23 @@ public class SavedDevice
     /// <summary>Network device ID from discovery.</summary>
     public string DeviceId { get; set; } = string.Empty;
 
+    /// <summary>Globally unique 9-digit internet ID when available.</summary>
+    public string? InternetDeviceId { get; set; }
+
     /// <summary>Last known IP address.</summary>
     public string IPAddress { get; set; } = string.Empty;
 
     /// <summary>Last known port.</summary>
     public int Port { get; set; }
+
+    /// <summary>Whether the device supports relay-based internet connections.</summary>
+    public bool SupportsRelay { get; set; }
+
+    /// <summary>The last advertised relay server host.</summary>
+    public string? RelayServerHost { get; set; }
+
+    /// <summary>The last advertised relay server port.</summary>
+    public int? RelayServerPort { get; set; }
 
     /// <summary>Device type (Desktop / Mobile).</summary>
     public DeviceType Type { get; set; } = DeviceType.Desktop;

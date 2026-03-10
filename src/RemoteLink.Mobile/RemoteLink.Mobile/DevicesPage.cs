@@ -239,9 +239,17 @@ public class DevicesPage : ContentPage
             return;
 
         _connectionBanner.IsVisible = _client.IsConnected;
-        _connectionBannerLabel.Text = _client.IsConnected
-            ? $"Connected to {_client.ConnectedHost?.DeviceName ?? "Unknown"}"
-            : string.Empty;
+        if (!_client.IsConnected)
+        {
+            _connectionBannerLabel.Text = string.Empty;
+            return;
+        }
+
+        var connectedHost = _client.ConnectedHost;
+        var internetId = DeviceIdentityManager.FormatInternetDeviceId(connectedHost?.InternetDeviceId ?? connectedHost?.DeviceId);
+        _connectionBannerLabel.Text = string.IsNullOrWhiteSpace(internetId)
+            ? $"Connected to {connectedHost?.DeviceName ?? "Unknown"}"
+            : $"Connected to {connectedHost?.DeviceName ?? "Unknown"} ({internetId})";
     }
 
     // ── Saved device cards ─────────────────────────────────────────────
@@ -263,7 +271,7 @@ public class DevicesPage : ContentPage
 
     private View BuildSavedDeviceCard(SavedDevice saved)
     {
-        var isConnected = _client.IsConnected && _client.ConnectedHost?.DeviceId == saved.DeviceId;
+        var isConnected = _client.IsConnected && DeviceIdentityManager.MatchesDevice(saved, _client.ConnectedHost);
 
         var card = new Border
         {
@@ -333,6 +341,17 @@ public class DevicesPage : ContentPage
             FontSize = 12,
             TextColor = ThemeColors.TextSecondary
         });
+
+        var formattedInternetId = DeviceIdentityManager.FormatInternetDeviceId(saved.InternetDeviceId);
+        if (!string.IsNullOrWhiteSpace(formattedInternetId))
+        {
+            infoStack.Add(new Label
+            {
+                Text = $"ID: {formattedInternetId}",
+                FontSize = 11,
+                TextColor = ThemeColors.Accent
+            });
+        }
 
         if (saved.LastConnected.HasValue)
         {
@@ -407,7 +426,7 @@ public class DevicesPage : ContentPage
 
     private async Task OnSavedDeviceTappedAsync(SavedDevice saved)
     {
-        if (_client.IsConnected && _client.ConnectedHost?.DeviceId == saved.DeviceId)
+        if (_client.IsConnected && DeviceIdentityManager.MatchesDevice(saved, _client.ConnectedHost))
         {
             Shell.Current.CurrentItem = Shell.Current.Items[0];
             return;
@@ -427,9 +446,13 @@ public class DevicesPage : ContentPage
         var deviceInfo = new DeviceInfo
         {
             DeviceId = saved.DeviceId,
+            InternetDeviceId = saved.InternetDeviceId,
             DeviceName = saved.DeviceName,
             IPAddress = saved.IPAddress,
             Port = saved.Port,
+            SupportsRelay = saved.SupportsRelay,
+            RelayServerHost = saved.RelayServerHost,
+            RelayServerPort = saved.RelayServerPort,
             Type = saved.Type
         };
 
@@ -501,8 +524,8 @@ public class DevicesPage : ContentPage
 
     private View BuildDeviceCard(DeviceInfo device)
     {
-        var isConnected = _client.IsConnected && _client.ConnectedHost?.DeviceId == device.DeviceId;
-        var isSaved = _savedDevices.FindByDeviceId(device.DeviceId) != null;
+        var isConnected = _client.IsConnected && DeviceIdentityManager.MatchesDevice(device, _client.ConnectedHost);
+        var isSaved = _savedDevices.FindMatchingDevice(device) != null;
 
         var card = new Border
         {
@@ -555,6 +578,18 @@ public class DevicesPage : ContentPage
             FontSize = 12,
             TextColor = ThemeColors.TextSecondary
         });
+
+        var formattedInternetId = DeviceIdentityManager.FormatInternetDeviceId(device.InternetDeviceId);
+        if (!string.IsNullOrWhiteSpace(formattedInternetId))
+        {
+            infoStack.Add(new Label
+            {
+                Text = $"ID: {formattedInternetId}",
+                FontSize = 11,
+                TextColor = ThemeColors.Accent
+            });
+        }
+
         if (isConnected)
         {
             infoStack.Add(new Label
@@ -638,8 +673,12 @@ public class DevicesPage : ContentPage
             FriendlyName = friendlyName.Trim(),
             DeviceName = device.DeviceName,
             DeviceId = device.DeviceId,
+            InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
             IPAddress = device.IPAddress,
             Port = device.Port,
+            SupportsRelay = device.SupportsRelay,
+            RelayServerHost = device.RelayServerHost,
+            RelayServerPort = device.RelayServerPort,
             Type = device.Type,
             DateAdded = DateTime.UtcNow
         };
@@ -651,7 +690,7 @@ public class DevicesPage : ContentPage
 
     private async Task OnDeviceTappedAsync(DeviceInfo device)
     {
-        if (_client.IsConnected && _client.ConnectedHost?.DeviceId == device.DeviceId)
+        if (_client.IsConnected && DeviceIdentityManager.MatchesDevice(device, _client.ConnectedHost))
         {
             Shell.Current.CurrentItem = Shell.Current.Items[0];
             return;
@@ -675,10 +714,20 @@ public class DevicesPage : ContentPage
             _connectionStartedAt = DateTime.UtcNow;
 
             // Auto-save device on successful connection if not already saved
-            var existing = _savedDevices.FindByDeviceId(device.DeviceId);
+            var existing = _savedDevices.FindMatchingDevice(device);
             if (existing != null)
             {
-                await _savedDevices.TouchLastConnectedAsync(device.DeviceId);
+                existing.DeviceId = device.DeviceId;
+                existing.DeviceName = device.DeviceName;
+                existing.InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId);
+                existing.IPAddress = device.IPAddress;
+                existing.Port = device.Port;
+                existing.SupportsRelay = device.SupportsRelay;
+                existing.RelayServerHost = device.RelayServerHost;
+                existing.RelayServerPort = device.RelayServerPort;
+                existing.Type = device.Type;
+                existing.LastConnected = DateTime.UtcNow;
+                await _savedDevices.AddOrUpdateAsync(existing);
             }
             else
             {
@@ -687,8 +736,12 @@ public class DevicesPage : ContentPage
                     FriendlyName = device.DeviceName,
                     DeviceName = device.DeviceName,
                     DeviceId = device.DeviceId,
+                    InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
                     IPAddress = device.IPAddress,
                     Port = device.Port,
+                    SupportsRelay = device.SupportsRelay,
+                    RelayServerHost = device.RelayServerHost,
+                    RelayServerPort = device.RelayServerPort,
                     Type = device.Type,
                     LastConnected = DateTime.UtcNow,
                     DateAdded = DateTime.UtcNow
@@ -712,11 +765,18 @@ public class DevicesPage : ContentPage
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            if (!_devices.Any(d => d.DeviceId == device.DeviceId))
+            var existing = _devices.FirstOrDefault(d => d.DeviceId == device.DeviceId);
+            if (existing == null)
             {
                 _devices.Add(device);
-                RefreshDeviceList();
             }
+            else
+            {
+                var index = _devices.IndexOf(existing);
+                _devices[index] = device;
+            }
+
+            RefreshDeviceList();
         });
     }
 
@@ -766,6 +826,7 @@ public class DevicesPage : ContentPage
         {
             DeviceName = device.DeviceName,
             DeviceId = device.DeviceId,
+            InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
             IPAddress = device.IPAddress,
             Port = device.Port,
             ConnectedAt = DateTime.UtcNow,
