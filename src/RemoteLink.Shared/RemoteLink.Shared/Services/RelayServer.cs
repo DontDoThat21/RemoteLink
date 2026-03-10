@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using RemoteLink.Shared.Models;
 
@@ -17,21 +19,43 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
         public required Stream Stream { get; init; }
         public SemaphoreSlim WriteLock { get; } = new(1, 1);
         public string? DeviceId { get; set; }
+        public string? InternetDeviceId { get; set; }
         public string DeviceName { get; set; } = string.Empty;
         public string? SessionId { get; set; }
         public string? PeerDeviceId { get; set; }
     }
 
+    private sealed class RelayDeviceRegistryEntry
+    {
+        public string DeviceId { get; set; } = string.Empty;
+        public string InternetDeviceId { get; set; } = string.Empty;
+    }
+
     private readonly ConcurrentDictionary<string, RelayClientConnection> _registeredClients =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _internetDeviceIdsByDeviceId =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _deviceIdsByInternetDeviceId =
         new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ConcurrentDictionary<RelayClientConnection, byte> _connections = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+    private readonly SemaphoreSlim _registryLock = new(1, 1);
+    private readonly string _registryPath;
 
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
     private bool _disposed;
+
+    public RelayServer()
+    {
+        _registryPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "RemoteLink",
+            "relay_device_registry.json");
+        LoadRegistry();
+    }
 
     public int Port => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? 0;
 
@@ -172,14 +196,22 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             return;
         }
 
+        var assignedInternetDeviceId = await GetOrCreateInternetDeviceIdAsync(frame.SourceDeviceId);
         connection.DeviceId = frame.SourceDeviceId;
+        connection.InternetDeviceId = assignedInternetDeviceId;
         connection.DeviceName = frame.Peer?.DeviceName ?? frame.SourceDeviceId;
         _registeredClients[frame.SourceDeviceId] = connection;
 
         await SendFrameAsync(connection, new RelayFrame
         {
             MessageType = "RegisterAck",
-            Success = true
+            Success = true,
+            Peer = new RelayPeerInfo
+            {
+                DeviceId = frame.SourceDeviceId,
+                InternetDeviceId = assignedInternetDeviceId,
+                DeviceName = connection.DeviceName
+            }
         }, cancellationToken);
     }
 
@@ -197,7 +229,7 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
         }
 
         if (string.IsNullOrWhiteSpace(frame.TargetDeviceId) ||
-            !_registeredClients.TryGetValue(frame.TargetDeviceId, out var target))
+            !TryResolveTargetConnection(frame.TargetDeviceId, out var target))
         {
             await SendFrameAsync(source, new RelayFrame
             {
@@ -237,6 +269,7 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             Peer = new RelayPeerInfo
             {
                 DeviceId = target.DeviceId ?? string.Empty,
+                InternetDeviceId = target.InternetDeviceId,
                 DeviceName = target.DeviceName
             }
         }, cancellationToken);
@@ -250,6 +283,7 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
             Peer = new RelayPeerInfo
             {
                 DeviceId = source.DeviceId,
+                InternetDeviceId = source.InternetDeviceId,
                 DeviceName = source.DeviceName
             }
         }, cancellationToken);
@@ -280,6 +314,95 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
 
         return _registeredClients.TryGetValue(connection.PeerDeviceId, out peer) &&
                string.Equals(peer.SessionId, connection.SessionId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool TryResolveTargetConnection(string targetDeviceIdentifier, out RelayClientConnection target)
+    {
+        if (_registeredClients.TryGetValue(targetDeviceIdentifier, out target!))
+            return true;
+
+        if (_deviceIdsByInternetDeviceId.TryGetValue(targetDeviceIdentifier, out var mappedDeviceId) &&
+            _registeredClients.TryGetValue(mappedDeviceId, out target!))
+        {
+            return true;
+        }
+
+        target = null!;
+        return false;
+    }
+
+    private async Task<string> GetOrCreateInternetDeviceIdAsync(string deviceId)
+    {
+        await _registryLock.WaitAsync();
+        try
+        {
+            if (_internetDeviceIdsByDeviceId.TryGetValue(deviceId, out var existing))
+                return existing;
+
+            string internetDeviceId;
+            do
+            {
+                internetDeviceId = RandomNumberGenerator.GetInt32(100_000_000, 1_000_000_000)
+                    .ToString("000000000", CultureInfo.InvariantCulture);
+            }
+            while (_deviceIdsByInternetDeviceId.ContainsKey(internetDeviceId));
+
+            _internetDeviceIdsByDeviceId[deviceId] = internetDeviceId;
+            _deviceIdsByInternetDeviceId[internetDeviceId] = deviceId;
+            await SaveRegistryAsync();
+
+            return internetDeviceId;
+        }
+        finally
+        {
+            _registryLock.Release();
+        }
+    }
+
+    private void LoadRegistry()
+    {
+        try
+        {
+            if (!File.Exists(_registryPath))
+                return;
+
+            var entries = JsonSerializer.Deserialize<List<RelayDeviceRegistryEntry>>(File.ReadAllText(_registryPath));
+            if (entries is null)
+                return;
+
+            foreach (var entry in entries)
+            {
+                var internetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(entry.InternetDeviceId);
+                if (string.IsNullOrWhiteSpace(entry.DeviceId) || internetDeviceId is null)
+                    continue;
+
+                _internetDeviceIdsByDeviceId[entry.DeviceId] = internetDeviceId;
+                _deviceIdsByInternetDeviceId[internetDeviceId] = entry.DeviceId;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task SaveRegistryAsync()
+    {
+        var directory = Path.GetDirectoryName(_registryPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        var entries = _internetDeviceIdsByDeviceId
+            .Select(pair => new RelayDeviceRegistryEntry
+            {
+                DeviceId = pair.Key,
+                InternetDeviceId = pair.Value
+            })
+            .OrderBy(entry => entry.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        await File.WriteAllTextAsync(
+            _registryPath,
+            JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private async Task CloseSessionAsync(RelayClientConnection connection, bool notifyPeer, CancellationToken cancellationToken)
@@ -397,6 +520,7 @@ public sealed class RelayServer : IDisposable, IAsyncDisposable
         _disposed = true;
         StopAsync().GetAwaiter().GetResult();
         _lifecycleLock.Dispose();
+        _registryLock.Dispose();
     }
 
     public ValueTask DisposeAsync()

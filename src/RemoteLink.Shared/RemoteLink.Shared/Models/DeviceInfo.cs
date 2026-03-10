@@ -6,6 +6,7 @@
 public class DeviceInfo
 {
     public string DeviceId { get; set; } = string.Empty;
+    public string? InternetDeviceId { get; set; }
     public string DeviceName { get; set; } = string.Empty;
     public string IPAddress { get; set; } = string.Empty;
     public string? MacAddress { get; set; }

@@ -1,7 +1,5 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
@@ -1658,14 +1656,27 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     /// </summary>
     private DeviceInfo? ResolvePartner(string partnerId)
     {
-        var stripped = partnerId.Replace(" ", "");
+        var stripped = DeviceIdentityManager.NormalizeInternetDeviceId(partnerId);
 
         // Try to match against discovered hosts by numeric ID
-        foreach (var host in _availableHosts)
+        if (stripped is not null)
         {
-            var hostNumericId = GenerateNumericId(host.DeviceName).Replace(" ", "");
-            if (hostNumericId == stripped)
-                return host;
+            foreach (var host in _availableHosts)
+            {
+                var hostNumericId = DeviceIdentityManager.NormalizeInternetDeviceId(host.InternetDeviceId)
+                    ?? DeviceIdentityManager.NormalizeInternetDeviceId(DeviceIdentityManager.GenerateLegacyNumericId(host.DeviceName));
+                if (hostNumericId == stripped)
+                    return host;
+            }
+
+            return new DeviceInfo
+            {
+                DeviceId = stripped,
+                InternetDeviceId = stripped,
+                DeviceName = DeviceIdentityManager.FormatInternetDeviceId(stripped),
+                Type = DeviceType.Desktop,
+                SupportsRelay = true
+            };
         }
 
         // Try IP:Port format
@@ -1699,18 +1710,6 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Generates a stable 9-digit numeric ID from a machine name (same algorithm as Desktop UI).
-    /// </summary>
-    private static string GenerateNumericId(string machineName)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(machineName + "RemoteLink"));
-        long value = Math.Abs(BitConverter.ToInt64(hash, 0));
-        long id = (value % 900_000_000) + 100_000_000;
-        var digits = id.ToString();
-        return $"{digits[..3]} {digits[3..6]} {digits[6..]}";
     }
 
     // ── QR code scanner ────────────────────────────────────────────────

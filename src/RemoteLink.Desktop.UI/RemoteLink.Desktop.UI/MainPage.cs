@@ -2,8 +2,6 @@ using System.ComponentModel;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using QRCoder;
 using RemoteLink.Desktop.Services;
@@ -36,6 +34,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly IMessagingService _messaging;
     private readonly Func<ChatPage> _chatPageFactory;
     private readonly Func<RemoteViewerPage> _viewerPageFactory;
+    private readonly DeviceInfo _localDevice;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
@@ -108,7 +107,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         IScreenCapture screenCapture,
         IMessagingService messaging,
         Func<ChatPage> chatPageFactory,
-        Func<RemoteViewerPage> viewerPageFactory)
+        Func<RemoteViewerPage> viewerPageFactory,
+        DeviceInfo localDevice)
     {
         _logger = logger;
         _host = host;
@@ -128,8 +128,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _messaging = messaging;
         _chatPageFactory = chatPageFactory;
         _viewerPageFactory = viewerPageFactory;
+        _localDevice = localDevice;
 
-        _deviceNumericId = GenerateNumericId(Environment.MachineName);
+        _deviceNumericId = DeviceIdentityManager.GetPreferredDisplayId(_localDevice);
 
         Title = "RemoteLink Desktop";
         BackgroundColor = ThemeColors.PageBackground;
@@ -204,19 +205,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 _logger.LogWarning(ex, "Failed to auto-start host");
             }
         }
-    }
-
-    /// <summary>
-    /// Generates a stable 9-digit numeric ID from the machine name,
-    /// similar to TeamViewer's device IDs.
-    /// </summary>
-    private static string GenerateNumericId(string machineName)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(machineName + "RemoteLink"));
-        long value = Math.Abs(BitConverter.ToInt64(hash, 0));
-        long id = (value % 900_000_000) + 100_000_000;
-        var digits = id.ToString();
-        return $"{digits[..3]} {digits[3..6]} {digits[6..]}";
     }
 
     // ── Layout ─────────────────────────────────────────────────────────
@@ -1236,6 +1224,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             });
 
             _logger.LogInformation("Desktop host started from UI");
+            _ = RefreshInternetDeviceIdDisplayAsync();
         }
         catch (Exception ex)
         {
@@ -1581,16 +1570,30 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     /// </summary>
     private DeviceInfo? ResolvePartner(string partnerId)
     {
+        var strippedId = DeviceIdentityManager.NormalizeInternetDeviceId(partnerId);
+
         // Try to match against discovered hosts by numeric ID
-        var strippedId = partnerId.Replace(" ", "");
-        lock (_discoveredHosts)
+        if (strippedId is not null)
         {
-            foreach (var host in _discoveredHosts)
+            lock (_discoveredHosts)
             {
-                var hostNumericId = GenerateNumericId(host.DeviceName).Replace(" ", "");
-                if (hostNumericId == strippedId)
-                    return host;
+                foreach (var host in _discoveredHosts)
+                {
+                    var hostNumericId = DeviceIdentityManager.NormalizeInternetDeviceId(host.InternetDeviceId)
+                        ?? DeviceIdentityManager.NormalizeInternetDeviceId(DeviceIdentityManager.GenerateLegacyNumericId(host.DeviceName));
+                    if (hostNumericId == strippedId)
+                        return host;
+                }
             }
+
+            return new DeviceInfo
+            {
+                DeviceId = strippedId,
+                InternetDeviceId = strippedId,
+                DeviceName = DeviceIdentityManager.FormatInternetDeviceId(strippedId),
+                Type = DeviceType.Desktop,
+                SupportsRelay = true
+            };
         }
 
         // Try IP:Port format
@@ -1624,6 +1627,25 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         }
 
         return null;
+    }
+
+    private async Task RefreshInternetDeviceIdDisplayAsync()
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            await Task.Delay(300);
+            if (DeviceIdentityManager.NormalizeInternetDeviceId(_localDevice.InternetDeviceId) is null)
+                continue;
+
+            break;
+        }
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _deviceNumericId = DeviceIdentityManager.GetPreferredDisplayId(_localDevice);
+            if (_deviceIdLabel != null)
+                _deviceIdLabel.Text = _deviceNumericId;
+        });
     }
 
     private void SetPartnerStatus(string text, Color color)

@@ -74,6 +74,7 @@ public class RelayTransportTests
         using var client = new RelayCommunicationService(clientDevice, relayConfiguration);
 
         await host.StartAsync(hostDevice.Port);
+        Assert.Matches("^[0-9]{9}$", hostDevice.InternetDeviceId ?? string.Empty);
 
         var pairingTcs = new TaskCompletionSource<PairingRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.PairingRequestReceived += (_, request) => pairingTcs.TrySetResult(request);
@@ -92,6 +93,73 @@ public class RelayTransportTests
         var request = await pairingTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal("client-1", request.ClientDeviceId);
         Assert.Equal("123456", request.Pin);
+    }
+
+    [Fact]
+    public async Task RelayCommunicationService_CanConnectUsingInternetDeviceIdWithoutLanAddress()
+    {
+        await using var relayServer = new RelayServer();
+        await relayServer.StartAsync(0);
+
+        var relayConfiguration = new RelayConfiguration
+        {
+            Enabled = true,
+            ServerHost = "127.0.0.1",
+            ServerPort = relayServer.Port,
+            ConnectTimeout = TimeSpan.FromSeconds(3)
+        };
+
+        var hostDevice = new DeviceInfo
+        {
+            DeviceId = "host-global",
+            DeviceName = "Host Global",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+        relayConfiguration.ApplyTo(hostDevice);
+
+        var clientDevice = new DeviceInfo
+        {
+            DeviceId = "client-global",
+            DeviceName = "Client Global",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        };
+        relayConfiguration.ApplyTo(clientDevice);
+
+        using var host = new RelayCommunicationService(hostDevice, relayConfiguration);
+        using var client = new RelayCommunicationService(clientDevice, relayConfiguration);
+
+        await host.StartAsync(hostDevice.Port);
+
+        var pairingTcs = new TaskCompletionSource<PairingRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.PairingRequestReceived += (_, request) => pairingTcs.TrySetResult(request);
+
+        var relayOnlyTarget = new DeviceInfo
+        {
+            DeviceId = hostDevice.InternetDeviceId!,
+            InternetDeviceId = hostDevice.InternetDeviceId,
+            DeviceName = "Relay-only target",
+            Type = DeviceType.Desktop,
+            SupportsRelay = true
+        };
+
+        var connected = await client.ConnectToDeviceAsync(relayOnlyTarget);
+        Assert.True(connected);
+
+        await client.SendPairingRequestAsync(new PairingRequest
+        {
+            ClientDeviceId = clientDevice.DeviceId,
+            ClientDeviceName = clientDevice.DeviceName,
+            Pin = "222222",
+            RequestedAt = DateTime.UtcNow
+        });
+
+        var request = await pairingTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("client-global", request.ClientDeviceId);
+        Assert.Equal("222222", request.Pin);
     }
 
     [Fact]
@@ -162,5 +230,72 @@ public class RelayTransportTests
         var request = await pairingTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal("client-relay", request.ClientDeviceId);
         Assert.Equal("654321", request.Pin);
+    }
+
+    [Fact]
+    public async Task AdaptiveCommunicationService_CanConnectUsingInternetDeviceIdOnly()
+    {
+        await using var relayServer = new RelayServer();
+        await relayServer.StartAsync(0);
+
+        var relayConfiguration = new RelayConfiguration
+        {
+            Enabled = true,
+            ServerHost = "127.0.0.1",
+            ServerPort = relayServer.Port,
+            ConnectTimeout = TimeSpan.FromSeconds(3)
+        };
+
+        var hostDevice = new DeviceInfo
+        {
+            DeviceId = "host-adaptive-global",
+            DeviceName = "Adaptive Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+        relayConfiguration.ApplyTo(hostDevice);
+
+        var clientDevice = new DeviceInfo
+        {
+            DeviceId = "client-adaptive-global",
+            DeviceName = "Adaptive Client",
+            IPAddress = "127.0.0.1",
+            Port = 12347,
+            Type = DeviceType.Mobile
+        };
+        relayConfiguration.ApplyTo(clientDevice);
+
+        using var host = new AdaptiveCommunicationService(new NoOpNatTraversalService(), hostDevice, relayConfiguration);
+        using var client = new AdaptiveCommunicationService(new NoOpNatTraversalService(), clientDevice, relayConfiguration);
+
+        await host.StartAsync(hostDevice.Port);
+
+        var pairingTcs = new TaskCompletionSource<PairingRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.PairingRequestReceived += (_, request) => pairingTcs.TrySetResult(request);
+
+        var relayOnlyTarget = new DeviceInfo
+        {
+            DeviceId = hostDevice.InternetDeviceId!,
+            InternetDeviceId = hostDevice.InternetDeviceId,
+            DeviceName = "Adaptive Relay-only target",
+            Type = DeviceType.Desktop,
+            SupportsRelay = true
+        };
+
+        var connected = await client.ConnectToDeviceAsync(relayOnlyTarget);
+        Assert.True(connected);
+
+        await client.SendPairingRequestAsync(new PairingRequest
+        {
+            ClientDeviceId = clientDevice.DeviceId,
+            ClientDeviceName = clientDevice.DeviceName,
+            Pin = "777777",
+            RequestedAt = DateTime.UtcNow
+        });
+
+        var request = await pairingTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("client-adaptive-global", request.ClientDeviceId);
+        Assert.Equal("777777", request.Pin);
     }
 }

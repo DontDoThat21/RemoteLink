@@ -594,14 +594,17 @@ public class RemoteDesktopClient
         };
     }
 
-    private static string BuildDeviceId()
+    private string BuildDeviceId()
     {
+        if (!string.IsNullOrWhiteSpace(_localDevice?.DeviceId))
+            return _localDevice.DeviceId;
+
         var raw = $"{Environment.MachineName}_Mobile_{Guid.NewGuid():N}";
         return raw[..Math.Min(48, raw.Length)];
     }
 
-    private static string BuildDeviceName() =>
-        $"{Environment.MachineName} (Mobile)";
+    private string BuildDeviceName() =>
+        _localDevice?.DeviceName ?? $"{Environment.MachineName} (Mobile)";
 
     private static List<NatEndpointCandidate> BuildRemoteNatCandidates(DeviceInfo host)
     {

@@ -36,13 +36,11 @@ public static class MauiProgram
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
-        var localDevice = new Shared.Models.DeviceInfo
-        {
-            DeviceId = Environment.MachineName + "_UI_" + Guid.NewGuid().ToString("N")[..8],
-            DeviceName = Environment.MachineName,
-            Type = Shared.Models.DeviceType.Desktop,
-            Port = 12346
-        };
+        var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
+            "desktop-ui",
+            Environment.MachineName,
+            Shared.Models.DeviceType.Desktop,
+            12346);
         relayConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);

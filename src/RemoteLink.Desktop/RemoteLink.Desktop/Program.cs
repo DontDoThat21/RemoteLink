@@ -56,13 +56,11 @@ class Program
         builder.Services.AddSingleton<ISessionRecorder, MockSessionRecorder>();
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
-        var localDevice = new DeviceInfo
-        {
-            DeviceId = Environment.MachineName + "_" + Guid.NewGuid().ToString("N")[..8],
-            DeviceName = Environment.MachineName,
-            Type = DeviceType.Desktop,
-            Port = 12346
-        };
+        var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
+            "desktop-host",
+            Environment.MachineName,
+            DeviceType.Desktop,
+            12346);
         relayConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);

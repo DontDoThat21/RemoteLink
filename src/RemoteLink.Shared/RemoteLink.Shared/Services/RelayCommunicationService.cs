@@ -113,15 +113,23 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
             await EnsureRelayConnectionAsync(device);
             await DisconnectCoreAsync(sendNotification: false);
 
+            var targetDeviceIdentifier = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId)
+                ?? DeviceIdentityManager.NormalizeInternetDeviceId(device.DeviceId)
+                ?? device.DeviceId;
+
+            if (string.IsNullOrWhiteSpace(targetDeviceIdentifier))
+                return false;
+
             _connectTcs = new TaskCompletionSource<RelayFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
             await SendRelayFrameAsync(new RelayFrame
             {
                 MessageType = "Connect",
                 SourceDeviceId = _localDevice.DeviceId,
-                TargetDeviceId = device.DeviceId,
+                TargetDeviceId = targetDeviceIdentifier,
                 Peer = new RelayPeerInfo
                 {
                     DeviceId = _localDevice.DeviceId,
+                    InternetDeviceId = _localDevice.InternetDeviceId,
                     DeviceName = _localDevice.DeviceName
                 }
             }, _cts?.Token ?? CancellationToken.None);
@@ -275,6 +283,8 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
         switch (frame.MessageType)
         {
             case "RegisterAck":
+                if (frame.Success)
+                    _localDevice.InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(frame.Peer?.InternetDeviceId);
                 _registerTcs?.TrySetResult(frame.Success);
                 return;
 

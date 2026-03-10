@@ -99,12 +99,23 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             }
         }
 
-        var tcpConnected = await _tcpService.ConnectToDeviceAsync(device);
-        if (tcpConnected)
+        var canTryDirectTcp = !string.IsNullOrWhiteSpace(device.IPAddress) && device.Port is > 0;
+        if (canTryDirectTcp)
         {
-            _activeService = _tcpService;
-            _logger.LogInformation("Connected to {Device} over TCP transport", device.DeviceName);
-            return true;
+            try
+            {
+                var tcpConnected = await _tcpService.ConnectToDeviceAsync(device);
+                if (tcpConnected)
+                {
+                    _activeService = _tcpService;
+                    _logger.LogInformation("Connected to {Device} over TCP transport", device.DeviceName);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Direct TCP transport failed for {Device}; falling back to relay if available", device.DeviceName);
+            }
         }
 
         if (_relayService is not null &&

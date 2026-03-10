@@ -55,6 +55,7 @@ public sealed class RelayConfiguration
 public sealed class RelayPeerInfo
 {
     public string DeviceId { get; set; } = string.Empty;
+    public string? InternetDeviceId { get; set; }
     public string DeviceName { get; set; } = string.Empty;
 }
 

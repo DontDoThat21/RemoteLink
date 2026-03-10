@@ -28,13 +28,11 @@ public static class MauiProgram
         builder.Logging.AddDebug();
 
         var relayConfiguration = RelayConfiguration.FromEnvironment();
-        var localDevice = new DeviceInfo
-        {
-            DeviceId = Environment.MachineName + "_Mobile_" + Guid.NewGuid().ToString("N")[..8],
-            DeviceName = Environment.MachineName + " Mobile",
-            Type = DeviceType.Mobile,
-            Port = 12347
-        };
+        var localDevice = DeviceIdentityManager.CreateOrLoadLocalDevice(
+            "mobile-client",
+            Environment.MachineName + " Mobile",
+            DeviceType.Mobile,
+            12347);
         relayConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);
