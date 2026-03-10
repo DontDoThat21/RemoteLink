@@ -67,6 +67,12 @@ public interface IUserAccountService
     /// <summary>Returns the saved devices synced to the current account.</summary>
     Task<IReadOnlyList<SavedDevice>> GetSyncedSavedDevicesAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Adds or updates a host-side connection audit entry for the signed-in account.</summary>
+    Task UpsertConnectionAuditLogEntryAsync(ConnectionAuditLogEntry entry, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns connection audit history for the signed-in account, newest first.</summary>
+    Task<IReadOnlyList<ConnectionAuditLogEntry>> GetConnectionAuditLogAsync(int maxCount = 100, CancellationToken cancellationToken = default);
+
     /// <summary>Starts TOTP enrollment for the current account and returns authenticator-app setup details.</summary>
     Task<UserAccountTwoFactorSetup> BeginTwoFactorSetupAsync(string? issuer = null, CancellationToken cancellationToken = default);
 

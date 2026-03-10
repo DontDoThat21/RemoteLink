@@ -17,6 +17,7 @@ public sealed class UserAccountService : IUserAccountService
     private const int SaltSize = 16;
     private const int HashSize = 32;
     private const string DefaultTwoFactorIssuer = "RemoteLink";
+    private const int MaxConnectionAuditLogEntries = 500;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -179,6 +180,65 @@ public sealed class UserAccountService : IUserAccountService
             await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
             await SaveSessionIfActiveInternalAsync(cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Enabled TOTP for account {Email}", account.Email);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task UpsertConnectionAuditLogEntryAsync(ConnectionAuditLogEntry entry, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            var clone = CloneConnectionAuditLogEntry(entry);
+            clone.ClientInternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(clone.ClientInternetDeviceId);
+
+            var existingIndex = account.ConnectionAuditLog.FindIndex(candidate =>
+                string.Equals(candidate.AuditId, clone.AuditId, StringComparison.Ordinal) ||
+                (!string.IsNullOrWhiteSpace(clone.SessionId) && string.Equals(candidate.SessionId, clone.SessionId, StringComparison.Ordinal)));
+
+            if (existingIndex >= 0)
+                account.ConnectionAuditLog[existingIndex] = clone;
+            else
+                account.ConnectionAuditLog.Add(clone);
+
+            account.ConnectionAuditLog = account.ConnectionAuditLog
+                .OrderByDescending(candidate => candidate.ConnectedAtUtc ?? candidate.RequestedAtUtc)
+                .ThenByDescending(candidate => candidate.DisconnectedAtUtc ?? DateTime.MinValue)
+                .Take(MaxConnectionAuditLogEntries)
+                .ToList();
+
+            await SaveAccountsInternalAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<ConnectionAuditLogEntry>> GetConnectionAuditLogAsync(int maxCount = 100, CancellationToken cancellationToken = default)
+    {
+        if (maxCount <= 0)
+            return Array.Empty<ConnectionAuditLogEntry>();
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await LoadInternalAsync(cancellationToken).ConfigureAwait(false);
+            var account = GetCurrentAccountOrThrow();
+            return account.ConnectionAuditLog
+                .OrderByDescending(entry => entry.ConnectedAtUtc ?? entry.RequestedAtUtc)
+                .ThenByDescending(entry => entry.DisconnectedAtUtc ?? DateTime.MinValue)
+                .Take(maxCount)
+                .Select(CloneConnectionAuditLogEntry)
+                .ToList()
+                .AsReadOnly();
         }
         finally
         {
@@ -832,7 +892,11 @@ public sealed class UserAccountService : IUserAccountService
             RequireTwoFactorForUnattendedAccess = account.RequireTwoFactorForUnattendedAccess,
             TwoFactorEnabledAtUtc = account.TwoFactorEnabledAtUtc,
             ManagedDevices = account.ManagedDevices.Select(CloneManagedDevice).ToList(),
-            SyncedSavedDevices = account.SyncedSavedDevices.Select(CloneSavedDevice).ToList()
+            SyncedSavedDevices = account.SyncedSavedDevices.Select(CloneSavedDevice).ToList(),
+            ConnectionAuditLog = account.ConnectionAuditLog
+                .OrderByDescending(entry => entry.ConnectedAtUtc ?? entry.RequestedAtUtc)
+                .Select(CloneConnectionAuditLogEntry)
+                .ToList()
         };
     }
 
@@ -990,6 +1054,26 @@ public sealed class UserAccountService : IUserAccountService
         };
     }
 
+    private static ConnectionAuditLogEntry CloneConnectionAuditLogEntry(ConnectionAuditLogEntry entry)
+    {
+        return new ConnectionAuditLogEntry
+        {
+            AuditId = entry.AuditId,
+            SessionId = entry.SessionId,
+            ClientDeviceId = entry.ClientDeviceId,
+            ClientInternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(entry.ClientInternetDeviceId),
+            ClientDeviceName = entry.ClientDeviceName,
+            RequestedAtUtc = entry.RequestedAtUtc,
+            ConnectedAtUtc = entry.ConnectedAtUtc,
+            DisconnectedAtUtc = entry.DisconnectedAtUtc,
+            Duration = entry.Duration,
+            Outcome = entry.Outcome,
+            UsedTrustedDevice = entry.UsedTrustedDevice,
+            Permissions = entry.Permissions?.Clone() ?? SessionPermissionSet.CreateFullAccess(),
+            Actions = entry.Actions.Select(action => action.Clone()).ToList()
+        };
+    }
+
     private sealed class PersistedUserAccount
     {
         public string AccountId { get; set; } = string.Empty;
@@ -1006,6 +1090,7 @@ public sealed class UserAccountService : IUserAccountService
         public DateTime? TwoFactorEnabledAtUtc { get; set; }
         public List<AccountManagedDevice> ManagedDevices { get; set; } = new();
         public List<SavedDevice> SyncedSavedDevices { get; set; } = new();
+        public List<ConnectionAuditLogEntry> ConnectionAuditLog { get; set; } = new();
     }
 
     private sealed class PersistedSession

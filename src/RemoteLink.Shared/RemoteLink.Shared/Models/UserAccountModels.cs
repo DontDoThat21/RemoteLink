@@ -15,6 +15,7 @@ public sealed class UserAccountProfile
     public DateTime? TwoFactorEnabledAtUtc { get; set; }
     public List<AccountManagedDevice> ManagedDevices { get; set; } = new();
     public List<SavedDevice> SyncedSavedDevices { get; set; } = new();
+    public List<ConnectionAuditLogEntry> ConnectionAuditLog { get; set; } = new();
 }
 
 /// <summary>
@@ -62,4 +63,91 @@ public sealed class AccountManagedDevice
     public DateTime? BlockedAtUtc { get; set; }
     public SessionPermissionSet SessionPermissions { get; set; } = SessionPermissionSet.CreateFullAccess();
     public DateTime LastSeenAtUtc { get; set; }
+}
+
+/// <summary>
+/// Final outcome for a host-side audited connection attempt or session.
+/// </summary>
+public enum ConnectionAuditOutcome
+{
+    Connected,
+    Disconnected,
+    RejectedInvalidPin,
+    RejectedBlocked
+}
+
+/// <summary>
+/// High-level action captured inside a connection audit entry.
+/// </summary>
+public enum ConnectionAuditActionType
+{
+    PairingAccepted,
+    PairingRejected,
+    ClipboardSent,
+    ClipboardReceived,
+    ChatMessageReceived,
+    SessionControlRequested,
+    SessionControlDenied,
+    SessionControlApplied,
+    SessionDisconnected
+}
+
+/// <summary>
+/// Timestamped action recorded during a remote session.
+/// </summary>
+public sealed class ConnectionAuditActionEntry
+{
+    public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+    public ConnectionAuditActionType ActionType { get; set; }
+    public string Description { get; set; } = string.Empty;
+
+    public ConnectionAuditActionEntry Clone()
+    {
+        return new ConnectionAuditActionEntry
+        {
+            TimestampUtc = TimestampUtc,
+            ActionType = ActionType,
+            Description = Description
+        };
+    }
+}
+
+/// <summary>
+/// Persisted audit entry for an inbound host connection attempt or completed session.
+/// </summary>
+public sealed class ConnectionAuditLogEntry
+{
+    public string AuditId { get; set; } = Guid.NewGuid().ToString("N");
+    public string? SessionId { get; set; }
+    public string ClientDeviceId { get; set; } = string.Empty;
+    public string? ClientInternetDeviceId { get; set; }
+    public string ClientDeviceName { get; set; } = string.Empty;
+    public DateTime RequestedAtUtc { get; set; } = DateTime.UtcNow;
+    public DateTime? ConnectedAtUtc { get; set; }
+    public DateTime? DisconnectedAtUtc { get; set; }
+    public TimeSpan Duration { get; set; }
+    public ConnectionAuditOutcome Outcome { get; set; } = ConnectionAuditOutcome.Connected;
+    public bool UsedTrustedDevice { get; set; }
+    public SessionPermissionSet Permissions { get; set; } = SessionPermissionSet.CreateFullAccess();
+    public List<ConnectionAuditActionEntry> Actions { get; set; } = new();
+
+    public ConnectionAuditLogEntry Clone()
+    {
+        return new ConnectionAuditLogEntry
+        {
+            AuditId = AuditId,
+            SessionId = SessionId,
+            ClientDeviceId = ClientDeviceId,
+            ClientInternetDeviceId = ClientInternetDeviceId,
+            ClientDeviceName = ClientDeviceName,
+            RequestedAtUtc = RequestedAtUtc,
+            ConnectedAtUtc = ConnectedAtUtc,
+            DisconnectedAtUtc = DisconnectedAtUtc,
+            Duration = Duration,
+            Outcome = Outcome,
+            UsedTrustedDevice = UsedTrustedDevice,
+            Permissions = Permissions?.Clone() ?? SessionPermissionSet.CreateFullAccess(),
+            Actions = Actions.Select(action => action.Clone()).ToList()
+        };
+    }
 }

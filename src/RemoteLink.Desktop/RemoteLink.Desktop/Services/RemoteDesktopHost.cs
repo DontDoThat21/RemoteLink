@@ -39,6 +39,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly ISignalingService? _signalingService;
     private readonly DeviceInfo? _localDevice;
     private readonly IUserAccountService? _userAccountService;
+    private readonly object _auditLock = new();
 
     /// <summary>
     /// Set to true once the currently-connected client has successfully paired.
@@ -46,6 +47,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private volatile bool _clientPaired;
     private SessionPermissionSet _currentPermissions = SessionPermissionSet.CreateFullAccess();
+    private ConnectionAuditLogEntry? _currentAuditLogEntry;
 
     /// <summary>
     /// The active session for the currently connected/paired client, or null when no client is connected.
@@ -230,6 +232,8 @@ public class RemoteDesktopHost : BackgroundService
             _audioCapture.AudioCaptured -= OnAudioCaptured;
             _messagingService.MessageReceived -= OnMessageReceived;
 
+            await FinalizeCurrentAuditLogEntryAsync("Host service stopped.");
+
             await _audioCapture.StopAsync();
             await _clipboardService.StopAsync();
             await _inputHandler.StopAsync();
@@ -272,6 +276,11 @@ public class RemoteDesktopHost : BackgroundService
                         "Pairing rejected for blocked client '{Name}' ({Id})",
                         request.ClientDeviceName,
                         request.ClientDeviceId);
+
+                    await PersistRejectedAuditAsync(
+                        request,
+                        ConnectionAuditOutcome.RejectedBlocked,
+                        "Connection rejected because the client device is blocked.");
                     return;
                 }
 
@@ -295,6 +304,7 @@ public class RemoteDesktopHost : BackgroundService
 
                     var token = _currentSession.SessionId;
                     _currentSession.Permissions = _currentPermissions.Clone();
+                    InitializeCurrentAuditLogEntry(request, trustedDevice, _currentPermissions, token);
 
                     // Transition session to Connected state
                     _sessionManager.OnConnected(_currentSession.SessionId);
@@ -309,6 +319,10 @@ public class RemoteDesktopHost : BackgroundService
                             : "Pairing accepted."
                     };
                     await _communication.SendPairingResponseAsync(response);
+                    AppendAuditAction(
+                        ConnectionAuditActionType.PairingAccepted,
+                        trustedDevice ? "Trusted device paired without PIN." : "Client paired with valid PIN.");
+                    await PersistCurrentAuditLogEntryAsync();
 
                     _logger.LogInformation(
                         trustedDevice
@@ -360,6 +374,13 @@ public class RemoteDesktopHost : BackgroundService
                         request.ClientDeviceName,
                         request.ClientDeviceId,
                         reason);
+
+                    await PersistRejectedAuditAsync(
+                        request,
+                        ConnectionAuditOutcome.RejectedInvalidPin,
+                        reason == PairingFailureReason.TooManyAttempts
+                            ? "Pairing rejected after too many failed PIN attempts."
+                            : "Pairing rejected because the supplied PIN was invalid.");
                 }
             }
 
@@ -482,6 +503,142 @@ public class RemoteDesktopHost : BackgroundService
             .ToList();
     }
 
+    private void InitializeCurrentAuditLogEntry(PairingRequest request, bool usedTrustedDevice, SessionPermissionSet permissions, string sessionId)
+    {
+        var requestedAtUtc = request.RequestedAt == default ? DateTime.UtcNow : request.RequestedAt.ToUniversalTime();
+        var clientName = string.IsNullOrWhiteSpace(request.ClientDeviceName) ? request.ClientDeviceId : request.ClientDeviceName;
+
+        lock (_auditLock)
+        {
+            _currentAuditLogEntry = new ConnectionAuditLogEntry
+            {
+                SessionId = sessionId,
+                ClientDeviceId = request.ClientDeviceId,
+                ClientInternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(request.ClientInternetDeviceId),
+                ClientDeviceName = clientName,
+                RequestedAtUtc = requestedAtUtc,
+                ConnectedAtUtc = DateTime.UtcNow,
+                Outcome = ConnectionAuditOutcome.Connected,
+                UsedTrustedDevice = usedTrustedDevice,
+                Permissions = permissions.Clone()
+            };
+        }
+    }
+
+    private void AppendAuditAction(ConnectionAuditActionType actionType, string description)
+    {
+        lock (_auditLock)
+        {
+            _currentAuditLogEntry?.Actions.Add(new ConnectionAuditActionEntry
+            {
+                TimestampUtc = DateTime.UtcNow,
+                ActionType = actionType,
+                Description = description
+            });
+        }
+    }
+
+    private async Task PersistRejectedAuditAsync(PairingRequest request, ConnectionAuditOutcome outcome, string description)
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+            return;
+
+        var requestedAtUtc = request.RequestedAt == default ? DateTime.UtcNow : request.RequestedAt.ToUniversalTime();
+        var clientName = string.IsNullOrWhiteSpace(request.ClientDeviceName) ? request.ClientDeviceId : request.ClientDeviceName;
+        var entry = new ConnectionAuditLogEntry
+        {
+            ClientDeviceId = request.ClientDeviceId,
+            ClientInternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(request.ClientInternetDeviceId),
+            ClientDeviceName = clientName,
+            RequestedAtUtc = requestedAtUtc,
+            Outcome = outcome,
+            Permissions = SessionPermissionSet.CreateFullAccess(),
+            Actions = new List<ConnectionAuditActionEntry>
+            {
+                new()
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    ActionType = ConnectionAuditActionType.PairingRejected,
+                    Description = description
+                }
+            }
+        };
+
+        try
+        {
+            await _userAccountService.UpsertConnectionAuditLogEntryAsync(entry);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to persist rejected connection audit entry for client '{ClientId}'", request.ClientDeviceId);
+        }
+    }
+
+    private async Task PersistCurrentAuditLogEntryAsync()
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+            return;
+
+        ConnectionAuditLogEntry? snapshot;
+        lock (_auditLock)
+        {
+            snapshot = _currentAuditLogEntry?.Clone();
+        }
+
+        if (snapshot is null)
+            return;
+
+        try
+        {
+            await _userAccountService.UpsertConnectionAuditLogEntryAsync(snapshot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to persist connection audit entry for session {SessionId}", snapshot.SessionId ?? snapshot.AuditId);
+        }
+    }
+
+    private async Task FinalizeCurrentAuditLogEntryAsync(string description)
+    {
+        if (_userAccountService is null || !_userAccountService.IsSignedIn)
+        {
+            lock (_auditLock)
+            {
+                _currentAuditLogEntry = null;
+            }
+
+            return;
+        }
+
+        ConnectionAuditLogEntry? snapshot;
+        lock (_auditLock)
+        {
+            if (_currentAuditLogEntry is null)
+                return;
+
+            _currentAuditLogEntry.DisconnectedAtUtc = DateTime.UtcNow;
+            _currentAuditLogEntry.Duration = _currentSession?.Duration ?? _currentAuditLogEntry.Duration;
+            _currentAuditLogEntry.Outcome = ConnectionAuditOutcome.Disconnected;
+            _currentAuditLogEntry.Actions.Add(new ConnectionAuditActionEntry
+            {
+                TimestampUtc = DateTime.UtcNow,
+                ActionType = ConnectionAuditActionType.SessionDisconnected,
+                Description = description
+            });
+            snapshot = _currentAuditLogEntry.Clone();
+            _currentAuditLogEntry = null;
+        }
+
+        try
+        {
+            await _userAccountService.UpsertConnectionAuditLogEntryAsync(snapshot);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to finalize connection audit entry for session {SessionId}", snapshot.SessionId ?? snapshot.AuditId);
+        }
+    }
+
     /// <summary>
     /// Handles monitor and quality control requests from the paired client.
     /// </summary>
@@ -503,6 +660,9 @@ public class RemoteDesktopHost : BackgroundService
 
             if (!IsSessionControlAllowed(request.Command))
             {
+                AppendAuditAction(
+                    ConnectionAuditActionType.SessionControlDenied,
+                    $"Session control denied: {request.Command}.");
                 await _communication.SendSessionControlResponseAsync(new SessionControlResponse
                 {
                     RequestId = request.RequestId,
@@ -515,6 +675,10 @@ public class RemoteDesktopHost : BackgroundService
 
             try
             {
+                AppendAuditAction(
+                    ConnectionAuditActionType.SessionControlRequested,
+                    $"Session control requested: {request.Command}.");
+
                 switch (request.Command)
                 {
                     case SessionControlCommand.GetMonitors:
@@ -528,6 +692,7 @@ public class RemoteDesktopHost : BackgroundService
                             Monitors = monitors.ToList(),
                             SelectedMonitorId = _screenCapture.GetSelectedMonitorId()
                         });
+                        AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, "Returned remote monitor list.");
                         break;
                     }
 
@@ -557,6 +722,11 @@ public class RemoteDesktopHost : BackgroundService
                             ErrorMessage = selected ? null : "Monitor not found.",
                             SelectedMonitorId = selected ? request.MonitorId : _screenCapture.GetSelectedMonitorId()
                         });
+                        AppendAuditAction(
+                            selected ? ConnectionAuditActionType.SessionControlApplied : ConnectionAuditActionType.SessionControlDenied,
+                            selected
+                                ? $"Selected monitor '{request.MonitorId}'."
+                                : $"Monitor switch failed for '{request.MonitorId}'.");
                         break;
                     }
 
@@ -572,6 +742,7 @@ public class RemoteDesktopHost : BackgroundService
                             Success = true,
                             AppliedQuality = quality
                         });
+                        AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, $"Set stream quality to {quality}.");
                         break;
                     }
 
@@ -588,6 +759,7 @@ public class RemoteDesktopHost : BackgroundService
                             Success = true,
                             AppliedImageFormat = format
                         });
+                        AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, $"Set image format to {format}.");
                         break;
                     }
 
@@ -611,6 +783,7 @@ public class RemoteDesktopHost : BackgroundService
                             Success = true,
                             AppliedAudioEnabled = enabled
                         });
+                        AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, enabled ? "Enabled remote audio streaming." : "Disabled remote audio streaming.");
                         break;
                     }
 
@@ -656,6 +829,7 @@ public class RemoteDesktopHost : BackgroundService
         else
         {
             _clientPaired = false;
+            _ = FinalizeCurrentAuditLogEntryAsync("Remote session disconnected.");
             _logger.LogInformation("Client disconnected — stopping screen capture, audio, clipboard sync, and recording.");
             _screenCapture.FrameCaptured -= OnFrameCaptured;
             _ = _screenCapture.StopCaptureAsync();
@@ -960,6 +1134,7 @@ public class RemoteDesktopHost : BackgroundService
                 };
 
                 await _communication.SendClipboardDataAsync(clipboardData);
+                AppendAuditAction(ConnectionAuditActionType.ClipboardSent, $"Sent clipboard {clipboardData.ContentType} to client.");
 
                 _logger.LogDebug(
                     "Sent clipboard data to client: {Type} ({Size} bytes)",
@@ -989,11 +1164,13 @@ public class RemoteDesktopHost : BackgroundService
                 {
                     case ClipboardContentType.Text when !string.IsNullOrEmpty(clipboardData.Text):
                         await _clipboardService.SetTextAsync(clipboardData.Text);
+                        AppendAuditAction(ConnectionAuditActionType.ClipboardReceived, "Applied clipboard text from client.");
                         _logger.LogDebug("Applied clipboard text from client: {Length} chars", clipboardData.Text.Length);
                         break;
 
                     case ClipboardContentType.Image when clipboardData.ImageData != null:
                         await _clipboardService.SetImageAsync(clipboardData.ImageData);
+                        AppendAuditAction(ConnectionAuditActionType.ClipboardReceived, "Applied clipboard image from client.");
                         _logger.LogDebug("Applied clipboard image from client: {Size} bytes", clipboardData.ImageData.Length);
                         break;
 

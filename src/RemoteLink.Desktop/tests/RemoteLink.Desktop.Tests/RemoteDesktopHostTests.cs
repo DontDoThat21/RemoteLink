@@ -337,6 +337,7 @@ internal sealed class FakePairingService : IPairingService
 internal sealed class FakeUserAccountService : IUserAccountService
 {
     private readonly List<AccountManagedDevice> _managedDevices = new();
+    private readonly List<ConnectionAuditLogEntry> _connectionAuditLog = new();
     private readonly HashSet<string> _trustedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _blockedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
 
@@ -359,6 +360,8 @@ internal sealed class FakeUserAccountService : IUserAccountService
         TrustedAtUtc = device.TrustedAtUtc,
         LastSeenAtUtc = device.LastSeenAtUtc
     }).ToList();
+
+    public List<ConnectionAuditLogEntry> ConnectionAuditLog => _connectionAuditLog.Select(entry => entry.Clone()).ToList();
 
     public void SignIn()
     {
@@ -480,6 +483,32 @@ internal sealed class FakeUserAccountService : IUserAccountService
 
     public Task SyncSavedDevicesAsync(IEnumerable<SavedDevice> savedDevices, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IReadOnlyList<SavedDevice>> GetSyncedSavedDevicesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SavedDevice>>(Array.Empty<SavedDevice>());
+    public Task UpsertConnectionAuditLogEntryAsync(ConnectionAuditLogEntry entry, CancellationToken cancellationToken = default)
+    {
+        var clone = entry.Clone();
+        var index = _connectionAuditLog.FindIndex(candidate =>
+            string.Equals(candidate.AuditId, clone.AuditId, StringComparison.Ordinal) ||
+            (!string.IsNullOrWhiteSpace(clone.SessionId) && string.Equals(candidate.SessionId, clone.SessionId, StringComparison.Ordinal)));
+
+        if (index >= 0)
+            _connectionAuditLog[index] = clone;
+        else
+            _connectionAuditLog.Add(clone);
+
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<ConnectionAuditLogEntry>> GetConnectionAuditLogAsync(int maxCount = 100, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<ConnectionAuditLogEntry> entries = _connectionAuditLog
+            .OrderByDescending(entry => entry.ConnectedAtUtc ?? entry.RequestedAtUtc)
+            .Take(Math.Max(0, maxCount))
+            .Select(entry => entry.Clone())
+            .ToList()
+            .AsReadOnly();
+
+        return Task.FromResult(entries);
+    }
     public Task<UserAccountTwoFactorSetup> BeginTwoFactorSetupAsync(string? issuer = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task EnableTwoFactorAsync(string verificationCode, bool requireForUnattendedAccess = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task DisableTwoFactorAsync(string verificationCode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
@@ -1414,6 +1443,67 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         var device = Assert.Single(_userAccount.ManagedDevices);
         Assert.Equal("test-client", device.DeviceId);
         Assert.Equal("TestDevice", device.DeviceName);
+    }
+
+    [Fact]
+    public async Task Disconnect_PersistsConnectionAuditLog_WithActionsAndDuration()
+    {
+        _userAccount.SignIn();
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _clipboard.RaiseClipboardChanged(new ClipboardChangedEventArgs
+        {
+            ContentType = ClipboardContentType.Text,
+            Text = "audit text"
+        });
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = Guid.NewGuid().ToString("N"),
+            Command = SessionControlCommand.SetQuality,
+            Quality = 65
+        });
+
+        await Task.Delay(150);
+        _comm.RaiseConnectionStateChanged(connected: false);
+        await Task.Delay(150);
+
+        var auditEntry = Assert.Single(_userAccount.ConnectionAuditLog);
+        Assert.Equal("test-client", auditEntry.ClientDeviceId);
+        Assert.Equal(ConnectionAuditOutcome.Disconnected, auditEntry.Outcome);
+        Assert.NotNull(auditEntry.ConnectedAtUtc);
+        Assert.NotNull(auditEntry.DisconnectedAtUtc);
+        Assert.True(auditEntry.Duration >= TimeSpan.Zero);
+        Assert.Contains(auditEntry.Actions, action => action.ActionType == ConnectionAuditActionType.PairingAccepted);
+        Assert.Contains(auditEntry.Actions, action => action.ActionType == ConnectionAuditActionType.ClipboardSent);
+        Assert.Contains(auditEntry.Actions, action => action.ActionType == ConnectionAuditActionType.SessionControlApplied);
+        Assert.Contains(auditEntry.Actions, action => action.ActionType == ConnectionAuditActionType.SessionDisconnected);
+    }
+
+    [Fact]
+    public async Task RejectedPairing_PersistsRejectedConnectionAuditLog()
+    {
+        _userAccount.SignIn();
+        _pairing.ValidatePinResult = false;
+
+        await StartHostAsync();
+        _comm.RaiseConnectionStateChanged(connected: true);
+        _comm.RaisePairingRequest(new PairingRequest
+        {
+            ClientDeviceId = "bad-client",
+            ClientDeviceName = "Bad Client",
+            Pin = "000000",
+            RequestedAt = DateTime.UtcNow
+        });
+
+        await Task.Delay(150);
+
+        var auditEntry = Assert.Single(_userAccount.ConnectionAuditLog);
+        Assert.Equal(ConnectionAuditOutcome.RejectedInvalidPin, auditEntry.Outcome);
+        Assert.Equal("bad-client", auditEntry.ClientDeviceId);
+        Assert.Contains(auditEntry.Actions, action => action.ActionType == ConnectionAuditActionType.PairingRejected);
     }
 
     [Fact]

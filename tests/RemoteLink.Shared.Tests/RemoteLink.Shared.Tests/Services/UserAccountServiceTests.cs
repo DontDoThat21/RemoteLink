@@ -145,6 +145,101 @@ public sealed class UserAccountServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpsertConnectionAuditLogEntryAsync_PersistsAndReturnsNewestFirst()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.UpsertConnectionAuditLogEntryAsync(new ConnectionAuditLogEntry
+        {
+            AuditId = "older",
+            ClientDeviceId = "device-1",
+            ClientDeviceName = "Office PC",
+            RequestedAtUtc = DateTime.UtcNow.AddMinutes(-5),
+            ConnectedAtUtc = DateTime.UtcNow.AddMinutes(-5),
+            DisconnectedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            Duration = TimeSpan.FromMinutes(4),
+            Outcome = ConnectionAuditOutcome.Disconnected,
+            Actions = new List<ConnectionAuditActionEntry>
+            {
+                new() { ActionType = ConnectionAuditActionType.PairingAccepted, Description = "Connected" }
+            }
+        });
+
+        await service.UpsertConnectionAuditLogEntryAsync(new ConnectionAuditLogEntry
+        {
+            AuditId = "newer",
+            ClientDeviceId = "device-2",
+            ClientDeviceName = "Alice Phone",
+            RequestedAtUtc = DateTime.UtcNow,
+            Outcome = ConnectionAuditOutcome.RejectedInvalidPin,
+            Actions = new List<ConnectionAuditActionEntry>
+            {
+                new() { ActionType = ConnectionAuditActionType.PairingRejected, Description = "Invalid PIN" }
+            }
+        });
+
+        var reloaded = CreateService();
+        await reloaded.LoadAsync();
+
+        var entries = await reloaded.GetConnectionAuditLogAsync();
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("newer", entries[0].AuditId);
+        Assert.Equal("older", entries[1].AuditId);
+        Assert.Equal(ConnectionAuditActionType.PairingRejected, Assert.Single(entries[0].Actions).ActionType);
+    }
+
+    [Fact]
+    public async Task UpsertConnectionAuditLogEntryAsync_ReplacesExistingEntryBySessionId()
+    {
+        var service = CreateService();
+        await service.RegisterAsync("alice@example.com", "Sup3rSecret!", "Alice");
+
+        await service.UpsertConnectionAuditLogEntryAsync(new ConnectionAuditLogEntry
+        {
+            AuditId = "audit-1",
+            SessionId = "session-1",
+            ClientDeviceId = "device-1",
+            ClientDeviceName = "Alice Phone",
+            RequestedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            ConnectedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            Outcome = ConnectionAuditOutcome.Connected,
+            Actions = new List<ConnectionAuditActionEntry>
+            {
+                new() { ActionType = ConnectionAuditActionType.PairingAccepted, Description = "Connected" }
+            }
+        });
+
+        await service.UpsertConnectionAuditLogEntryAsync(new ConnectionAuditLogEntry
+        {
+            AuditId = "audit-2",
+            SessionId = "session-1",
+            ClientDeviceId = "device-1",
+            ClientDeviceName = "Alice Phone",
+            RequestedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            ConnectedAtUtc = DateTime.UtcNow.AddMinutes(-1),
+            DisconnectedAtUtc = DateTime.UtcNow,
+            Duration = TimeSpan.FromMinutes(1),
+            Outcome = ConnectionAuditOutcome.Disconnected,
+            Actions = new List<ConnectionAuditActionEntry>
+            {
+                new() { ActionType = ConnectionAuditActionType.PairingAccepted, Description = "Connected" },
+                new() { ActionType = ConnectionAuditActionType.SessionDisconnected, Description = "Disconnected" }
+            }
+        });
+
+        var entries = await service.GetConnectionAuditLogAsync();
+        var entry = Assert.Single(entries);
+        Assert.Equal("audit-2", entry.AuditId);
+        Assert.Equal(ConnectionAuditOutcome.Disconnected, entry.Outcome);
+        Assert.Equal(2, entry.Actions.Count);
+
+        var profile = await service.GetCurrentProfileAsync();
+        Assert.NotNull(profile);
+        Assert.Single(profile!.ConnectionAuditLog);
+    }
+
+    [Fact]
     public async Task SetDeviceTrustAsync_PersistsAndMatchesByInternetDeviceId()
     {
         var service = CreateService();
