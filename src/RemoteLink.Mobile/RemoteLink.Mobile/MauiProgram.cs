@@ -60,7 +60,8 @@ public static class MauiProgram
             var discovery = provider.GetRequiredService<INetworkDiscovery>();
             var natTraversal = provider.GetRequiredService<INatTraversalService>();
             var localDevice = provider.GetRequiredService<DeviceInfo>();
-            return new RemoteDesktopClient(logger, discovery, null, natTraversal, localDevice);
+            Func<ICommunicationService> commFactory = () => ActivatorUtilities.CreateInstance<AdaptiveCommunicationService>(provider);
+            return new RemoteDesktopClient(logger, discovery, commFactory, natTraversal, localDevice);
         });
 
         builder.Services.AddSingleton<MobileChatSession>();

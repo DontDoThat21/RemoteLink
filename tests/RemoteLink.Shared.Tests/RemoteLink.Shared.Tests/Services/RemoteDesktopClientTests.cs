@@ -118,6 +118,8 @@ public class RemoteDesktopClientTests
         public NatDiscoveryResult? CurrentDiscovery { get; private set; }
         public int? StartedPort { get; private set; }
 
+        public event EventHandler<NatDatagramReceivedEventArgs>? DatagramReceived;
+
         public Task<NatDiscoveryResult> StartAsync(int localPort, CancellationToken cancellationToken = default)
         {
             IsRunning = true;
@@ -161,6 +163,9 @@ public class RemoteDesktopClientTests
 
         public Task<NatTraversalConnectResult> TryConnectAsync(IEnumerable<NatEndpointCandidate> remoteCandidates, CancellationToken cancellationToken = default)
             => Task.FromResult(new NatTraversalConnectResult { Success = true });
+
+        public Task SendDatagramAsync(string remoteIPAddress, int remotePort, byte[] payload, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     [Fact]

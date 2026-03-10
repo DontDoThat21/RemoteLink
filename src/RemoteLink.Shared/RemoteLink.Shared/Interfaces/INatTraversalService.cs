@@ -8,6 +8,11 @@ namespace RemoteLink.Shared.Interfaces;
 public interface INatTraversalService
 {
     /// <summary>
+    /// Fired when a non-STUN, non-hole-punch UDP payload is received on the NAT socket.
+    /// </summary>
+    event EventHandler<NatDatagramReceivedEventArgs>? DatagramReceived;
+
+    /// <summary>
     /// Gets whether the local UDP listener is currently active.
     /// </summary>
     bool IsRunning { get; }
@@ -38,4 +43,9 @@ public interface INatTraversalService
     Task<NatTraversalConnectResult> TryConnectAsync(
         IEnumerable<NatEndpointCandidate> remoteCandidates,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a raw UDP payload through the active NAT traversal socket.
+    /// </summary>
+    Task SendDatagramAsync(string remoteIPAddress, int remotePort, byte[] payload, CancellationToken cancellationToken = default);
 }

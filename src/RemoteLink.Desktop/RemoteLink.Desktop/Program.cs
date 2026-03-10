@@ -63,7 +63,7 @@ class Program
             Port = 12346
         });
 
-        builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
+        builder.Services.AddSingleton<ICommunicationService, AdaptiveCommunicationService>();
         builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();
         builder.Services.AddSingleton<INatTraversalService, NatTraversalService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();

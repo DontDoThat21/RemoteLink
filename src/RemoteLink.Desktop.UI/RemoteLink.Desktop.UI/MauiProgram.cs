@@ -47,7 +47,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IFileTransferService, FileTransferService>();
 
         // Core shared services
-        builder.Services.AddSingleton<ICommunicationService, TcpCommunicationService>();
+        builder.Services.AddSingleton<ICommunicationService, AdaptiveCommunicationService>();
         builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();
         builder.Services.AddSingleton<INatTraversalService, NatTraversalService>();
         builder.Services.AddSingleton<IPairingService, PinPairingService>();
@@ -74,7 +74,8 @@ public static class MauiProgram
             var discovery = provider.GetRequiredService<INetworkDiscovery>();
             var natTraversal = provider.GetRequiredService<INatTraversalService>();
             var localDevice = provider.GetRequiredService<Shared.Models.DeviceInfo>();
-            return new RemoteDesktopClient(logger, discovery, null, natTraversal, localDevice);
+            Func<ICommunicationService> commFactory = () => ActivatorUtilities.CreateInstance<AdaptiveCommunicationService>(provider);
+            return new RemoteDesktopClient(logger, discovery, commFactory, natTraversal, localDevice);
         });
 
         // System tray service (minimize to tray, context menu)

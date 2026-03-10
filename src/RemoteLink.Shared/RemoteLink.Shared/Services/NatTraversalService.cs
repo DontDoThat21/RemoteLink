@@ -48,6 +48,8 @@ public sealed class NatTraversalService : INatTraversalService, IDisposable
 
     public NatDiscoveryResult? CurrentDiscovery { get; private set; }
 
+    public event EventHandler<NatDatagramReceivedEventArgs>? DatagramReceived;
+
     public async Task<NatDiscoveryResult> StartAsync(int localPort, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -72,6 +74,27 @@ public sealed class NatTraversalService : INatTraversalService, IDisposable
         {
             _lifecycleLock.Release();
         }
+    }
+
+    public async Task SendDatagramAsync(string remoteIPAddress, int remotePort, byte[] payload, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+
+        if (string.IsNullOrWhiteSpace(remoteIPAddress))
+            throw new ArgumentException("Remote IP address is required.", nameof(remoteIPAddress));
+
+        if (remotePort <= 0 || remotePort > 65535)
+            throw new ArgumentOutOfRangeException(nameof(remotePort));
+
+        if (payload is null)
+            throw new ArgumentNullException(nameof(payload));
+
+        var udpClient = _udpClient ?? throw new InvalidOperationException("NAT traversal has not been started.");
+        if (!IPAddress.TryParse(remoteIPAddress, out var address))
+            throw new ArgumentException("Remote IP address is invalid.", nameof(remoteIPAddress));
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await udpClient.SendAsync(payload, payload.Length, new IPEndPoint(address, remotePort));
     }
 
     public async Task<NatDiscoveryResult> RefreshCandidatesAsync(CancellationToken cancellationToken = default)
@@ -326,7 +349,15 @@ public sealed class NatTraversalService : INatTraversalService, IDisposable
                 if (TryHandleStunResponse(result.Buffer))
                     continue;
 
-                await HandlePunchMessageAsync(result.Buffer, result.RemoteEndPoint, cancellationToken);
+                if (await HandlePunchMessageAsync(result.Buffer, result.RemoteEndPoint, cancellationToken))
+                    continue;
+
+                DatagramReceived?.Invoke(this, new NatDatagramReceivedEventArgs
+                {
+                    RemoteIPAddress = result.RemoteEndPoint.Address.ToString(),
+                    RemotePort = result.RemoteEndPoint.Port,
+                    Payload = result.Buffer
+                });
             }
             catch (OperationCanceledException)
             {
@@ -354,7 +385,7 @@ public sealed class NatTraversalService : INatTraversalService, IDisposable
         return true;
     }
 
-    private async Task HandlePunchMessageAsync(byte[] buffer, IPEndPoint remoteEndpoint, CancellationToken cancellationToken)
+    private async Task<bool> HandlePunchMessageAsync(byte[] buffer, IPEndPoint remoteEndpoint, CancellationToken cancellationToken)
     {
         PunchMessage? message;
         try
@@ -363,11 +394,11 @@ public sealed class NatTraversalService : INatTraversalService, IDisposable
         }
         catch
         {
-            return;
+            return false;
         }
 
         if (message is null || string.IsNullOrWhiteSpace(message.SessionId))
-            return;
+            return false;
 
         if (_pendingPunches.TryGetValue(message.SessionId, out var pending))
             pending.TrySetResult(remoteEndpoint);
@@ -380,6 +411,8 @@ public sealed class NatTraversalService : INatTraversalService, IDisposable
                 IsAcknowledgement = true
             }, cancellationToken);
         }
+
+        return true;
     }
 
     private async Task SendPunchMessageAsync(IPEndPoint endpoint, PunchMessage message, CancellationToken cancellationToken)

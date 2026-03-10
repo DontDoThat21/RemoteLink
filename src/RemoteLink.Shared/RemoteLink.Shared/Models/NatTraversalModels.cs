@@ -62,6 +62,16 @@ public sealed class NatTraversalConnectResult
 }
 
 /// <summary>
+/// Raw UDP payload received through the NAT traversal socket.
+/// </summary>
+public sealed class NatDatagramReceivedEventArgs : EventArgs
+{
+    public string RemoteIPAddress { get; init; } = string.Empty;
+    public int RemotePort { get; init; }
+    public byte[] Payload { get; init; } = Array.Empty<byte>();
+}
+
+/// <summary>
 /// Configures STUN and probe behavior for NAT traversal.
 /// </summary>
 public sealed class NatTraversalOptions
