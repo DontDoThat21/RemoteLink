@@ -1245,6 +1245,64 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task SessionControl_SetImageFormat_EncodesSubsequentFrames_WhenPaired()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-format",
+            Command = SessionControlCommand.SetImageFormat,
+            ImageFormat = ScreenDataFormat.JPEG
+        });
+
+        await Task.Delay(120);
+
+        _screen.RaiseFrameCaptured(new ScreenData
+        {
+            Width = 1,
+            Height = 1,
+            Format = ScreenDataFormat.Raw,
+            Quality = 75,
+            ImageData = new byte[] { 0, 0, 0, 255 }
+        });
+
+        await Task.Delay(120);
+
+        Assert.True(_comm.SentSessionControlResponses[0].Success);
+        Assert.Equal(ScreenDataFormat.JPEG, _comm.SentSessionControlResponses[0].AppliedImageFormat);
+        Assert.NotEmpty(_comm.SentScreenData);
+        Assert.Equal(ScreenDataFormat.JPEG, _comm.SentScreenData[^1].Format);
+    }
+
+    [Fact]
+    public async Task SessionControl_SetAudioEnabled_StopsAudioCapture_WhenPaired()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        Assert.True(_audio.IsCapturing);
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-audio-off",
+            Command = SessionControlCommand.SetAudioEnabled,
+            AudioEnabled = false
+        });
+
+        await Task.Delay(120);
+
+        Assert.False(_audio.IsCapturing);
+        Assert.Equal(1, _audio.StopCallCount);
+        Assert.Equal(SessionControlCommand.SetAudioEnabled, _comm.SentSessionControlResponses[^1].Command);
+        Assert.False(_comm.SentSessionControlResponses[^1].AppliedAudioEnabled);
+    }
+
+    [Fact]
     public async Task SessionControl_IgnoredWithFailureResponse_WhenClientNotPaired()
     {
         await StartHostAsync();

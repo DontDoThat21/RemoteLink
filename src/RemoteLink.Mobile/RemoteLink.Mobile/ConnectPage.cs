@@ -40,6 +40,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private bool _showConnectionNotifications = true;
     private bool _adaptiveQualityEnabled = true;
     private float _gestureSensitivity = 1.0f;
+    private ScreenDataFormat _preferredImageFormat = ScreenDataFormat.JPEG;
+    private bool _audioStreamingEnabled;
     private bool _hasConnectedSession;
 
     // Throttle frame rendering
@@ -193,7 +195,13 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     private void OnSettingsSaved(object? sender, EventArgs e)
     {
-        MainThread.BeginInvokeOnMainThread(() => ApplySettings(_settingsService.Current));
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            ApplySettings(_settingsService.Current);
+
+            if (_client.IsConnected)
+                _ = ApplyPreferredSessionSettingsAsync(_client.ConnectedHost?.DeviceName ?? "host");
+        });
     }
 
     private void ApplySettings(AppSettings settings)
@@ -202,6 +210,10 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         _adaptiveQualityEnabled = settings.Display.EnableAdaptiveQuality;
         _selectedQuality = Math.Clamp(settings.Display.ImageQuality, 50, 85);
         _gestureSensitivity = Math.Clamp((float)settings.Input.GestureSensitivity, 0.5f, 2.0f);
+        _preferredImageFormat = settings.Display.ImageFormat == RemoteLink.Shared.Models.ImageFormat.Png
+            ? ScreenDataFormat.PNG
+            : ScreenDataFormat.JPEG;
+        _audioStreamingEnabled = settings.Audio.EnableAudio;
     }
 
     // ── Layout ─────────────────────────────────────────────────────────
@@ -1985,14 +1997,22 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     private async Task ApplyPreferredSessionSettingsAsync(string hostName)
     {
-        if (_adaptiveQualityEnabled || !_client.IsConnected)
+        if (!_client.IsConnected)
             return;
 
         try
         {
-            _selectedQuality = await _client.SetRemoteQualityAsync(_selectedQuality);
+            if (!_adaptiveQualityEnabled)
+                _selectedQuality = await _client.SetRemoteQualityAsync(_selectedQuality);
+
+            _preferredImageFormat = await _client.SetRemoteImageFormatAsync(_preferredImageFormat);
+            _audioStreamingEnabled = await _client.SetRemoteAudioEnabledAsync(_audioStreamingEnabled);
+
             MainThread.BeginInvokeOnMainThread(() =>
-                StatusMessage = $"Connected to {hostName} • Preferred quality {_selectedQuality}% applied.");
+            {
+                var qualityText = _adaptiveQualityEnabled ? "adaptive quality" : $"quality {_selectedQuality}%";
+                StatusMessage = $"Connected to {hostName} • {qualityText} • {_preferredImageFormat} • Audio {(_audioStreamingEnabled ? "on" : "off")}.";
+            });
         }
         catch (Exception ex)
         {

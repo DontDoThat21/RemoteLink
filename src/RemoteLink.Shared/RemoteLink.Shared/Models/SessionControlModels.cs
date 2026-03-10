@@ -7,7 +7,9 @@ public enum SessionControlCommand
 {
     GetMonitors,
     SelectMonitor,
-    SetQuality
+    SetQuality,
+    SetImageFormat,
+    SetAudioEnabled
 }
 
 /// <summary>
@@ -19,6 +21,8 @@ public class SessionControlRequest
     public SessionControlCommand Command { get; set; }
     public string? MonitorId { get; set; }
     public int? Quality { get; set; }
+    public ScreenDataFormat? ImageFormat { get; set; }
+    public bool? AudioEnabled { get; set; }
 }
 
 /// <summary>
@@ -33,4 +37,6 @@ public class SessionControlResponse
     public List<MonitorInfo>? Monitors { get; set; }
     public string? SelectedMonitorId { get; set; }
     public int? AppliedQuality { get; set; }
+    public ScreenDataFormat? AppliedImageFormat { get; set; }
+    public bool? AppliedAudioEnabled { get; set; }
 }

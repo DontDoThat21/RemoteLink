@@ -114,7 +114,7 @@ public class MobileSettingsPage : ContentPage
                     "Remote session quality preferences.",
                     BuildSettingRow("Adaptive quality", "Let the host adjust image quality automatically.", _adaptiveQualitySwitch),
                     BuildSliderRow("Preferred quality", "Used when adaptive quality is turned off.", _qualitySlider, _qualityValueLabel),
-                    BuildPickerRow("Image format", "Saved preference for session image encoding.", _imageFormatPicker)),
+                    BuildPickerRow("Image format", "Request JPEG or PNG frames from the host for active sessions.", _imageFormatPicker)),
                 BuildCard(
                     "Input",
                     "Touch and gesture tuning for the remote viewer.",
@@ -126,7 +126,7 @@ public class MobileSettingsPage : ContentPage
                 BuildCard(
                     "Audio",
                     "Remote audio streaming preference.",
-                    BuildSettingRow("Enable audio", "Keep remote audio playback enabled when host support is available.", _audioSwitch)),
+                    BuildSettingRow("Enable audio", "Enable or disable host audio streaming for the current device.", _audioSwitch)),
                 _feedbackLabel,
                 new Grid
                 {

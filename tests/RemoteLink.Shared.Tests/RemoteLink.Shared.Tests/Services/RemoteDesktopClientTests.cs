@@ -23,6 +23,7 @@ public class RemoteDesktopClientTests
     private sealed class FakeCommunicationService : ICommunicationService
     {
         public bool IsConnected { get; private set; }
+        public SessionControlRequest? LastSessionControlRequest { get; private set; }
 
         public event EventHandler<ScreenData>? ScreenDataReceived;
         public event EventHandler<InputEvent>? InputEventReceived;
@@ -76,7 +77,22 @@ public class RemoteDesktopClientTests
 
         public Task SendPairingResponseAsync(PairingResponse response) => Task.CompletedTask;
         public Task SendConnectionQualityAsync(ConnectionQuality quality) => Task.CompletedTask;
-        public Task SendSessionControlRequestAsync(SessionControlRequest request) => Task.CompletedTask;
+        public Task SendSessionControlRequestAsync(SessionControlRequest request)
+        {
+            LastSessionControlRequest = request;
+
+            SessionControlResponseReceived?.Invoke(this, new SessionControlResponse
+            {
+                RequestId = request.RequestId,
+                Command = request.Command,
+                Success = true,
+                AppliedQuality = request.Quality,
+                AppliedImageFormat = request.ImageFormat,
+                AppliedAudioEnabled = request.AudioEnabled
+            });
+
+            return Task.CompletedTask;
+        }
         public Task SendSessionControlResponseAsync(SessionControlResponse response) => Task.CompletedTask;
         public Task SendClipboardDataAsync(ClipboardData clipboardData) => Task.CompletedTask;
         public Task SendFileTransferRequestAsync(FileTransferRequest request) => Task.CompletedTask;
@@ -172,5 +188,57 @@ public class RemoteDesktopClientTests
 
         Assert.Null(client.CurrentConnectionQuality);
         Assert.Equal(ClientConnectionState.Disconnected, client.ConnectionState);
+    }
+
+    [Fact]
+    public async Task SetRemoteImageFormatAsync_WhenConnected_SendsSessionControlRequest()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService();
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        var host = new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+
+        Assert.True(await client.ConnectToHostAsync(host, "123456"));
+
+        var appliedFormat = await client.SetRemoteImageFormatAsync(ScreenDataFormat.PNG);
+
+        Assert.Equal(ScreenDataFormat.PNG, appliedFormat);
+        Assert.NotNull(comm.LastSessionControlRequest);
+        Assert.Equal(SessionControlCommand.SetImageFormat, comm.LastSessionControlRequest!.Command);
+        Assert.Equal(ScreenDataFormat.PNG, comm.LastSessionControlRequest.ImageFormat);
+    }
+
+    [Fact]
+    public async Task SetRemoteAudioEnabledAsync_WhenConnected_SendsSessionControlRequest()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService();
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        var host = new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+
+        Assert.True(await client.ConnectToHostAsync(host, "123456"));
+
+        var audioEnabled = await client.SetRemoteAudioEnabledAsync(false);
+
+        Assert.False(audioEnabled);
+        Assert.NotNull(comm.LastSessionControlRequest);
+        Assert.Equal(SessionControlCommand.SetAudioEnabled, comm.LastSessionControlRequest!.Command);
+        Assert.False(comm.LastSessionControlRequest.AudioEnabled);
     }
 }

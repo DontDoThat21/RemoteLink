@@ -366,6 +366,34 @@ public class RemoteDesktopClient
         return response.AppliedQuality ?? clamped;
     }
 
+    /// <summary>
+    /// Set the preferred image format on the remote host.
+    /// </summary>
+    public async Task<ScreenDataFormat> SetRemoteImageFormatAsync(ScreenDataFormat format, CancellationToken ct = default)
+    {
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.SetImageFormat,
+            request => request.ImageFormat = format,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to set remote image format.");
+        return response.AppliedImageFormat ?? format;
+    }
+
+    /// <summary>
+    /// Enable or disable remote audio streaming on the host.
+    /// </summary>
+    public async Task<bool> SetRemoteAudioEnabledAsync(bool enabled, CancellationToken ct = default)
+    {
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.SetAudioEnabled,
+            request => request.AudioEnabled = enabled,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to update remote audio streaming.");
+        return response.AppliedAudioEnabled ?? enabled;
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private void SetState(ClientConnectionState state)

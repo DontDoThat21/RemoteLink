@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.Drawing.Imaging;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
@@ -42,6 +44,9 @@ public class RemoteDesktopHost : BackgroundService
     /// The active session for the currently connected/paired client, or null when no client is connected.
     /// </summary>
     private RemoteSession? _currentSession;
+
+    private volatile ScreenDataFormat _preferredImageFormat = ScreenDataFormat.Raw;
+    private volatile bool _audioStreamingEnabled = true;
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
@@ -226,8 +231,9 @@ public class RemoteDesktopHost : BackgroundService
                     // Start clipboard monitoring for bidirectional sync
                     _ = _clipboardService.StartAsync();
 
-                    // Start audio capture and streaming
-                    _ = _audioCapture.StartAsync();
+                    // Start audio capture and streaming when enabled for the session
+                    if (_audioStreamingEnabled)
+                        _ = _audioCapture.StartAsync();
 
                     // Start session recording (creates recordings/ directory if needed)
                     var recordingPath = Path.Combine("recordings", 
@@ -349,6 +355,45 @@ public class RemoteDesktopHost : BackgroundService
                         break;
                     }
 
+                    case SessionControlCommand.SetImageFormat:
+                    {
+                        var format = request.ImageFormat ?? ScreenDataFormat.Raw;
+                        _preferredImageFormat = format;
+                        _deltaEncoder.Reset();
+
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            AppliedImageFormat = format
+                        });
+                        break;
+                    }
+
+                    case SessionControlCommand.SetAudioEnabled:
+                    {
+                        bool enabled = request.AudioEnabled ?? true;
+                        _audioStreamingEnabled = enabled;
+
+                        if (_clientPaired)
+                        {
+                            if (enabled)
+                                _ = _audioCapture.StartAsync();
+                            else
+                                _ = _audioCapture.StopAsync();
+                        }
+
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            AppliedAudioEnabled = enabled
+                        });
+                        break;
+                    }
+
                     default:
                         await _communication.SendSessionControlResponseAsync(new SessionControlResponse
                         {
@@ -408,6 +453,8 @@ public class RemoteDesktopHost : BackgroundService
             // Reset performance optimization state
             _deltaEncoder.Reset();
             _perfMonitor.Reset();
+            _preferredImageFormat = ScreenDataFormat.Raw;
+            _audioStreamingEnabled = true;
 
             // Clear chat messages
             _messagingService.ClearMessages();
@@ -445,13 +492,14 @@ public class RemoteDesktopHost : BackgroundService
             try
             {
                 var sendStartTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var frameToSend = PrepareFrameForTransmission(screenData);
 
                 // Apply adaptive quality
                 int recommendedQuality = _perfMonitor.GetRecommendedQuality();
                 _screenCapture.SetQuality(recommendedQuality);
 
                 // Apply delta encoding
-                var (encodedFrame, isDelta) = await _deltaEncoder.EncodeFrameAsync(screenData);
+                var (encodedFrame, isDelta) = await _deltaEncoder.EncodeFrameAsync(frameToSend);
 
                 // Send the optimized frame
                 await _communication.SendScreenDataAsync(encodedFrame);
@@ -488,7 +536,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private void OnAudioCaptured(object? sender, AudioData audioData)
     {
-        if (!_communication.IsConnected || !_clientPaired) return;
+        if (!_communication.IsConnected || !_clientPaired || !_audioStreamingEnabled) return;
 
         _ = Task.Run(async () =>
         {
@@ -511,6 +559,76 @@ public class RemoteDesktopHost : BackgroundService
                 _logger.LogWarning(ex, "Failed to send audio data to client");
             }
         });
+    }
+
+    private ScreenData PrepareFrameForTransmission(ScreenData screenData)
+    {
+        var preferredFormat = _preferredImageFormat;
+        if (preferredFormat == ScreenDataFormat.Raw || screenData.Format == preferredFormat)
+            return screenData;
+
+        if (screenData.Format != ScreenDataFormat.Raw)
+            return screenData;
+
+        if (!OperatingSystem.IsWindows())
+            return screenData;
+
+        try
+        {
+            var encodedBytes = EncodeRawFrame(screenData, preferredFormat, screenData.Quality);
+            if (encodedBytes.Length == 0)
+                return screenData;
+
+            return new ScreenData
+            {
+                FrameId = screenData.FrameId,
+                Timestamp = screenData.Timestamp,
+                Width = screenData.Width,
+                Height = screenData.Height,
+                Format = preferredFormat,
+                Quality = screenData.Quality,
+                ImageData = encodedBytes
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to encode frame as {Format}; falling back to raw", preferredFormat);
+            return screenData;
+        }
+    }
+
+    private static byte[] EncodeRawFrame(ScreenData screenData, ScreenDataFormat format, int quality)
+    {
+        using var bitmap = new Bitmap(screenData.Width, screenData.Height, PixelFormat.Format32bppArgb);
+        var bounds = new Rectangle(0, 0, screenData.Width, screenData.Height);
+        var bitmapData = bitmap.LockBits(bounds, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+
+        try
+        {
+            Marshal.Copy(screenData.ImageData, 0, bitmapData.Scan0, screenData.ImageData.Length);
+        }
+        finally
+        {
+            bitmap.UnlockBits(bitmapData);
+        }
+
+        using var stream = new MemoryStream();
+        if (format == ScreenDataFormat.PNG)
+        {
+            bitmap.Save(stream, ImageFormat.Png);
+        }
+        else
+        {
+            var codec = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
+            if (codec == null)
+                throw new InvalidOperationException("JPEG encoder not available.");
+
+            using var parameters = new EncoderParameters(1);
+            parameters.Param[0] = new EncoderParameter(Encoder.Quality, (long)Math.Clamp(quality, 1, 100));
+            bitmap.Save(stream, codec, parameters);
+        }
+
+        return stream.ToArray();
     }
 
     /// <summary>
