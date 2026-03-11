@@ -38,6 +38,54 @@ internal sealed class FakeSystemPowerService : ISystemPowerService
         return Task.CompletedTask;
     }
 }
+
+internal sealed class FakeRemoteSystemInfoProvider : IRemoteSystemInfoProvider
+{
+    public RemoteSystemInfo Snapshot { get; set; } = new()
+    {
+        MachineName = "TestHost",
+        OperatingSystem = "Windows 11",
+        OsArchitecture = "X64",
+        FrameworkDescription = ".NET 10.0",
+        ProcessorName = "Test CPU",
+        LogicalProcessorCount = 8,
+        TotalMemoryBytes = 16L * 1024 * 1024 * 1024,
+        AvailableMemoryBytes = 10L * 1024 * 1024 * 1024,
+        UptimeSeconds = 7200,
+        Disks =
+        {
+            new RemoteDiskInfo
+            {
+                Name = "C:\\",
+                VolumeLabel = "System",
+                DriveFormat = "NTFS",
+                DriveType = "Fixed",
+                TotalSizeBytes = 500L * 1024 * 1024 * 1024,
+                AvailableFreeSpaceBytes = 200L * 1024 * 1024 * 1024
+            }
+        },
+        NetworkInterfaces =
+        {
+            new RemoteNetworkInterfaceInfo
+            {
+                Name = "Ethernet",
+                Description = "Ethernet Adapter",
+                InterfaceType = "Ethernet",
+                OperationalStatus = "Up",
+                MacAddress = "00:11:22:33:44:55",
+                IPv4Addresses = { "192.168.1.10" }
+            }
+        }
+    };
+
+    public int CallCount { get; private set; }
+
+    public Task<RemoteSystemInfo> GetSystemInfoAsync(CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        return Task.FromResult(Snapshot);
+    }
+}
     public List<InputEvent> SentInputEvents
     {
         get { lock (_lock) { return new List<InputEvent>(_sentInputEvents); } }
@@ -997,6 +1045,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeConnectionRequestNotificationPublisher _notificationPublisher = new();
     private readonly FakeUserAccountService _userAccount = new();
     private readonly FakeAppSettingsService _settings = new();
+    private readonly FakeRemoteSystemInfoProvider _systemInfoProvider = new();
     private readonly FakeSystemPowerService _systemPower = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly RemoteDesktopHost _host;
@@ -1022,6 +1071,7 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _notificationPublisher,
             userAccountService: _userAccount,
             appSettingsService: _settings,
+            systemInfoProvider: _systemInfoProvider,
             systemPowerService: _systemPower,
             utcNow: () => _utcNow);
     }
@@ -1973,6 +2023,32 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         Assert.Single(_comm.SentSessionControlResponses);
         Assert.True(_comm.SentSessionControlResponses[0].Success);
         Assert.Equal("fake-monitor", _comm.SentSessionControlResponses[0].SelectedMonitorId);
+    }
+
+    [Fact]
+    public async Task SessionControl_GetSystemInformation_ReturnsSnapshot_WhenPaired()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        _comm.RaiseSessionControlRequest(new SessionControlRequest
+        {
+            RequestId = "req-system-info",
+            Command = SessionControlCommand.GetSystemInformation
+        });
+
+        await Task.Delay(120);
+
+        Assert.Equal(1, _systemInfoProvider.CallCount);
+        Assert.Single(_comm.SentSessionControlResponses);
+
+        var response = _comm.SentSessionControlResponses[0];
+        Assert.True(response.Success);
+        Assert.NotNull(response.SystemInfo);
+        Assert.Equal("TestHost", response.SystemInfo!.MachineName);
+        Assert.Equal("Test CPU", response.SystemInfo.ProcessorName);
+        Assert.Single(response.SystemInfo.Disks);
+        Assert.Single(response.SystemInfo.NetworkInterfaces);
     }
 
     [Fact]

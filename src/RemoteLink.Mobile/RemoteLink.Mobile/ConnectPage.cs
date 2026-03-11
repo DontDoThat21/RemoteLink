@@ -432,6 +432,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         var qualityButton = BuildSessionActionButton("📊 Quality", OnQualityClicked);
         _monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
+        var systemInfoButton = BuildSessionActionButton("ℹ Info", OnSystemInfoClicked, ThemeColors.Info);
         var rebootButton = BuildSessionActionButton("↻ Reboot", OnRemoteRebootClicked, ThemeColors.WarningText);
         var disconnectButton = BuildSessionActionButton("✕ Disconnect", OnToolbarDisconnectClicked, ThemeColors.Danger);
         disconnectButton.TextColor = Colors.White;
@@ -475,6 +476,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                                 _specialKeysToggleButton,
                                 qualityButton,
                                 _monitorButton,
+                                 systemInfoButton,
                                 rebootButton,
                                 disconnectButton
                             }

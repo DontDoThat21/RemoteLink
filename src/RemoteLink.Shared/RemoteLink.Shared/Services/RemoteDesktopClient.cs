@@ -89,6 +89,9 @@ public class RemoteDesktopClient
     /// <summary>The latest connection quality metrics received from the connected host.</summary>
     public ConnectionQuality? CurrentConnectionQuality { get; private set; }
 
+    /// <summary>The latest remote system information snapshot retrieved from the connected host.</summary>
+    public RemoteSystemInfo? CurrentRemoteSystemInfo { get; private set; }
+
     /// <summary>The effective permission set granted by the connected host.</summary>
     public SessionPermissionSet? CurrentSessionPermissions { get; private set; }
 
@@ -401,6 +404,7 @@ public class RemoteDesktopClient
         _pairingTcs = null;
         CancelPendingSessionControlRequests();
         CurrentConnectionQuality = null;
+        CurrentRemoteSystemInfo = null;
         CurrentSessionPermissions = null;
         IsPresentationSession = false;
 
@@ -481,6 +485,27 @@ public class RemoteDesktopClient
 
         EnsureSuccessfulSessionControlResponse(response, "Failed to retrieve remote monitors.");
         return (response.Monitors ?? new List<MonitorInfo>(), response.SelectedMonitorId);
+    }
+
+    /// <summary>
+    /// Fetch a point-in-time system information snapshot from the remote host.
+    /// </summary>
+    public async Task<RemoteSystemInfo> GetRemoteSystemInfoAsync(CancellationToken ct = default)
+    {
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.GetSystemInformation,
+            configure: null,
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to retrieve remote system information.");
+        CurrentRemoteSystemInfo = response.SystemInfo
+            ?? throw new InvalidOperationException("The host did not return remote system information.");
+
+        return CurrentRemoteSystemInfo;
     }
 
     /// <summary>

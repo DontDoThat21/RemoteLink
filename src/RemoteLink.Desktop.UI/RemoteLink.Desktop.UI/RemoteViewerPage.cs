@@ -84,6 +84,18 @@ public class RemoteViewerPage : ContentPage
         };
         rebootButton.Clicked += OnRemoteRebootClicked;
 
+        var systemInfoButton = new Button
+        {
+            Text = "System Info",
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
+            CornerRadius = 4,
+            HeightRequest = 32,
+            FontSize = 12,
+            Padding = new Thickness(12, 0),
+        };
+        systemInfoButton.Clicked += OnSystemInfoClicked;
+
         var disconnectButton = new Button
         {
             Text = "Disconnect",
@@ -106,6 +118,7 @@ public class RemoteViewerPage : ContentPage
                 new ColumnDefinition(GridLength.Auto),    // host name
                 new ColumnDefinition(GridLength.Auto),    // FPS
                 new ColumnDefinition(GridLength.Auto),    // latency
+                new ColumnDefinition(GridLength.Auto),    // system info
                 new ColumnDefinition(GridLength.Auto),    // reboot
                 new ColumnDefinition(GridLength.Star),    // spacer
                 new ColumnDefinition(GridLength.Auto),    // disconnect
@@ -115,8 +128,9 @@ public class RemoteViewerPage : ContentPage
                 CreateGridChild(_hostNameLabel, column: 0),
                 CreateGridChild(_fpsLabel, column: 1),
                 CreateGridChild(_latencyLabel, column: 2),
-                CreateGridChild(rebootButton, column: 3),
-                CreateGridChild(disconnectButton, column: 5),
+                CreateGridChild(systemInfoButton, column: 3),
+                CreateGridChild(rebootButton, column: 4),
+                CreateGridChild(disconnectButton, column: 6),
             }
         };
 

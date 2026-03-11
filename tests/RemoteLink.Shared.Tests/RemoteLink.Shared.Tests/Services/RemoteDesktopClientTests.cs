@@ -393,6 +393,80 @@ public class RemoteDesktopClientTests
     }
 
     [Fact]
+    public async Task GetRemoteSystemInfoAsync_WhenConnected_ReturnsSystemInfoSnapshot()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService
+        {
+            SessionControlResponseToSend = new SessionControlResponse
+            {
+                Success = true,
+                SystemInfo = new RemoteSystemInfo
+                {
+                    MachineName = "Host-1",
+                    OperatingSystem = "Windows 11",
+                    ProcessorName = "Ryzen Test",
+                    LogicalProcessorCount = 16,
+                    TotalMemoryBytes = 32L * 1024 * 1024 * 1024,
+                    AvailableMemoryBytes = 20L * 1024 * 1024 * 1024,
+                    UptimeSeconds = 3600
+                }
+            }
+        };
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        var host = new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        };
+
+        Assert.True(await client.ConnectToHostAsync(host, "123456"));
+
+        var info = await client.GetRemoteSystemInfoAsync();
+
+        Assert.NotNull(comm.LastSessionControlRequest);
+        Assert.Equal(SessionControlCommand.GetSystemInformation, comm.LastSessionControlRequest!.Command);
+        Assert.Equal("Host-1", info.MachineName);
+        Assert.Equal("Ryzen Test", info.ProcessorName);
+        Assert.Same(info, client.CurrentRemoteSystemInfo);
+    }
+
+    [Fact]
+    public async Task DisconnectAsync_ClearsCurrentRemoteSystemInfo()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService
+        {
+            SessionControlResponseToSend = new SessionControlResponse
+            {
+                Success = true,
+                SystemInfo = new RemoteSystemInfo { MachineName = "Host-1" }
+            }
+        };
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        Assert.True(await client.ConnectToHostAsync(new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        }, "123456"));
+
+        await client.GetRemoteSystemInfoAsync();
+        Assert.NotNull(client.CurrentRemoteSystemInfo);
+
+        await client.DisconnectAsync();
+
+        Assert.Null(client.CurrentRemoteSystemInfo);
+    }
+
+    [Fact]
     public async Task SetRemoteImageFormatAsync_WhenConnected_SendsSessionControlRequest()
     {
         var discovery = new FakeNetworkDiscovery();

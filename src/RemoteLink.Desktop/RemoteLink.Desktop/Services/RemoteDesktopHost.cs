@@ -41,6 +41,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly DeviceInfo? _localDevice;
     private readonly IUserAccountService? _userAccountService;
     private readonly IAppSettingsService? _appSettingsService;
+    private readonly IRemoteSystemInfoProvider _systemInfoProvider;
     private readonly ISystemPowerService _systemPowerService;
     private readonly Func<DateTime> _utcNow;
     private readonly object _auditLock = new();
@@ -102,6 +103,7 @@ public class RemoteDesktopHost : BackgroundService
         DeviceInfo? localDevice = null,
         IUserAccountService? userAccountService = null,
         IAppSettingsService? appSettingsService = null,
+        IRemoteSystemInfoProvider? systemInfoProvider = null,
         ISystemPowerService? systemPowerService = null,
         Func<DateTime>? utcNow = null)
     {
@@ -124,6 +126,7 @@ public class RemoteDesktopHost : BackgroundService
         _localDevice = localDevice;
         _userAccountService = userAccountService;
         _appSettingsService = appSettingsService;
+        _systemInfoProvider = systemInfoProvider ?? new SystemInfoProvider();
         _systemPowerService = systemPowerService ?? new SystemPowerService();
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
@@ -727,6 +730,20 @@ public class RemoteDesktopHost : BackgroundService
                             SelectedMonitorId = _screenCapture.GetSelectedMonitorId()
                         });
                         AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, "Returned remote monitor list.");
+                        break;
+                    }
+
+                    case SessionControlCommand.GetSystemInformation:
+                    {
+                        var systemInfo = await _systemInfoProvider.GetSystemInfoAsync();
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            SystemInfo = systemInfo
+                        });
+                        AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, "Returned remote system information snapshot.");
                         break;
                     }
 

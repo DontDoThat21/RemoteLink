@@ -6,6 +6,7 @@ namespace RemoteLink.Shared.Models;
 public enum SessionControlCommand
 {
     GetMonitors,
+    GetSystemInformation,
     SelectMonitor,
     SetQuality,
     SetImageFormat,
