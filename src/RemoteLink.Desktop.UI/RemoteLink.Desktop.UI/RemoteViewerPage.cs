@@ -1,8 +1,15 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
+using System.Collections.Concurrent;
 using System.Text;
+#if WINDOWS
+using Microsoft.UI.Xaml;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+#endif
 
 namespace RemoteLink.Desktop.UI;
 
@@ -28,6 +35,8 @@ public class RemoteViewerPage : ContentPage
     private readonly Label _latencyLabel;
     private readonly Label _resolutionLabel;
     private readonly Label _qualityLabel;
+    private readonly Label _transferStatusLabel;
+    private readonly Border _dropOverlay;
 
     // Keyboard capture
     private readonly Entry _keyCapture;
@@ -39,6 +48,12 @@ public class RemoteViewerPage : ContentPage
 
     // Track if we initiated the disconnect (vs. remote drop)
     private bool _isDisconnecting;
+    private ICommunicationService? _boundCommunicationService;
+    private IFileTransferService? _fileTransferService;
+    private readonly ConcurrentDictionary<string, string> _pendingTransferNames = new(StringComparer.OrdinalIgnoreCase);
+#if WINDOWS
+    private FrameworkElement? _nativeDropTarget;
+#endif
 
     public RemoteViewerPage(RemoteDesktopClient client, ILogger<RemoteViewerPage> logger)
         : this(client, logger, null)
@@ -167,6 +182,7 @@ public class RemoteViewerPage : ContentPage
             VerticalOptions = LayoutOptions.Fill,
             Aspect = Aspect.AspectFit,
         };
+        _remoteViewer.HandlerChanged += OnRemoteViewerHandlerChanged;
 
         // Mouse input via pointer gestures on the viewer
         var pointerGesture = new PointerGestureRecognizer();
@@ -209,19 +225,75 @@ public class RemoteViewerPage : ContentPage
             HorizontalOptions = LayoutOptions.End,
         };
 
+        _transferStatusLabel = new Label
+        {
+            Text = "Drag files into the viewer to transfer",
+            FontSize = 10,
+            TextColor = ThemeColors.ViewerResolutionText,
+            VerticalOptions = LayoutOptions.Center,
+            HorizontalTextAlignment = TextAlignment.Center,
+            LineBreakMode = LineBreakMode.TailTruncation
+        };
+
+        _dropOverlay = new Border
+        {
+            IsVisible = false,
+            InputTransparent = true,
+            BackgroundColor = Color.FromRgba(81, 43, 212, 96),
+            Stroke = Colors.White,
+            StrokeThickness = 2,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Margin = new Thickness(24),
+            Content = new VerticalStackLayout
+            {
+                Spacing = 8,
+                VerticalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Center,
+                Children =
+                {
+                    new Label
+                    {
+                        Text = "Drop files to send",
+                        FontSize = 22,
+                        FontAttributes = FontAttributes.Bold,
+                        TextColor = Colors.White,
+                        HorizontalTextAlignment = TextAlignment.Center
+                    },
+                    new Label
+                    {
+                        Text = "Files will upload to the connected remote host.",
+                        FontSize = 13,
+                        TextColor = Colors.White,
+                        HorizontalTextAlignment = TextAlignment.Center
+                    }
+                }
+            }
+        };
+
+        var viewerSurface = new Grid
+        {
+            Children =
+            {
+                _remoteViewer,
+                _dropOverlay
+            }
+        };
+
         var statusBar = new Grid
         {
             BackgroundColor = ThemeColors.ViewerStatusBar,
             Padding = new Thickness(12, 4),
             ColumnDefinitions =
             {
+                new ColumnDefinition(GridLength.Auto),
                 new ColumnDefinition(GridLength.Star),
                 new ColumnDefinition(GridLength.Auto),
             },
             Children =
             {
                 CreateGridChild(_resolutionLabel, column: 0),
-                CreateGridChild(_qualityLabel, column: 1),
+                CreateGridChild(_transferStatusLabel, column: 1),
+                CreateGridChild(_qualityLabel, column: 2),
             }
         };
 
@@ -238,7 +310,7 @@ public class RemoteViewerPage : ContentPage
             Children =
             {
                 CreateGridChild(toolbar, row: 0),
-                CreateGridChild(_remoteViewer, row: 1),
+                CreateGridChild(viewerSurface, row: 1),
                 CreateGridChild(_keyCapture, row: 2),
                 CreateGridChild(statusBar, row: 3),
             }
@@ -255,6 +327,7 @@ public class RemoteViewerPage : ContentPage
 
         // Focus the hidden entry to capture keyboard input
         _keyCapture.Focus();
+        EnsureFileTransferService();
 
         // Start metrics timer
         _metricsTimer = Dispatcher.CreateTimer();
@@ -270,6 +343,8 @@ public class RemoteViewerPage : ContentPage
         // Stop metrics
         _metricsTimer?.Stop();
         _metricsTimer = null;
+        DetachFileTransferService();
+        HideDropOverlay();
 
         // Unsubscribe events
         _client.ScreenDataReceived -= OnScreenDataReceived;
@@ -511,6 +586,11 @@ public class RemoteViewerPage : ContentPage
 
     private void OnConnectionStateChanged(object? sender, ClientConnectionState state)
     {
+        if (state == ClientConnectionState.Connected)
+            EnsureFileTransferService();
+        else if (state == ClientConnectionState.Disconnected)
+            DetachFileTransferService();
+
         if (state == ClientConnectionState.Disconnected && !_isDisconnecting)
         {
             if (_client.IsAutoReconnectPending)
@@ -527,6 +607,203 @@ public class RemoteViewerPage : ContentPage
             });
         }
     }
+
+    private void EnsureFileTransferService()
+    {
+        var communicationService = _client.CurrentCommunicationService;
+        if (!_client.IsConnected || communicationService is null)
+            return;
+
+        if (ReferenceEquals(_boundCommunicationService, communicationService) && _fileTransferService is not null)
+            return;
+
+        DetachFileTransferService();
+
+        _boundCommunicationService = communicationService;
+        _fileTransferService = new FileTransferService(NullLogger<FileTransferService>.Instance, communicationService);
+        _fileTransferService.TransferResponseReceived += OnTransferResponseReceived;
+        _fileTransferService.ProgressUpdated += OnTransferProgressUpdated;
+        _fileTransferService.TransferCompleted += OnTransferCompleted;
+    }
+
+    private void DetachFileTransferService()
+    {
+        if (_fileTransferService is not null)
+        {
+            _fileTransferService.TransferResponseReceived -= OnTransferResponseReceived;
+            _fileTransferService.ProgressUpdated -= OnTransferProgressUpdated;
+            _fileTransferService.TransferCompleted -= OnTransferCompleted;
+        }
+
+        _fileTransferService = null;
+        _boundCommunicationService = null;
+        _pendingTransferNames.Clear();
+    }
+
+    private void OnTransferResponseReceived(object? sender, FileTransferResponse response)
+    {
+        var fileName = _pendingTransferNames.GetValueOrDefault(response.TransferId, "file");
+        UpdateTransferStatus(
+            response.Accepted
+                ? $"Remote host accepted {fileName}"
+                : $"Transfer rejected for {fileName}",
+            response.Accepted ? ThemeColors.Warning : ThemeColors.Danger);
+    }
+
+    private void OnTransferProgressUpdated(object? sender, FileTransferProgress progress)
+    {
+        var fileName = _pendingTransferNames.GetValueOrDefault(progress.TransferId, "file");
+        UpdateTransferStatus(
+            $"Sending {fileName} — {progress.PercentComplete:0}%",
+            ThemeColors.Warning);
+    }
+
+    private void OnTransferCompleted(object? sender, FileTransferComplete complete)
+    {
+        var fileName = _pendingTransferNames.TryRemove(complete.TransferId, out var name)
+            ? name
+            : "file";
+
+        UpdateTransferStatus(
+            complete.Success
+                ? $"Sent {fileName}"
+                : $"Transfer failed for {fileName}",
+            complete.Success ? ThemeColors.Success : ThemeColors.Danger);
+    }
+
+    private void UpdateTransferStatus(string status, Color color)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _transferStatusLabel.Text = status;
+            _transferStatusLabel.TextColor = color;
+        });
+    }
+
+    private void ShowDropOverlay()
+    {
+        MainThread.BeginInvokeOnMainThread(() => _dropOverlay.IsVisible = true);
+    }
+
+    private void HideDropOverlay()
+    {
+        MainThread.BeginInvokeOnMainThread(() => _dropOverlay.IsVisible = false);
+    }
+
+    private async Task StartDroppedFilesTransferAsync(IReadOnlyList<string> filePaths)
+    {
+        if (!_client.IsConnected)
+        {
+            UpdateTransferStatus("Connect to a host before sending files", ThemeColors.Danger);
+            return;
+        }
+
+        if (_client.CurrentSessionPermissions?.AllowFileTransfer == false)
+        {
+            UpdateTransferStatus("File transfer is disabled for this session", ThemeColors.Danger);
+            return;
+        }
+
+        EnsureFileTransferService();
+        if (_fileTransferService is null)
+        {
+            UpdateTransferStatus("File transfer is unavailable for this connection", ThemeColors.Danger);
+            return;
+        }
+
+        var queuedCount = 0;
+
+        foreach (var path in filePaths.Where(File.Exists))
+        {
+            try
+            {
+                var fileName = Path.GetFileName(path);
+                var transferId = await _fileTransferService.InitiateTransferAsync(path, FileTransferDirection.Upload);
+                _pendingTransferNames[transferId] = fileName;
+                queuedCount++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to queue dropped file {Path}", path);
+            }
+        }
+
+        if (queuedCount > 0)
+        {
+            var targetName = _client.ConnectedHost?.DeviceName ?? "remote host";
+            UpdateTransferStatus(
+                queuedCount == 1
+                    ? $"Queued 1 file for {targetName}"
+                    : $"Queued {queuedCount} files for {targetName}",
+                ThemeColors.Warning);
+        }
+        else
+        {
+            UpdateTransferStatus("Only local files can be dropped into the viewer", ThemeColors.Danger);
+        }
+    }
+
+#if WINDOWS
+    private void OnRemoteViewerHandlerChanged(object? sender, EventArgs e)
+    {
+        if (_nativeDropTarget is not null)
+        {
+            _nativeDropTarget.DragOver -= OnNativeViewerDragOver;
+            _nativeDropTarget.DragLeave -= OnNativeViewerDragLeave;
+            _nativeDropTarget.Drop -= OnNativeViewerDrop;
+        }
+
+        _nativeDropTarget = _remoteViewer.Handler?.PlatformView as FrameworkElement;
+        if (_nativeDropTarget is null)
+            return;
+
+        _nativeDropTarget.AllowDrop = true;
+        _nativeDropTarget.DragOver += OnNativeViewerDragOver;
+        _nativeDropTarget.DragLeave += OnNativeViewerDragLeave;
+        _nativeDropTarget.Drop += OnNativeViewerDrop;
+    }
+
+    private void OnNativeViewerDragOver(object sender, DragEventArgs e)
+    {
+        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation = DataPackageOperation.Copy;
+            e.DragUIOverride.Caption = "Send files to the remote host";
+            e.DragUIOverride.IsCaptionVisible = true;
+            ShowDropOverlay();
+            return;
+        }
+
+        e.AcceptedOperation = DataPackageOperation.None;
+        HideDropOverlay();
+    }
+
+    private void OnNativeViewerDragLeave(object sender, DragEventArgs e)
+    {
+        HideDropOverlay();
+    }
+
+    private async void OnNativeViewerDrop(object sender, DragEventArgs e)
+    {
+        HideDropOverlay();
+
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+            return;
+
+        var storageItems = await e.DataView.GetStorageItemsAsync();
+        var filePaths = storageItems
+            .Where(item => item.IsOfType(StorageItemTypes.File) && !string.IsNullOrWhiteSpace(item.Path))
+            .Select(item => item.Path)
+            .Where(File.Exists)
+            .ToList();
+
+        await StartDroppedFilesTransferAsync(filePaths);
+    }
+#else
+    private void OnRemoteViewerHandlerChanged(object? sender, EventArgs e)
+    {
+    }
+#endif
 
     private async void OnDisconnectClicked(object? sender, EventArgs e)
     {

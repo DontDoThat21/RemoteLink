@@ -35,6 +35,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IAudioCaptureService _audioCapture;
     private readonly ISessionRecorder _sessionRecorder;
     private readonly IMessagingService _messagingService;
+    private readonly IFileTransferService _fileTransferService;
     private readonly IConnectionRequestNotificationPublisher? _connectionRequestNotificationPublisher;
     private readonly INatTraversalService? _natTraversalService;
     private readonly ISignalingService? _signalingService;
@@ -44,6 +45,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IRemoteSystemInfoProvider _systemInfoProvider;
     private readonly IRemoteCommandExecutor _remoteCommandExecutor;
     private readonly ISystemPowerService _systemPowerService;
+    private readonly Func<string> _incomingFileDirectoryFactory;
     private readonly Func<DateTime> _utcNow;
     private readonly object _auditLock = new();
 
@@ -98,6 +100,7 @@ public class RemoteDesktopHost : BackgroundService
         IAudioCaptureService audioCapture,
         ISessionRecorder sessionRecorder,
         IMessagingService messagingService,
+        IFileTransferService fileTransferService,
         IConnectionRequestNotificationPublisher? connectionRequestNotificationPublisher = null,
         INatTraversalService? natTraversalService = null,
         ISignalingService? signalingService = null,
@@ -107,6 +110,7 @@ public class RemoteDesktopHost : BackgroundService
         IRemoteSystemInfoProvider? systemInfoProvider = null,
         IRemoteCommandExecutor? remoteCommandExecutor = null,
         ISystemPowerService? systemPowerService = null,
+        Func<string>? incomingFileDirectoryFactory = null,
         Func<DateTime>? utcNow = null)
     {
         _logger = logger;
@@ -122,6 +126,7 @@ public class RemoteDesktopHost : BackgroundService
         _audioCapture = audioCapture;
         _sessionRecorder = sessionRecorder;
         _messagingService = messagingService;
+        _fileTransferService = fileTransferService;
         _connectionRequestNotificationPublisher = connectionRequestNotificationPublisher;
         _natTraversalService = natTraversalService;
         _signalingService = signalingService;
@@ -131,6 +136,7 @@ public class RemoteDesktopHost : BackgroundService
         _systemInfoProvider = systemInfoProvider ?? new SystemInfoProvider();
         _remoteCommandExecutor = remoteCommandExecutor ?? new RemoteCommandExecutor();
         _systemPowerService = systemPowerService ?? new SystemPowerService();
+        _incomingFileDirectoryFactory = incomingFileDirectoryFactory ?? GetDefaultIncomingFileDirectory;
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
 
@@ -195,6 +201,10 @@ public class RemoteDesktopHost : BackgroundService
 
             // Wire messaging: log received messages for debugging
             _messagingService.MessageReceived += OnMessageReceived;
+
+            // Wire file transfer requests: accept incoming uploads for the active paired session
+            _fileTransferService.TransferRequested += OnFileTransferRequested;
+            _fileTransferService.TransferCompleted += OnFileTransferCompleted;
 
             // Start TCP listener
             await _communication.StartAsync(HostPort);
@@ -267,6 +277,8 @@ public class RemoteDesktopHost : BackgroundService
             _communication.ClipboardDataReceived -= OnClipboardDataReceived;
             _audioCapture.AudioCaptured -= OnAudioCaptured;
             _messagingService.MessageReceived -= OnMessageReceived;
+            _fileTransferService.TransferRequested -= OnFileTransferRequested;
+            _fileTransferService.TransferCompleted -= OnFileTransferCompleted;
 
             await FinalizeCurrentAuditLogEntryAsync("Host service stopped.");
 

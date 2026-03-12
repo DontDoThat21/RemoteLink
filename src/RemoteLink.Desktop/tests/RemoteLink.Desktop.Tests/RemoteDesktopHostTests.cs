@@ -3,6 +3,7 @@ using RemoteLink.Desktop.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
+using System.Text;
 
 namespace RemoteLink.Desktop.Tests;
 
@@ -20,6 +21,8 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     private readonly List<ConnectionQuality> _sentConnectionQuality = new();
     private readonly List<SessionControlResponse> _sentSessionControlResponses = new();
     private readonly List<ClipboardData> _sentClipboardData = new();
+    private readonly List<FileTransferResponse> _sentFileTransferResponses = new();
+    private readonly List<FileTransferComplete> _sentFileTransferCompletes = new();
     private readonly List<ChatMessage> _sentChatMessages = new();
     private readonly List<string> _sentMessageReadAcks = new();
 
@@ -105,6 +108,14 @@ internal sealed class FakeRemoteSystemInfoProvider : IRemoteSystemInfoProvider
     public List<ClipboardData> SentClipboardData
     {
         get { lock (_lock) { return new List<ClipboardData>(_sentClipboardData); } }
+    }
+    public List<FileTransferResponse> SentFileTransferResponses
+    {
+        get { lock (_lock) { return new List<FileTransferResponse>(_sentFileTransferResponses); } }
+    }
+    public List<FileTransferComplete> SentFileTransferCompletes
+    {
+        get { lock (_lock) { return new List<FileTransferComplete>(_sentFileTransferCompletes); } }
     }
     public List<ChatMessage> SentChatMessages
     {
@@ -195,9 +206,17 @@ internal sealed class FakeRemoteSystemInfoProvider : IRemoteSystemInfoProvider
     public Task SendAudioDataAsync(AudioData audioData) => Task.CompletedTask;
 
     public Task SendFileTransferRequestAsync(FileTransferRequest request) => Task.CompletedTask;
-    public Task SendFileTransferResponseAsync(FileTransferResponse response) => Task.CompletedTask;
+    public Task SendFileTransferResponseAsync(FileTransferResponse response)
+    {
+        lock (_lock) { _sentFileTransferResponses.Add(response); }
+        return Task.CompletedTask;
+    }
     public Task SendFileTransferChunkAsync(FileTransferChunk chunk) => Task.CompletedTask;
-    public Task SendFileTransferCompleteAsync(FileTransferComplete complete) => Task.CompletedTask;
+    public Task SendFileTransferCompleteAsync(FileTransferComplete complete)
+    {
+        lock (_lock) { _sentFileTransferCompletes.Add(complete); }
+        return Task.CompletedTask;
+    }
 
     public Task SendChatMessageAsync(ChatMessage message)
     {
@@ -237,6 +256,12 @@ internal sealed class FakeRemoteSystemInfoProvider : IRemoteSystemInfoProvider
 
     public void RaiseClipboardDataReceived(ClipboardData clipboardData)
         => ClipboardDataReceived?.Invoke(this, clipboardData);
+
+    public void RaiseFileTransferRequest(FileTransferRequest request)
+        => FileTransferRequestReceived?.Invoke(this, request);
+
+    public void RaiseFileTransferChunk(FileTransferChunk chunk)
+        => FileTransferChunkReceived?.Invoke(this, chunk);
 
     public void Dispose() { }
 }
@@ -1048,12 +1073,15 @@ public class RemoteDesktopHostTests : IAsyncDisposable
     private readonly FakeRemoteSystemInfoProvider _systemInfoProvider = new();
     private readonly FakeSystemPowerService _systemPower = new();
     private readonly CancellationTokenSource _cts = new();
+    private readonly string _incomingFileDirectory = Path.Combine(Path.GetTempPath(), $"RemoteLinkHostTests_{Guid.NewGuid():N}");
+    private readonly IFileTransferService _fileTransferService;
     private readonly RemoteDesktopHost _host;
     private Task? _hostTask;
     private DateTime _utcNow = new(2026, 03, 10, 12, 0, 0, DateTimeKind.Utc);
 
     public RemoteDesktopHostTests()
     {
+        _fileTransferService = new FileTransferService(NullLogger<FileTransferService>.Instance, _comm);
         _host = new RemoteDesktopHost(
             NullLogger<RemoteDesktopHost>.Instance,
             _discovery,
@@ -1068,11 +1096,13 @@ public class RemoteDesktopHostTests : IAsyncDisposable
             _audioCapture,
             _recorder,
             _messaging,
+            _fileTransferService,
             _notificationPublisher,
             userAccountService: _userAccount,
             appSettingsService: _settings,
             systemInfoProvider: _systemInfoProvider,
             systemPowerService: _systemPower,
+            incomingFileDirectoryFactory: () => _incomingFileDirectory,
             utcNow: () => _utcNow);
     }
 
@@ -2149,6 +2179,70 @@ public class RemoteDesktopHostTests : IAsyncDisposable
         Assert.Equal("Client is not paired.", _comm.SentSessionControlResponses[0].ErrorMessage);
     }
 
+    [Fact]
+    public async Task IncomingFileTransfer_IsAcceptedAndSaved_WhenClientIsPaired()
+    {
+        await StartHostAsync();
+        await SimulatePairingAsync();
+
+        var request = new FileTransferRequest
+        {
+            TransferId = "transfer-1",
+            FileName = "dragdrop.txt",
+            FileSize = 11,
+            Direction = FileTransferDirection.Upload,
+            MimeType = "text/plain"
+        };
+
+        _comm.RaiseFileTransferRequest(request);
+        await Task.Delay(120);
+
+        var response = Assert.Single(_comm.SentFileTransferResponses);
+        Assert.True(response.Accepted);
+        Assert.Equal(request.TransferId, response.TransferId);
+
+        var payload = Encoding.UTF8.GetBytes("hello world");
+        _comm.RaiseFileTransferChunk(new FileTransferChunk
+        {
+            TransferId = request.TransferId,
+            Offset = 0,
+            Length = payload.Length,
+            Data = payload,
+            IsLastChunk = true
+        });
+
+        await Task.Delay(120);
+
+        var complete = Assert.Single(_comm.SentFileTransferCompletes);
+        Assert.True(complete.Success);
+        Assert.NotNull(complete.SavedPath);
+        Assert.True(File.Exists(complete.SavedPath));
+        Assert.Equal("hello world", await File.ReadAllTextAsync(complete.SavedPath!));
+    }
+
+    [Fact]
+    public async Task IncomingFileTransfer_IsRejected_WhenClientIsNotPaired()
+    {
+        await StartHostAsync();
+        _comm.RaiseConnectionStateChanged(connected: true);
+        await Task.Delay(60);
+
+        _comm.RaiseFileTransferRequest(new FileTransferRequest
+        {
+            TransferId = "transfer-unpaired",
+            FileName = "blocked.txt",
+            FileSize = 4,
+            Direction = FileTransferDirection.Upload,
+            MimeType = "text/plain"
+        });
+
+        await Task.Delay(120);
+
+        var response = Assert.Single(_comm.SentFileTransferResponses);
+        Assert.False(response.Accepted);
+        Assert.Equal(FileTransferRejectionReason.Error, response.RejectionReason);
+    }
+
     // ── IAsyncDisposable ───────────────────────────────────────────────────────
 
     public async ValueTask DisposeAsync()
@@ -2163,5 +2257,13 @@ public class RemoteDesktopHostTests : IAsyncDisposable
 
         _cts.Dispose();
         _comm.Dispose();
+        try
+        {
+            if (Directory.Exists(_incomingFileDirectory))
+                Directory.Delete(_incomingFileDirectory, recursive: true);
+        }
+        catch
+        {
+        }
     }
 }
