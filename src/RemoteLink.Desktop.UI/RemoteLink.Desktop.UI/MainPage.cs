@@ -923,7 +923,10 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
             try
             {
-                var localIp = GetLocalIPAddress();
+                var localIp = !string.IsNullOrWhiteSpace(_localDevice.IPAddress)
+                    ? _localDevice.IPAddress
+                    : NetworkAddressResolver.GetPreferredIPv4Address() ?? IPAddress.Loopback.ToString();
+                _localDevice.IPAddress = localIp;
                 var payload = $"remotelink://connect?host={localIp}:12346&pin={_currentPin}";
 
                 using var qrGenerator = new QRCodeGenerator();
@@ -940,19 +943,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 _qrCodeImage.IsVisible = false;
             }
         });
-    }
-
-    private static string GetLocalIPAddress()
-    {
-        try
-        {
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            socket.Connect("8.8.8.8", 80);
-            if (socket.LocalEndPoint is IPEndPoint endPoint)
-                return endPoint.Address.ToString();
-        }
-        catch { }
-        return "127.0.0.1";
     }
 
     private void UpdatePinMetadata()

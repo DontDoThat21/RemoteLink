@@ -99,11 +99,15 @@ public class UdpNetworkDiscovery : INetworkDiscovery
         {
             if (_broadcastClient == null) return;
 
+            var preferredAddress = NetworkAddressResolver.GetPreferredIPv4Address();
+            if (!string.IsNullOrWhiteSpace(preferredAddress))
+                _localDevice.IPAddress = preferredAddress;
+
             var message = JsonSerializer.Serialize(_localDevice);
             var data = Encoding.UTF8.GetBytes(message);
-            var endPoint = new IPEndPoint(IPAddress.Broadcast, DISCOVERY_PORT);
-            
-            _broadcastClient.Send(data, data.Length, endPoint);
+
+            foreach (var endPoint in NetworkAddressResolver.GetBroadcastEndpoints(DISCOVERY_PORT))
+                _broadcastClient.Send(data, data.Length, endPoint);
         }
         catch (Exception)
         {

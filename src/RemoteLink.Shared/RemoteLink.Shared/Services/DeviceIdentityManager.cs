@@ -24,6 +24,7 @@ public static class DeviceIdentityManager
         {
             DeviceId = GetOrCreateStableDeviceId(profileName),
             DeviceName = deviceName,
+            IPAddress = NetworkAddressResolver.GetPreferredIPv4Address() ?? string.Empty,
             Type = type,
             Port = port
         };
