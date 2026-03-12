@@ -38,6 +38,7 @@ public class SessionControlResponse
     public string? ErrorMessage { get; set; }
     public List<MonitorInfo>? Monitors { get; set; }
     public string? SelectedMonitorId { get; set; }
+    public RemoteSystemInfo? SystemInfo { get; set; }
     public int? AppliedQuality { get; set; }
     public ScreenDataFormat? AppliedImageFormat { get; set; }
     public bool? AppliedAudioEnabled { get; set; }

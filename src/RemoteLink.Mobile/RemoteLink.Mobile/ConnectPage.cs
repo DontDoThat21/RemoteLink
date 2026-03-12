@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
@@ -1309,6 +1310,23 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         }
     }
 
+    private async void OnSystemInfoClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected)
+            return;
+
+        try
+        {
+            var systemInfo = await _client.GetRemoteSystemInfoAsync();
+            await DisplayAlertAsync("Remote System Info", FormatSystemInfo(systemInfo), "OK");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve remote system information");
+            await DisplayAlertAsync("Remote System Info", $"Failed to load remote system information: {ex.Message}", "OK");
+        }
+    }
+
     private void OnKeyCaptureTextChanged(object? sender, TextChangedEventArgs e)
     {
         if (_suppressKeyCaptureTextChanged || !_client.IsConnected) return;
@@ -1678,6 +1696,77 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             _monitorSelectorStatusLabel.Text = message;
             _monitorSelectorStatusLabel.TextColor = color;
         }
+    }
+
+    private static string FormatSystemInfo(RemoteSystemInfo info)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Machine: {ValueOrUnknown(info.MachineName)}");
+        builder.AppendLine($"OS: {ValueOrUnknown(info.OperatingSystem)} ({ValueOrUnknown(info.OsArchitecture)})");
+        builder.AppendLine($"Runtime: {ValueOrUnknown(info.FrameworkDescription)}");
+        builder.AppendLine($"CPU: {ValueOrUnknown(info.ProcessorName)}");
+        builder.AppendLine($"Logical processors: {info.LogicalProcessorCount}");
+        builder.AppendLine($"Memory: {FormatBytes(info.AvailableMemoryBytes)} free / {FormatBytes(info.TotalMemoryBytes)} total");
+        builder.AppendLine($"Uptime: {FormatDuration(info.UptimeSeconds)}");
+
+        if (info.Disks.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Disks:");
+            foreach (var disk in info.Disks.Take(3))
+            {
+                builder.AppendLine($"• {ValueOrUnknown(disk.Name)} — {FormatBytes(disk.AvailableFreeSpaceBytes)} free / {FormatBytes(disk.TotalSizeBytes)}");
+            }
+        }
+
+        if (info.NetworkInterfaces.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Network:");
+            foreach (var network in info.NetworkInterfaces.Take(3))
+            {
+                var address = network.IPv4Addresses.FirstOrDefault()
+                    ?? network.IPv6Addresses.FirstOrDefault()
+                    ?? "No IP";
+                builder.AppendLine($"• {ValueOrUnknown(network.Name)} ({network.OperationalStatus}) — {address}");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string ValueOrUnknown(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "Unknown" : value;
+
+    private static string FormatDuration(long uptimeSeconds)
+    {
+        if (uptimeSeconds <= 0)
+            return "Unknown";
+
+        var uptime = TimeSpan.FromSeconds(uptimeSeconds);
+        return uptime.TotalDays >= 1
+            ? $"{(int)uptime.TotalDays}d {uptime.Hours}h {uptime.Minutes}m"
+            : uptime.TotalHours >= 1
+                ? $"{(int)uptime.TotalHours}h {uptime.Minutes}m"
+                : $"{uptime.Minutes}m {uptime.Seconds}s";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+            return "0 B";
+
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        int unitIndex = 0;
+
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return unitIndex == 0 ? $"{value:0} {units[unitIndex]}" : $"{value:0.0} {units[unitIndex]}";
     }
 
     /// <summary>
