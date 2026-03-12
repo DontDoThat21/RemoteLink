@@ -264,6 +264,53 @@ public class RemoteDesktopClientTests
     }
 
     [Fact]
+    public async Task ExecuteRemoteCommandAsync_SendsExecuteCommandRequestAndReturnsCommandResult()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var comm = new FakeCommunicationService
+        {
+            SessionControlResponseToSend = new SessionControlResponse
+            {
+                Success = true,
+                CommandResult = new RemoteCommandExecutionResult
+                {
+                    Shell = RemoteCommandShell.PowerShell,
+                    Succeeded = true,
+                    ExitCode = 0,
+                    StandardOutput = "test-output",
+                    DurationMs = 42,
+                    StartedAtUtc = DateTime.UtcNow.AddMilliseconds(-42),
+                    CompletedAtUtc = DateTime.UtcNow
+                }
+            }
+        };
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery, () => comm);
+
+        var connected = await client.ConnectToHostAsync(new DeviceInfo
+        {
+            DeviceId = "host-1",
+            DeviceName = "Host",
+            IPAddress = "127.0.0.1",
+            Port = 12346,
+            Type = DeviceType.Desktop
+        }, "123456");
+
+        Assert.True(connected);
+
+        var result = await client.ExecuteRemoteCommandAsync("Get-Date", RemoteCommandShell.PowerShell, timeoutSeconds: 15, workingDirectory: @"C:\Temp");
+
+        Assert.NotNull(comm.LastSessionControlRequest);
+        Assert.Equal(SessionControlCommand.ExecuteCommand, comm.LastSessionControlRequest!.Command);
+        Assert.NotNull(comm.LastSessionControlRequest.CommandRequest);
+        Assert.Equal("Get-Date", comm.LastSessionControlRequest.CommandRequest!.CommandText);
+        Assert.Equal(RemoteCommandShell.PowerShell, comm.LastSessionControlRequest.CommandRequest.Shell);
+        Assert.Equal(15, comm.LastSessionControlRequest.CommandRequest.TimeoutSeconds);
+        Assert.Equal(@"C:\Temp", comm.LastSessionControlRequest.CommandRequest.WorkingDirectory);
+        Assert.True(result.Succeeded);
+        Assert.Equal("test-output", result.StandardOutput);
+    }
+
+    [Fact]
     public async Task RequestRemoteRebootAsync_SchedulesAutomaticReconnect_WhenSupported()
     {
         var discovery = new FakeNetworkDiscovery();

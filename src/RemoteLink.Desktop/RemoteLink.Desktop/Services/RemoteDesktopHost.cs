@@ -42,6 +42,7 @@ public class RemoteDesktopHost : BackgroundService
     private readonly IUserAccountService? _userAccountService;
     private readonly IAppSettingsService? _appSettingsService;
     private readonly IRemoteSystemInfoProvider _systemInfoProvider;
+    private readonly IRemoteCommandExecutor _remoteCommandExecutor;
     private readonly ISystemPowerService _systemPowerService;
     private readonly Func<DateTime> _utcNow;
     private readonly object _auditLock = new();
@@ -104,6 +105,7 @@ public class RemoteDesktopHost : BackgroundService
         IUserAccountService? userAccountService = null,
         IAppSettingsService? appSettingsService = null,
         IRemoteSystemInfoProvider? systemInfoProvider = null,
+        IRemoteCommandExecutor? remoteCommandExecutor = null,
         ISystemPowerService? systemPowerService = null,
         Func<DateTime>? utcNow = null)
     {
@@ -127,6 +129,7 @@ public class RemoteDesktopHost : BackgroundService
         _userAccountService = userAccountService;
         _appSettingsService = appSettingsService;
         _systemInfoProvider = systemInfoProvider ?? new SystemInfoProvider();
+        _remoteCommandExecutor = remoteCommandExecutor ?? new RemoteCommandExecutor();
         _systemPowerService = systemPowerService ?? new SystemPowerService();
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
@@ -744,6 +747,38 @@ public class RemoteDesktopHost : BackgroundService
                             SystemInfo = systemInfo
                         });
                         AppendAuditAction(ConnectionAuditActionType.SessionControlApplied, "Returned remote system information snapshot.");
+                        break;
+                    }
+
+                    case SessionControlCommand.ExecuteCommand:
+                    {
+                        if (request.CommandRequest is null || string.IsNullOrWhiteSpace(request.CommandRequest.CommandText))
+                        {
+                            await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                            {
+                                RequestId = request.RequestId,
+                                Command = request.Command,
+                                Success = false,
+                                ErrorMessage = "Command text is required."
+                            });
+                            break;
+                        }
+
+                        var result = await _remoteCommandExecutor.ExecuteAsync(request.CommandRequest);
+
+                        await _communication.SendSessionControlResponseAsync(new SessionControlResponse
+                        {
+                            RequestId = request.RequestId,
+                            Command = request.Command,
+                            Success = true,
+                            CommandResult = result
+                        });
+
+                        AppendAuditAction(
+                            ConnectionAuditActionType.SessionControlApplied,
+                            result.TimedOut
+                                ? $"Executed remote command via {result.Shell} and timed out after {result.DurationMs} ms."
+                                : $"Executed remote command via {result.Shell} with exit code {result.ExitCode}.");
                         break;
                     }
 

@@ -68,6 +68,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IMessagingService, MessagingService>();
         builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
         builder.Services.AddSingleton<IRemoteSystemInfoProvider, SystemInfoProvider>();
+        builder.Services.AddSingleton<IRemoteCommandExecutor, RemoteCommandExecutor>();
         builder.Services.AddSingleton<ISystemPowerService, SystemPowerService>();
 
         // Network discovery

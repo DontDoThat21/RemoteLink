@@ -86,6 +86,7 @@ class Program
         builder.Services.AddSingleton<IUserAccountService, UserAccountService>();
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
         builder.Services.AddSingleton<IRemoteSystemInfoProvider, SystemInfoProvider>();
+        builder.Services.AddSingleton<IRemoteCommandExecutor, RemoteCommandExecutor>();
         builder.Services.AddSingleton<ISystemPowerService, SystemPowerService>();
         
         // Use Windows print service on Windows; fall back to mock on Linux/macOS.

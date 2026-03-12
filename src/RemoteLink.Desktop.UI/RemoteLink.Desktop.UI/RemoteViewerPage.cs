@@ -97,6 +97,18 @@ public class RemoteViewerPage : ContentPage
         };
         systemInfoButton.Clicked += OnSystemInfoClicked;
 
+        var commandButton = new Button
+        {
+            Text = "Command",
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
+            CornerRadius = 4,
+            HeightRequest = 32,
+            FontSize = 12,
+            Padding = new Thickness(12, 0),
+        };
+        commandButton.Clicked += OnRemoteCommandClicked;
+
         var disconnectButton = new Button
         {
             Text = "Disconnect",
@@ -120,6 +132,7 @@ public class RemoteViewerPage : ContentPage
                 new ColumnDefinition(GridLength.Auto),    // FPS
                 new ColumnDefinition(GridLength.Auto),    // latency
                 new ColumnDefinition(GridLength.Auto),    // system info
+                new ColumnDefinition(GridLength.Auto),    // command
                 new ColumnDefinition(GridLength.Auto),    // reboot
                 new ColumnDefinition(GridLength.Star),    // spacer
                 new ColumnDefinition(GridLength.Auto),    // disconnect
@@ -130,8 +143,9 @@ public class RemoteViewerPage : ContentPage
                 CreateGridChild(_fpsLabel, column: 1),
                 CreateGridChild(_latencyLabel, column: 2),
                 CreateGridChild(systemInfoButton, column: 3),
-                CreateGridChild(rebootButton, column: 4),
-                CreateGridChild(disconnectButton, column: 6),
+                CreateGridChild(commandButton, column: 4),
+                CreateGridChild(rebootButton, column: 5),
+                CreateGridChild(disconnectButton, column: 7),
             }
         };
 
@@ -566,6 +580,49 @@ public class RemoteViewerPage : ContentPage
         }
     }
 
+    private async void OnRemoteCommandClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected)
+            return;
+
+        var shellLabel = await DisplayActionSheetAsync(
+            "Remote Command",
+            "Cancel",
+            null,
+            "PowerShell",
+            "Command Prompt");
+
+        if (string.IsNullOrWhiteSpace(shellLabel) || shellLabel == "Cancel")
+            return;
+
+        var shell = shellLabel == "Command Prompt"
+            ? RemoteCommandShell.CommandPrompt
+            : RemoteCommandShell.PowerShell;
+
+        var commandText = await DisplayPromptAsync(
+            "Remote Command",
+            $"Enter a {shellLabel} command or script path to run on {_client.ConnectedHost?.DeviceName ?? "the remote host"}.",
+            accept: "Run",
+            cancel: "Cancel",
+            placeholder: shell == RemoteCommandShell.PowerShell ? "Get-Process | Select-Object -First 10" : "whoami",
+            maxLength: 4000,
+            keyboard: Keyboard.Text);
+
+        if (string.IsNullOrWhiteSpace(commandText))
+            return;
+
+        try
+        {
+            var result = await _client.ExecuteRemoteCommandAsync(commandText, shell);
+            await DisplayAlertAsync("Remote Command", FormatCommandResult(result), "OK");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to execute remote command");
+            await DisplayAlertAsync("Remote Command", $"Failed to execute remote command: {ex.Message}", "OK");
+        }
+    }
+
     private static string FormatSystemInfo(RemoteSystemInfo info)
     {
         var builder = new StringBuilder();
@@ -601,6 +658,43 @@ public class RemoteViewerPage : ContentPage
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatCommandResult(RemoteCommandExecutionResult result)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Shell: {result.Shell}");
+        builder.AppendLine($"Status: {(result.TimedOut ? "Timed out" : result.Succeeded ? "Succeeded" : "Failed")}");
+        builder.AppendLine($"Exit code: {result.ExitCode}");
+        builder.AppendLine($"Duration: {result.DurationMs} ms");
+
+        if (!string.IsNullOrWhiteSpace(result.WorkingDirectory))
+            builder.AppendLine($"Working directory: {result.WorkingDirectory}");
+
+        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            builder.AppendLine();
+            builder.AppendLine("Output:");
+            builder.AppendLine(TrimCommandOutput(result.StandardOutput));
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+        {
+            builder.AppendLine();
+            builder.AppendLine("Errors:");
+            builder.AppendLine(TrimCommandOutput(result.StandardError));
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string TrimCommandOutput(string value)
+    {
+        const int maxLength = 1600;
+        if (value.Length <= maxLength)
+            return value;
+
+        return value[..maxLength] + Environment.NewLine + "...output truncated...";
     }
 
     private static string ValueOrUnknown(string? value) =>

@@ -509,6 +509,39 @@ public class RemoteDesktopClient
     }
 
     /// <summary>
+    /// Execute a remote command or script on the connected host.
+    /// </summary>
+    public async Task<RemoteCommandExecutionResult> ExecuteRemoteCommandAsync(
+        string commandText,
+        RemoteCommandShell shell = RemoteCommandShell.PowerShell,
+        int timeoutSeconds = 30,
+        string? workingDirectory = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(commandText))
+            throw new ArgumentException("Command text is required.", nameof(commandText));
+
+        EnsureSessionPermission(
+            permissions => permissions.AllowSessionControl,
+            "The host has disabled remote session controls for this session.");
+
+        var response = await SendSessionControlRequestAsync(
+            SessionControlCommand.ExecuteCommand,
+            request => request.CommandRequest = new RemoteCommandExecutionRequest
+            {
+                CommandText = commandText,
+                Shell = shell,
+                WorkingDirectory = workingDirectory,
+                TimeoutSeconds = Math.Clamp(timeoutSeconds, 1, 300)
+            },
+            ct);
+
+        EnsureSuccessfulSessionControlResponse(response, "Failed to execute remote command.");
+        return response.CommandResult
+            ?? throw new InvalidOperationException("The host did not return a remote command result.");
+    }
+
+    /// <summary>
     /// Select a monitor on the remote host.
     /// </summary>
     public async Task<string?> SelectRemoteMonitorAsync(string monitorId, CancellationToken ct = default)
