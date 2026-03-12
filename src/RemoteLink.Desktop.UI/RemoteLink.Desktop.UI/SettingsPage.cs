@@ -5,13 +5,14 @@ using RemoteLink.Shared.Models;
 namespace RemoteLink.Desktop.UI;
 
 /// <summary>
-/// Settings and preferences window — all seven categories: General, Security,
-/// Network, Display, Audio, Recording, and Startup.
+/// Settings and preferences window — General, Security, Network, Display,
+/// Audio, Recording, Updates, and Startup.
 /// All UI is code-behind; no XAML.
 /// </summary>
 public class SettingsPage : ContentPage
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly IAppUpdateService _appUpdateService;
     private readonly StartupTaskService _startupTaskService;
 
     // Track the active section for highlighting
@@ -55,6 +56,15 @@ public class SettingsPage : ContentPage
     private Entry? _outputDirEntry;
     private Entry? _autoDeleteEntry;
 
+    // ── Updates ────────────────────────────────────────────────────────────
+    private Switch? _autoUpdateChecksSw;
+    private Entry? _updateIntervalEntry;
+    private Label? _currentVersionValueLabel;
+    private Label? _updateStatusValueLabel;
+    private Button? _checkUpdatesButton;
+    private Button? _openUpdateButton;
+    private AppUpdateCheckResult? _lastUpdateResult;
+
     // ── Startup ──────────────────────────────────────────────────────────
     private Switch? _launchOnStartupSw;
     private Switch? _startHostAutoSw;
@@ -63,9 +73,10 @@ public class SettingsPage : ContentPage
     // ── Status feedback ──────────────────────────────────────────────────
     private Label? _feedbackLabel;
 
-    public SettingsPage(IAppSettingsService settingsService, StartupTaskService startupTaskService)
+    public SettingsPage(IAppSettingsService settingsService, IAppUpdateService appUpdateService, StartupTaskService startupTaskService)
     {
         _settingsService = settingsService;
+        _appUpdateService = appUpdateService;
         _startupTaskService = startupTaskService;
         Title = "Settings";
         BackgroundColor = ThemeColors.PageBackground;
@@ -78,7 +89,7 @@ public class SettingsPage : ContentPage
 
     private View BuildLayout()
     {
-        var sections = new[] { "General", "Security", "Network", "Display", "Audio", "Recording", "Startup" };
+        var sections = new[] { "General", "Security", "Network", "Display", "Audio", "Recording", "Updates", "Startup" };
 
         // ── Left navigation sidebar ──
         var navStack = new StackLayout
@@ -257,6 +268,7 @@ public class SettingsPage : ContentPage
         "Display"   => BuildDisplayPanel(),
         "Audio"     => BuildAudioPanel(),
         "Recording" => BuildRecordingPanel(),
+        "Updates"   => BuildUpdatesPanel(),
         "Startup"   => BuildStartupPanel(),
         _           => new Label { Text = section }
     };
@@ -425,6 +437,58 @@ public class SettingsPage : ContentPage
             BuildEntryRow("Auto-delete after (days)",
                 "Delete recordings older than this many days. Enter 0 to keep forever.",
                 _autoDeleteEntry),
+        });
+    }
+
+    private View BuildUpdatesPanel()
+    {
+        _autoUpdateChecksSw = new Switch();
+        _updateIntervalEntry = BuildNumericEntry("24", 3);
+        _currentVersionValueLabel = BuildInfoValueLabel($"v{AppInfo.Current.VersionString}");
+        _updateStatusValueLabel = BuildInfoValueLabel("Not checked yet");
+
+        _checkUpdatesButton = new Button
+        {
+            Text = "Check Now",
+            FontSize = 13,
+            BackgroundColor = ThemeColors.Accent,
+            TextColor = Colors.White,
+            CornerRadius = 6,
+            HeightRequest = 38
+        };
+        _checkUpdatesButton.Clicked += OnCheckUpdatesClicked;
+
+        _openUpdateButton = new Button
+        {
+            Text = "Open Update",
+            FontSize = 13,
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
+            CornerRadius = 6,
+            HeightRequest = 38,
+            IsEnabled = false,
+            Opacity = 0.55
+        };
+        _openUpdateButton.Clicked += OnOpenUpdateClicked;
+
+        return BuildSection("Updates", new[]
+        {
+            BuildSwitchRow("Automatic update checks",
+                "Check GitHub releases or configured store links in the background on app startup.",
+                _autoUpdateChecksSw),
+            BuildEntryRow("Check interval (hours)",
+                "Minimum hours between automatic checks. Valid range: 1–168.",
+                _updateIntervalEntry),
+            BuildInfoRow("Current version",
+                "The version currently installed on this device.",
+                _currentVersionValueLabel),
+            BuildInfoRow("Update status",
+                "Latest automatic or manual update check result.",
+                _updateStatusValueLabel),
+            BuildButtonRow("Actions",
+                "Run a manual update check or open the latest release / store page.",
+                _checkUpdatesButton,
+                _openUpdateButton)
         });
     }
 
@@ -652,6 +716,140 @@ public class SettingsPage : ContentPage
         return new StackLayout { Spacing = 0, Children = { row, border } };
     }
 
+    private static View BuildInfoRow(string label, string description, Label valueLabel)
+    {
+        valueLabel.VerticalOptions = LayoutOptions.Center;
+        valueLabel.HorizontalOptions = LayoutOptions.End;
+
+        var row = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+            Padding = new Thickness(0, 8),
+            Children =
+            {
+                new StackLayout
+                {
+                    Spacing = 0,
+                    VerticalOptions = LayoutOptions.Center,
+                    Children =
+                    {
+                        new Label
+                        {
+                            Text = label,
+                            FontSize = 14,
+                            FontAttributes = FontAttributes.Bold,
+                            TextColor = ThemeColors.TextPrimary,
+                            VerticalOptions = LayoutOptions.Center
+                        },
+                        new Label
+                        {
+                            Text = description,
+                            FontSize = 11,
+                            TextColor = ThemeColors.TextSecondary,
+                            Margin = new Thickness(0, 2, 0, 0)
+                        }
+                    }
+                },
+                CreateGridChild(valueLabel, column: 1)
+            }
+        };
+
+        return new StackLayout
+        {
+            Spacing = 0,
+            Children =
+            {
+                row,
+                new BoxView
+                {
+                    Color = ThemeColors.SeparatorLight,
+                    HeightRequest = 1,
+                    HorizontalOptions = LayoutOptions.Fill
+                }
+            }
+        };
+    }
+
+    private static View BuildButtonRow(string label, string description, params Button[] buttons)
+    {
+        var buttonGrid = new Grid
+        {
+            ColumnSpacing = 8
+        };
+
+        for (var i = 0; i < buttons.Length; i++)
+        {
+            buttonGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            buttonGrid.Add(CreateGridChild(buttons[i], i));
+        }
+
+        var row = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+            Padding = new Thickness(0, 8),
+            Children =
+            {
+                new StackLayout
+                {
+                    Spacing = 0,
+                    VerticalOptions = LayoutOptions.Center,
+                    Children =
+                    {
+                        new Label
+                        {
+                            Text = label,
+                            FontSize = 14,
+                            FontAttributes = FontAttributes.Bold,
+                            TextColor = ThemeColors.TextPrimary,
+                            VerticalOptions = LayoutOptions.Center
+                        },
+                        new Label
+                        {
+                            Text = description,
+                            FontSize = 11,
+                            TextColor = ThemeColors.TextSecondary,
+                            Margin = new Thickness(0, 2, 0, 0)
+                        }
+                    }
+                },
+                CreateGridChild(buttonGrid, column: 1)
+            }
+        };
+
+        return new StackLayout
+        {
+            Spacing = 0,
+            Children =
+            {
+                row,
+                new BoxView
+                {
+                    Color = ThemeColors.SeparatorLight,
+                    HeightRequest = 1,
+                    HorizontalOptions = LayoutOptions.Fill
+                }
+            }
+        };
+    }
+
+    private static Label BuildInfoValueLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 13,
+        FontAttributes = FontAttributes.Bold,
+        TextColor = ThemeColors.Accent,
+        LineBreakMode = LineBreakMode.WordWrap,
+        HorizontalTextAlignment = TextAlignment.End
+    };
+
     private static Entry BuildNumericEntry(string defaultValue, int maxLength) =>
         new()
         {
@@ -704,6 +902,11 @@ public class SettingsPage : ContentPage
         if (_enableRecordingSw != null) _enableRecordingSw.IsToggled = s.Recording.EnableRecording;
         if (_outputDirEntry    != null) _outputDirEntry.Text          = s.Recording.OutputDirectory;
         if (_autoDeleteEntry   != null) _autoDeleteEntry.Text         = s.Recording.AutoDeleteAfterDays.ToString();
+
+        // Updates
+        if (_autoUpdateChecksSw != null) _autoUpdateChecksSw.IsToggled = s.Updates.EnableAutomaticChecks;
+        if (_updateIntervalEntry != null) _updateIntervalEntry.Text = s.Updates.CheckIntervalHours.ToString();
+        UpdateUpdateUi();
 
         // Startup
         if (_launchOnStartupSw != null) _launchOnStartupSw.IsToggled = s.Startup.LaunchOnWindowsStartup;
@@ -767,6 +970,11 @@ public class SettingsPage : ContentPage
         if (int.TryParse(_autoDeleteEntry?.Text, out int autoDelete) && autoDelete >= 0)
             s.Recording.AutoDeleteAfterDays = autoDelete;
 
+        // Updates
+        s.Updates.EnableAutomaticChecks = _autoUpdateChecksSw?.IsToggled ?? s.Updates.EnableAutomaticChecks;
+        if (int.TryParse(_updateIntervalEntry?.Text, out int updateInterval) && updateInterval is >= 1 and <= 168)
+            s.Updates.CheckIntervalHours = updateInterval;
+
         // Startup
         s.Startup.LaunchOnWindowsStartup = _launchOnStartupSw?.IsToggled ?? s.Startup.LaunchOnWindowsStartup;
         s.Startup.StartHostAutomatically  = _startHostAutoSw?.IsToggled   ?? s.Startup.StartHostAutomatically;
@@ -774,6 +982,108 @@ public class SettingsPage : ContentPage
     }
 
     // ── Event handlers ────────────────────────────────────────────────────
+
+    private void UpdateUpdateUi()
+    {
+        if (_currentVersionValueLabel != null)
+            _currentVersionValueLabel.Text = $"v{AppInfo.Current.VersionString}";
+
+        if (_updateStatusValueLabel != null)
+        {
+            _updateStatusValueLabel.Text = _lastUpdateResult?.Message
+                ?? (_settingsService.Current.Updates.LastCheckedUtc.HasValue
+                    ? $"Last checked {_settingsService.Current.Updates.LastCheckedUtc.Value.ToLocalTime():g}"
+                    : "Not checked yet");
+
+            _updateStatusValueLabel.TextColor = _lastUpdateResult?.Status switch
+            {
+                AppUpdateStatus.UpdateAvailable => ThemeColors.Warning,
+                AppUpdateStatus.Failed => ThemeColors.Danger,
+                _ => ThemeColors.Accent
+            };
+        }
+
+        if (_openUpdateButton != null)
+        {
+            var canOpen = _lastUpdateResult?.CanOpenDownload == true;
+            _openUpdateButton.IsEnabled = canOpen;
+            _openUpdateButton.Opacity = canOpen ? 1.0 : 0.55;
+        }
+    }
+
+    private async void OnCheckUpdatesClicked(object? sender, EventArgs e)
+    {
+        if (_checkUpdatesButton == null)
+            return;
+
+        _checkUpdatesButton.IsEnabled = false;
+        _checkUpdatesButton.Text = "Checking...";
+
+        try
+        {
+            _lastUpdateResult = await _appUpdateService.CheckForUpdatesAsync();
+            if (_lastUpdateResult.Status != AppUpdateStatus.Failed)
+            {
+                _appUpdateService.MarkChecked(_settingsService.Current, DateTimeOffset.UtcNow);
+                await _settingsService.SaveAsync();
+            }
+
+            UpdateUpdateUi();
+
+            if (_lastUpdateResult.UpdateAvailable)
+            {
+                var shouldOpen = await DisplayAlertAsync(
+                    "Update Available",
+                    $"RemoteLink Desktop v{_lastUpdateResult.LatestVersion} is available. Open the update page now?",
+                    "Open",
+                    "Later");
+
+                if (shouldOpen)
+                    await OpenUpdateAsync();
+            }
+            else
+            {
+                await DisplayAlertAsync("Updates", _lastUpdateResult.Message, "OK");
+            }
+        }
+        catch (Exception ex)
+        {
+            _lastUpdateResult = new AppUpdateCheckResult
+            {
+                Status = AppUpdateStatus.Failed,
+                CurrentVersion = AppInfo.Current.VersionString,
+                Message = ex.Message
+            };
+            UpdateUpdateUi();
+            await DisplayAlertAsync("Update Check Failed", ex.Message, "OK");
+        }
+        finally
+        {
+            _checkUpdatesButton.IsEnabled = true;
+            _checkUpdatesButton.Text = "Check Now";
+        }
+    }
+
+    private async void OnOpenUpdateClicked(object? sender, EventArgs e)
+    {
+        try
+        {
+            await OpenUpdateAsync();
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlertAsync("Open Update Failed", ex.Message, "OK");
+        }
+    }
+
+    private Task OpenUpdateAsync()
+    {
+        var url = _lastUpdateResult?.DownloadUrl ?? _lastUpdateResult?.ReleasePageUrl;
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("No update link is available yet. Run a check first.");
+
+        return Launcher.Default.OpenAsync(uri);
+    }
 
     private async void OnSaveClicked(object? sender, EventArgs e)
     {

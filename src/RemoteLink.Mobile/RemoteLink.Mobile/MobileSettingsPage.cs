@@ -10,6 +10,7 @@ namespace RemoteLink.Mobile;
 public class MobileSettingsPage : ContentPage
 {
     private readonly IAppSettingsService _settingsService;
+    private readonly IAppUpdateService _appUpdateService;
     private readonly IAppLockService _appLockService;
 
     private Picker _themePicker = null!;
@@ -27,11 +28,19 @@ public class MobileSettingsPage : ContentPage
     private Label _gestureSensitivityValueLabel = null!;
     private Switch _notificationsSwitch = null!;
     private Switch _audioSwitch = null!;
+    private Switch _autoUpdateChecksSwitch = null!;
+    private Stepper _updateIntervalStepper = null!;
+    private Label _updateIntervalValueLabel = null!;
+    private Label _updateStatusLabel = null!;
+    private Button _checkUpdatesButton = null!;
+    private Button _openUpdateButton = null!;
     private Label _feedbackLabel = null!;
+    private AppUpdateCheckResult? _lastUpdateResult;
 
-    public MobileSettingsPage(IAppSettingsService settingsService, IAppLockService appLockService)
+    public MobileSettingsPage(IAppSettingsService settingsService, IAppUpdateService appUpdateService, IAppLockService appLockService)
     {
         _settingsService = settingsService;
+        _appUpdateService = appUpdateService;
         _appLockService = appLockService;
 
         Title = "Settings";
@@ -126,6 +135,35 @@ public class MobileSettingsPage : ContentPage
 
         _notificationsSwitch = new Switch { OnColor = ThemeColors.Accent };
         _audioSwitch = new Switch { OnColor = ThemeColors.Accent };
+        _autoUpdateChecksSwitch = new Switch { OnColor = ThemeColors.Accent };
+        _updateIntervalStepper = new Stepper { Minimum = 1, Maximum = 168, Increment = 1 };
+        _updateIntervalValueLabel = BuildValueLabel();
+        _updateIntervalStepper.ValueChanged += (_, e) => _updateIntervalValueLabel.Text = $"{(int)e.NewValue} h";
+        _updateStatusLabel = new Label
+        {
+            FontSize = 12,
+            TextColor = ThemeColors.TextSecondary
+        };
+        _checkUpdatesButton = new Button
+        {
+            Text = "Check now",
+            BackgroundColor = ThemeColors.Accent,
+            TextColor = Colors.White,
+            CornerRadius = 8,
+            HeightRequest = 40
+        };
+        _checkUpdatesButton.Clicked += OnCheckUpdatesClicked;
+        _openUpdateButton = new Button
+        {
+            Text = "Open update",
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.SecondaryButtonText,
+            CornerRadius = 8,
+            HeightRequest = 40,
+            IsEnabled = false,
+            Opacity = 0.55
+        };
+        _openUpdateButton.Clicked += OnOpenUpdateClicked;
 
         _qualitySlider.ValueChanged += (_, e) => _qualityValueLabel.Text = $"{Math.Round(e.NewValue):0}%";
         _gestureSensitivitySlider.ValueChanged += (_, e) => _gestureSensitivityValueLabel.Text = $"{e.NewValue:0.00}×";
@@ -219,6 +257,19 @@ public class MobileSettingsPage : ContentPage
                     "Audio",
                     "Remote audio streaming preference.",
                     BuildSettingRow("Enable audio", "Enable or disable host audio streaming for the current device.", _audioSwitch)),
+                BuildCard(
+                    "Updates",
+                    "Automatic version checks with direct links to the latest release or configured app store page.",
+                    BuildSettingRow("Automatic checks", "Check for new versions when the app starts or resumes.", _autoUpdateChecksSwitch),
+                    BuildStepperRow("Check interval", "Minimum time between automatic update checks.", _updateIntervalStepper, _updateIntervalValueLabel),
+                    BuildSettingText("Current version", $"RemoteLink Mobile v{AppInfo.Current.VersionString}"),
+                    _updateStatusLabel,
+                    new Grid
+                    {
+                        ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) },
+                        ColumnSpacing = 12,
+                        Children = { _checkUpdatesButton, CreateGridChild(_openUpdateButton, 1) }
+                    }),
                 _feedbackLabel,
                 new Grid
                 {
@@ -269,6 +320,8 @@ public class MobileSettingsPage : ContentPage
             settings.Input.GestureSensitivity = Math.Round(_gestureSensitivitySlider.Value, 2);
             settings.General.ShowConnectionNotifications = _notificationsSwitch.IsToggled;
             settings.Audio.EnableAudio = _audioSwitch.IsToggled;
+            settings.Updates.EnableAutomaticChecks = _autoUpdateChecksSwitch.IsToggled;
+            settings.Updates.CheckIntervalHours = (int)_updateIntervalStepper.Value;
 
             await _settingsService.SaveAsync();
             await _appLockService.InitializeAsync();
@@ -327,7 +380,11 @@ public class MobileSettingsPage : ContentPage
 
         _notificationsSwitch.IsToggled = settings.General.ShowConnectionNotifications;
         _audioSwitch.IsToggled = settings.Audio.EnableAudio;
+        _autoUpdateChecksSwitch.IsToggled = settings.Updates.EnableAutomaticChecks;
+        _updateIntervalStepper.Value = Math.Clamp(settings.Updates.CheckIntervalHours, _updateIntervalStepper.Minimum, _updateIntervalStepper.Maximum);
+        _updateIntervalValueLabel.Text = $"{(int)_updateIntervalStepper.Value} h";
         _feedbackLabel.IsVisible = false;
+        UpdateUpdateUi();
     }
 
     private async Task RefreshAppLockUiAsync()
@@ -382,6 +439,95 @@ public class MobileSettingsPage : ContentPage
     private static bool IsValidPin(string? pin) => !string.IsNullOrWhiteSpace(pin) && pin.Length == 6 && pin.All(char.IsDigit);
 
     private static string FormatTimeout(int minutes) => minutes == 0 ? "Immediate" : $"{minutes} min";
+
+    private void UpdateUpdateUi()
+    {
+        _updateStatusLabel.Text = _lastUpdateResult?.Message
+            ?? (_settingsService.Current.Updates.LastCheckedUtc.HasValue
+                ? $"Last checked {_settingsService.Current.Updates.LastCheckedUtc.Value.ToLocalTime():g}"
+                : "Not checked yet.");
+        _updateStatusLabel.TextColor = _lastUpdateResult?.Status switch
+        {
+            AppUpdateStatus.UpdateAvailable => ThemeColors.WarningText,
+            AppUpdateStatus.Failed => ThemeColors.Danger,
+            _ => ThemeColors.TextSecondary
+        };
+
+        var canOpen = _lastUpdateResult?.CanOpenDownload == true;
+        _openUpdateButton.IsEnabled = canOpen;
+        _openUpdateButton.Opacity = canOpen ? 1.0 : 0.55;
+    }
+
+    private async void OnCheckUpdatesClicked(object? sender, EventArgs e)
+    {
+        _checkUpdatesButton.IsEnabled = false;
+        _checkUpdatesButton.Text = "Checking...";
+
+        try
+        {
+            _lastUpdateResult = await _appUpdateService.CheckForUpdatesAsync();
+            if (_lastUpdateResult.Status != AppUpdateStatus.Failed)
+            {
+                _appUpdateService.MarkChecked(_settingsService.Current, DateTimeOffset.UtcNow);
+                await _settingsService.SaveAsync();
+            }
+
+            UpdateUpdateUi();
+
+            if (_lastUpdateResult.UpdateAvailable)
+            {
+                var shouldOpen = await DisplayAlertAsync(
+                    "Update Available",
+                    $"RemoteLink Mobile v{_lastUpdateResult.LatestVersion} is available. Open the update page now?",
+                    "Open",
+                    "Later");
+
+                if (shouldOpen)
+                    await OpenUpdateAsync();
+            }
+            else
+            {
+                await DisplayAlertAsync("Updates", _lastUpdateResult.Message, "OK");
+            }
+        }
+        catch (Exception ex)
+        {
+            _lastUpdateResult = new AppUpdateCheckResult
+            {
+                Status = AppUpdateStatus.Failed,
+                CurrentVersion = AppInfo.Current.VersionString,
+                Message = ex.Message
+            };
+            UpdateUpdateUi();
+            await DisplayAlertAsync("Update Check Failed", ex.Message, "OK");
+        }
+        finally
+        {
+            _checkUpdatesButton.IsEnabled = true;
+            _checkUpdatesButton.Text = "Check now";
+        }
+    }
+
+    private async void OnOpenUpdateClicked(object? sender, EventArgs e)
+    {
+        try
+        {
+            await OpenUpdateAsync();
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlertAsync("Open Update Failed", ex.Message, "OK");
+        }
+    }
+
+    private Task OpenUpdateAsync()
+    {
+        var url = _lastUpdateResult?.DownloadUrl ?? _lastUpdateResult?.ReleasePageUrl;
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            throw new InvalidOperationException("No update link is available yet. Run a check first.");
+
+        return Launcher.Default.OpenAsync(uri);
+    }
 
     private void ShowFeedback(string message)
     {
@@ -532,7 +678,7 @@ public class MobileSettingsPage : ContentPage
                 },
                 new Label
                 {
-                    Text = "RemoteLink Mobile v1.0",
+                    Text = $"RemoteLink Mobile v{AppInfo.Current.VersionString}",
                     FontSize = 12,
                     TextColor = ThemeColors.TextSecondary,
                     HorizontalTextAlignment = TextAlignment.Center

@@ -1,4 +1,5 @@
 using RemoteLink.Mobile.Services;
+using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 
@@ -7,22 +8,31 @@ namespace RemoteLink.Mobile;
 public partial class App : Application
 {
     private readonly AppShell _shell;
+    private readonly ILogger<App> _logger;
     private readonly IAppSettingsService _appSettingsService;
+    private readonly IAppUpdateService _appUpdateService;
     private readonly IAppLockService _appLockService;
     private readonly IncomingConnectionNotificationListener _incomingConnectionNotificationListener;
     private readonly Queue<IncomingConnectionRequestAlert> _pendingIncomingConnectionAlerts = new();
+    private AppUpdateCheckResult? _pendingUpdatePrompt;
     private bool _lockPageVisible;
     private bool _isAppActive = true;
     private bool _isShowingIncomingConnectionAlert;
+    private bool _isShowingUpdatePrompt;
+    private bool _isCheckingForUpdates;
 
     public App(
         AppShell shell,
+        ILogger<App> logger,
         IAppSettingsService appSettingsService,
+        IAppUpdateService appUpdateService,
         IAppLockService appLockService,
         IncomingConnectionNotificationListener incomingConnectionNotificationListener)
     {
         _shell = shell;
+        _logger = logger;
         _appSettingsService = appSettingsService;
+        _appUpdateService = appUpdateService;
         _appLockService = appLockService;
         _incomingConnectionNotificationListener = incomingConnectionNotificationListener;
 
@@ -45,6 +55,8 @@ public partial class App : Application
             _isAppActive = true;
             await _incomingConnectionNotificationListener.StartAsync();
             await EnsureUnlockedAsync();
+            await CheckForUpdatesIfNeededAsync();
+            await ShowPendingUpdatePromptAsync();
             await ShowPendingIncomingConnectionAlertsAsync();
         };
         window.Stopped += (_, _) =>
@@ -56,6 +68,8 @@ public partial class App : Application
         {
             _isAppActive = true;
             await EnsureUnlockedAsync();
+            await CheckForUpdatesIfNeededAsync();
+            await ShowPendingUpdatePromptAsync();
             await ShowPendingIncomingConnectionAlertsAsync();
         };
         return window;
@@ -75,6 +89,7 @@ public partial class App : Application
         ApplyTheme(_appSettingsService.Current.General.Theme);
         await _appLockService.InitializeAsync();
         await _incomingConnectionNotificationListener.StartAsync();
+        await CheckForUpdatesIfNeededAsync();
     }
 
     private static void ApplyTheme(ThemeMode mode)
@@ -169,6 +184,91 @@ public partial class App : Application
         finally
         {
             _isShowingIncomingConnectionAlert = false;
+        }
+    }
+
+    private async Task CheckForUpdatesIfNeededAsync()
+    {
+        if (_isCheckingForUpdates)
+            return;
+
+        if (!_appUpdateService.ShouldCheckForUpdates(_appSettingsService.Current, DateTimeOffset.UtcNow))
+            return;
+
+        _isCheckingForUpdates = true;
+        try
+        {
+            var result = await _appUpdateService.CheckForUpdatesAsync();
+            if (result.Status != AppUpdateStatus.Failed)
+            {
+                _appUpdateService.MarkChecked(_appSettingsService.Current, DateTimeOffset.UtcNow);
+                await _appSettingsService.SaveAsync();
+            }
+
+            if (!result.UpdateAvailable || !result.CanOpenDownload)
+                return;
+
+            if (!_isAppActive || _lockPageVisible || _shell.Navigation.ModalStack.OfType<AppLockPage>().Any())
+            {
+                _pendingUpdatePrompt = result;
+                return;
+            }
+
+            await ShowUpdatePromptAsync(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Automatic mobile update check failed");
+        }
+        finally
+        {
+            _isCheckingForUpdates = false;
+        }
+    }
+
+    private async Task ShowPendingUpdatePromptAsync()
+    {
+        if (_pendingUpdatePrompt == null)
+            return;
+
+        var pending = _pendingUpdatePrompt;
+        _pendingUpdatePrompt = null;
+        await ShowUpdatePromptAsync(pending);
+    }
+
+    private async Task ShowUpdatePromptAsync(AppUpdateCheckResult result)
+    {
+        if (_isShowingUpdatePrompt || !_isAppActive || _lockPageVisible || !result.CanOpenDownload)
+        {
+            _pendingUpdatePrompt = result;
+            return;
+        }
+
+        _isShowingUpdatePrompt = true;
+        try
+        {
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                if (!_isAppActive || _lockPageVisible || _shell.Navigation.ModalStack.OfType<AppLockPage>().Any())
+                {
+                    _pendingUpdatePrompt = result;
+                    return;
+                }
+
+                var page = Application.Current?.Windows.FirstOrDefault()?.Page ?? _shell;
+                var shouldOpen = await page.DisplayAlertAsync(
+                    "Update Available",
+                    $"RemoteLink Mobile v{result.LatestVersion} is available. Open the update page now?",
+                    "Open",
+                    "Later");
+
+                if (shouldOpen && Uri.TryCreate(result.DownloadUrl, UriKind.Absolute, out var uri))
+                    await Launcher.Default.OpenAsync(uri);
+            });
+        }
+        finally
+        {
+            _isShowingUpdatePrompt = false;
         }
     }
 }

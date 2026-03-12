@@ -27,6 +27,9 @@ public class AppSettings
     /// <summary>Session recording preferences.</summary>
     public RecordingSettings Recording { get; set; } = new();
 
+    /// <summary>Application update preferences.</summary>
+    public UpdateSettings Updates { get; set; } = new();
+
     /// <summary>Windows startup preferences.</summary>
     public StartupSettings Startup { get; set; } = new();
 
@@ -143,6 +146,19 @@ public class AppSettings
 
         /// <summary>Automatically delete recordings older than this many days (0 = keep forever).</summary>
         public int AutoDeleteAfterDays { get; set; } = 0;
+    }
+
+    /// <summary>Application update settings.</summary>
+    public class UpdateSettings
+    {
+        /// <summary>Automatically check for new versions in the background.</summary>
+        public bool EnableAutomaticChecks { get; set; } = true;
+
+        /// <summary>Hours between automatic update checks.</summary>
+        public int CheckIntervalHours { get; set; } = 24;
+
+        /// <summary>UTC timestamp of the most recent successful update check.</summary>
+        public DateTime? LastCheckedUtc { get; set; }
     }
 
     /// <summary>Windows startup settings.</summary>

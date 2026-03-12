@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
 using RemoteLink.Desktop.UI.Services;
 using RemoteLink.Shared.Interfaces;
 
@@ -7,12 +8,15 @@ namespace RemoteLink.Desktop.UI;
 public partial class App : Application
 {
     private readonly MainPage _mainPage;
+    private readonly ILogger<App> _logger;
     private readonly WindowsSystemTrayService _trayService;
     private readonly IAppSettingsService _appSettings;
+    private readonly IAppUpdateService _appUpdateService;
     private Window? _mainWindow;
     private NavigationPage? _navPage;
     private bool _isQuitting;
     private readonly bool _startMinimized;
+    private bool _isCheckingForUpdates;
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -26,11 +30,18 @@ public partial class App : Application
     private const int SW_SHOW = 5;
     private const int SW_RESTORE = 9;
 
-    public App(MainPage mainPage, WindowsSystemTrayService trayService, IAppSettingsService appSettings)
+    public App(
+        MainPage mainPage,
+        ILogger<App> logger,
+        WindowsSystemTrayService trayService,
+        IAppSettingsService appSettings,
+        IAppUpdateService appUpdateService)
     {
         _mainPage = mainPage;
+        _logger = logger;
         _trayService = trayService;
         _appSettings = appSettings;
+        _appUpdateService = appUpdateService;
 
         // Check for --minimized command-line flag (used by auto-start / startup task)
         var args = Environment.GetCommandLineArgs();
@@ -97,6 +108,8 @@ public partial class App : Application
                 });
             };
         }
+
+        _mainWindow.Created += async (_, _) => await CheckForUpdatesIfNeededAsync();
 
         return _mainWindow;
     }
@@ -165,5 +178,49 @@ public partial class App : Application
             _trayService.Dispose();
             Current?.Quit();
         });
+    }
+
+    private async Task CheckForUpdatesIfNeededAsync()
+    {
+        if (_isCheckingForUpdates)
+            return;
+
+        if (!_appUpdateService.ShouldCheckForUpdates(_appSettings.Current, DateTimeOffset.UtcNow))
+            return;
+
+        _isCheckingForUpdates = true;
+        try
+        {
+            var result = await _appUpdateService.CheckForUpdatesAsync();
+            if (result.Status != RemoteLink.Shared.Models.AppUpdateStatus.Failed)
+            {
+                _appUpdateService.MarkChecked(_appSettings.Current, DateTimeOffset.UtcNow);
+                await _appSettings.SaveAsync();
+            }
+
+            if (!result.UpdateAvailable || !result.CanOpenDownload)
+                return;
+
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                var page = _navPage?.CurrentPage ?? _mainPage;
+                var shouldOpen = await page.DisplayAlertAsync(
+                    "Update Available",
+                    $"RemoteLink Desktop v{result.LatestVersion} is available. Open the update page now?",
+                    "Open",
+                    "Later");
+
+                if (shouldOpen && Uri.TryCreate(result.DownloadUrl, UriKind.Absolute, out var uri))
+                    await Launcher.Default.OpenAsync(uri);
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Automatic update check failed");
+        }
+        finally
+        {
+            _isCheckingForUpdates = false;
+        }
     }
 }

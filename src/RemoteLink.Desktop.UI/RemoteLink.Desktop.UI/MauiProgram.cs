@@ -118,6 +118,19 @@ public static class MauiProgram
 
         // Settings persistence
         builder.Services.AddSingleton<Shared.Interfaces.IAppSettingsService, Shared.Services.AppSettingsService>();
+        builder.Services.AddSingleton<IAppUpdateService>(provider =>
+        {
+            var logger = provider.GetRequiredService<ILogger<AppUpdateService>>();
+            var options = new AppUpdateOptions
+            {
+                ProductName = "RemoteLink Desktop",
+                CurrentVersion = AppInfo.Current.VersionString,
+                Platform = AppUpdatePlatform.DesktopWindows,
+                WindowsStoreUrl = Environment.GetEnvironmentVariable("REMOTELINK_DESKTOP_UPDATE_URL")
+            };
+
+            return new AppUpdateService(new HttpClient(), logger, options);
+        });
 
         // Pages
         builder.Services.AddSingleton<MainPage>();

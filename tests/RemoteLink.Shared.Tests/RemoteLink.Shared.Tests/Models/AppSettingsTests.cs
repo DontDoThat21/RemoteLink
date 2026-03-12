@@ -17,6 +17,7 @@ public class AppSettingsTests
         Assert.NotNull(settings.Input);
         Assert.NotNull(settings.Audio);
         Assert.NotNull(settings.Recording);
+        Assert.NotNull(settings.Updates);
         Assert.NotNull(settings.Startup);
     }
 
@@ -35,5 +36,8 @@ public class AppSettingsTests
         Assert.Equal(1.0, settings.Input.GestureSensitivity, 3);
         Assert.True(settings.General.ShowConnectionNotifications);
         Assert.False(settings.Audio.EnableAudio);
+        Assert.True(settings.Updates.EnableAutomaticChecks);
+        Assert.Equal(24, settings.Updates.CheckIntervalHours);
+        Assert.Null(settings.Updates.LastCheckedUtc);
     }
 }

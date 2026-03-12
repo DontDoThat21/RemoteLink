@@ -61,6 +61,29 @@ public static class MauiProgram
 
         // Shared application settings
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
+        builder.Services.AddSingleton<IAppUpdateService>(provider =>
+        {
+            var logger = provider.GetRequiredService<ILogger<AppUpdateService>>();
+            var platform = Microsoft.Maui.Devices.DeviceInfo.Current.Platform;
+            var options = new AppUpdateOptions
+            {
+                ProductName = "RemoteLink Mobile",
+                CurrentVersion = AppInfo.Current.VersionString,
+                Platform = platform == Microsoft.Maui.Devices.DevicePlatform.Android
+                    ? AppUpdatePlatform.MobileAndroid
+                    : platform == Microsoft.Maui.Devices.DevicePlatform.iOS
+                        ? AppUpdatePlatform.MobileIos
+                        : platform == Microsoft.Maui.Devices.DevicePlatform.MacCatalyst
+                            ? AppUpdatePlatform.MobileMacCatalyst
+                            : AppUpdatePlatform.MobileWindows,
+                WindowsStoreUrl = Environment.GetEnvironmentVariable("REMOTELINK_MOBILE_STORE_URL_WINDOWS"),
+                AndroidStoreUrl = Environment.GetEnvironmentVariable("REMOTELINK_MOBILE_STORE_URL_ANDROID"),
+                IosStoreUrl = Environment.GetEnvironmentVariable("REMOTELINK_MOBILE_STORE_URL_IOS"),
+                MacCatalystStoreUrl = Environment.GetEnvironmentVariable("REMOTELINK_MOBILE_STORE_URL_MACCATALYST")
+            };
+
+            return new AppUpdateService(new HttpClient(), logger, options);
+        });
         builder.Services.AddSingleton<IAppLockService, AppLockService>();
         builder.Services.AddSingleton<IDevicePhotoLibraryService, DevicePhotoLibraryService>();
         builder.Services.AddSingleton<IncomingConnectionNotificationListener>();
