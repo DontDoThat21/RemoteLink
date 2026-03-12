@@ -588,6 +588,87 @@ public class RemoteDesktopHost : BackgroundService
         }
     }
 
+    private string GetDefaultIncomingFileDirectory()
+    {
+        var downloadsDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Downloads",
+            "RemoteLink");
+
+        Directory.CreateDirectory(downloadsDirectory);
+        return downloadsDirectory;
+    }
+
+    private async void OnFileTransferRequested(object? sender, FileTransferRequest request)
+    {
+        try
+        {
+            if (!_clientPaired || !_currentPermissions.AllowFileTransfer)
+            {
+                await _fileTransferService.RejectTransferAsync(request.TransferId, FileTransferRejectionReason.Error);
+                _logger.LogWarning("Rejected incoming file transfer {TransferId} because the client is not authorized for file transfer.", request.TransferId);
+                return;
+            }
+
+            if (request.Direction != FileTransferDirection.Upload)
+            {
+                await _fileTransferService.RejectTransferAsync(request.TransferId, FileTransferRejectionReason.Error);
+                _logger.LogWarning("Rejected incoming file transfer {TransferId} with unsupported direction {Direction}.", request.TransferId, request.Direction);
+                return;
+            }
+
+            var incomingDirectory = _incomingFileDirectoryFactory();
+            Directory.CreateDirectory(incomingDirectory);
+
+            var savePath = GetUniqueIncomingFilePath(incomingDirectory, request.FileName);
+            var accepted = await _fileTransferService.AcceptTransferAsync(request.TransferId, savePath);
+            if (accepted)
+            {
+                _logger.LogInformation("Accepted incoming file transfer {TransferId} for {FileName} -> {Path}", request.TransferId, request.FileName, savePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to handle incoming file transfer request {TransferId}", request.TransferId);
+            try
+            {
+                await _fileTransferService.RejectTransferAsync(request.TransferId, FileTransferRejectionReason.Error);
+            }
+            catch (Exception rejectEx)
+            {
+                _logger.LogDebug(rejectEx, "Failed to reject incoming file transfer request {TransferId} after an error.", request.TransferId);
+            }
+        }
+    }
+
+    private void OnFileTransferCompleted(object? sender, FileTransferComplete complete)
+    {
+        if (complete.Success)
+        {
+            _logger.LogInformation("Incoming file transfer {TransferId} completed successfully: {Path}", complete.TransferId, complete.SavedPath);
+        }
+        else
+        {
+            _logger.LogWarning("Incoming file transfer {TransferId} failed: {Error}", complete.TransferId, complete.ErrorMessage);
+        }
+    }
+
+    private static string GetUniqueIncomingFilePath(string directory, string fileName)
+    {
+        var safeFileName = string.IsNullOrWhiteSpace(fileName) ? $"transfer_{Guid.NewGuid():N}.bin" : Path.GetFileName(fileName);
+        var baseName = Path.GetFileNameWithoutExtension(safeFileName);
+        var extension = Path.GetExtension(safeFileName);
+        var candidatePath = Path.Combine(directory, safeFileName);
+        var suffix = 1;
+
+        while (File.Exists(candidatePath))
+        {
+            candidatePath = Path.Combine(directory, $"{baseName}_{suffix++}{extension}");
+        }
+
+        return candidatePath;
+    }
+
     private async Task PersistRejectedAuditAsync(PairingRequest request, ConnectionAuditOutcome outcome, string description)
     {
         if (_userAccountService is null || !_userAccountService.IsSignedIn)

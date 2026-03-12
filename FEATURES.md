@@ -1,7 +1,7 @@
 # RemoteLink — Feature Spec & Status
 
 > Free, open-source remote desktop solution. TeamViewer alternative for local networks.
-> **Last updated:** 2026-03-12 (session 65)
+> **Last updated:** 2026-03-12 (session 67)
 
 ## Legend
 - ✅ Complete & Tested
@@ -147,7 +147,7 @@
 | 9.6 | Multi-session support | ✅ | Desktop outgoing connections now use `RemoteDesktopMultiSessionManager` + `SessionWorkspacePage` tabbed workspace; each tab owns an independent `RemoteDesktopClient`, multiple hosts can stay connected simultaneously, reconnecting to the same host re-focuses/reuses the existing tab, and closing a tab disconnects only that session; Shared regression tests added |
 | 9.7 | Drag-and-drop file transfer | ✅ | Desktop `RemoteViewerPage` now accepts Windows file drops directly onto the remote viewer surface with drag overlay/status feedback and queues uploads over the active session; `RemoteDesktopHost` auto-accepts paired incoming transfers into `Downloads\RemoteLink\` (unique filenames) so dropped files land on the remote machine without extra setup |
 | 9.8 | Screenshot capture (single frame save) | ✅ | Shared `RemoteFrameSnapshotService` standardizes current-frame export metadata/file naming; desktop `RemoteViewerPage` adds a Screenshot toolbar action saving the latest rendered frame to `Pictures\RemoteLink\Screenshots`; mobile `ConnectPage` adds a `📸 Shot` session action that saves the latest rendered frame to the device gallery/pictures location and offers immediate sharing |
-| 9.9 | Auto-update mechanism | 📋 | Check for new versions and self-update (desktop + mobile stores) |
+| 9.9 | Auto-update mechanism | ✅ | Shared `AppUpdateOptions`/`AppUpdateCheckResult` + `IAppUpdateService`/`AppUpdateService`; GitHub latest-release checks with platform-aware asset/store-link resolution (`.appinstaller`/MSIX for Windows, store URLs for mobile), persisted automatic-check settings (`AppSettings.Updates`), desktop/mobile app startup-resume prompts via `App.cs`, manual check/open-update actions in `SettingsPage.cs` + `MobileSettingsPage.cs`; validation: workspace build succeeded, `AppUpdateServiceTests` 4/4 passed, `RemoteDesktopHostTests` 51/51 passed |
 
 ---
 
@@ -222,6 +222,7 @@
 > Session 64 (2026-03-12): Feature 9.6 — Multi-session support completed. Added shared `RemoteClientSession` and `RemoteDesktopMultiSessionManager` so outgoing connections can run in parallel with independent `RemoteDesktopClient` instances while reusing existing sessions for the same host. Desktop UI now opens partner connections into a new `SessionWorkspacePage` tabbed workspace, and `RemoteViewerPage` supports tab-hosted session closure without collapsing the whole navigation stack. Validation: targeted Shared regression tests added for multi-session connect/reuse/close flows.
 > Session 65 (2026-03-12): Feature 9.7 — Drag-and-drop file transfer completed. Desktop `RemoteViewerPage` now wires native WinUI drag/drop on the viewer surface so local files can be dragged from Explorer directly into an active remote session, with overlay/status feedback and per-transfer progress/completion messaging. `RemoteDesktopHost` now auto-accepts paired incoming transfers into `Downloads\RemoteLink\` with unique filenames, console host DI now registers `IFileTransferService`, and new host regression tests cover paired acceptance/save and rejection before pairing.
 > Session 66 (2026-03-12): Feature 9.8 — Screenshot capture completed. Added shared `RemoteFrameSnapshotService` + regression tests for snapshot metadata/file naming, updated desktop `RemoteViewerPage` with a Screenshot toolbar action that saves the latest rendered frame to `Pictures\RemoteLink\Screenshots`, and updated mobile `ConnectPage` with a `📸 Shot` session action backed by `DevicePhotoLibraryService` so the current remote frame can be saved locally and shared immediately. Validation: targeted Shared snapshot tests passed, `RemoteLink.Mobile` Windows build succeeded, `RemoteLink.Desktop.UI` build succeeded, and `RemoteLink.Desktop.Tests` `ScreenFrameConverterTests` passed.
+> Session 67 (2026-03-12): Feature 9.9 — Auto-update mechanism completed. Added shared `AppUpdateOptions` / `AppUpdateCheckResult` models plus `IAppUpdateService` / `AppUpdateService` for GitHub latest-release checks, semantic version comparison, Windows asset preference (`.appinstaller` before MSIX), and platform-specific store-link resolution. Wired desktop and mobile `App.cs` startup/resume flows to respect `AppSettings.Updates` automatic-check settings, persist last-check timestamps, defer prompts while the mobile app is locked/inactive, and open release/store links on demand. Expanded desktop and mobile settings pages with automatic-check toggles, interval controls, manual `Check now` actions, and `Open update` actions. Validation: workspace build succeeded, `AppUpdateServiceTests` passed (4/4), and `RemoteDesktopHostTests` passed (51/51).
 ---
 
 *This document is automatically updated as features are completed and tested.*

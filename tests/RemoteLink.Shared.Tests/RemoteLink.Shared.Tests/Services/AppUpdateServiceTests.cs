@@ -49,7 +49,7 @@ public class AppUpdateServiceTests
               ]
             }
             """,
-            options => options.AndroidStoreUrl = "https://play.google.com/store/apps/details?id=com.remotelink.mobile");
+            androidStoreUrl: "https://play.google.com/store/apps/details?id=com.remotelink.mobile");
 
         var result = await service.CheckForUpdatesAsync();
 
@@ -106,16 +106,21 @@ public class AppUpdateServiceTests
         string currentVersion,
         AppUpdatePlatform platform,
         string json,
-        Action<AppUpdateOptions>? mutate = null)
+        string? windowsStoreUrl = null,
+        string? androidStoreUrl = null,
+        string? iosStoreUrl = null,
+        string? macCatalystStoreUrl = null)
     {
         var options = new AppUpdateOptions
         {
             ProductName = "RemoteLink",
             CurrentVersion = currentVersion,
-            Platform = platform
+            Platform = platform,
+            WindowsStoreUrl = windowsStoreUrl,
+            AndroidStoreUrl = androidStoreUrl,
+            IosStoreUrl = iosStoreUrl,
+            MacCatalystStoreUrl = macCatalystStoreUrl
         };
-
-        mutate?.Invoke(options);
 
         var httpClient = new HttpClient(new StubHttpMessageHandler(json))
         {

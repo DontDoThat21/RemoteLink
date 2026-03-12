@@ -30,65 +30,6 @@ internal sealed class FakeCommunicationService : ICommunicationService, IDisposa
     {
         get { lock (_lock) { return new List<ScreenData>(_sentScreenData); } }
     }
-
-internal sealed class FakeSystemPowerService : ISystemPowerService
-{
-    public int RestartCallCount { get; private set; }
-
-    public Task RestartComputerAsync(CancellationToken cancellationToken = default)
-    {
-        RestartCallCount++;
-        return Task.CompletedTask;
-    }
-}
-
-internal sealed class FakeRemoteSystemInfoProvider : IRemoteSystemInfoProvider
-{
-    public RemoteSystemInfo Snapshot { get; set; } = new()
-    {
-        MachineName = "TestHost",
-        OperatingSystem = "Windows 11",
-        OsArchitecture = "X64",
-        FrameworkDescription = ".NET 10.0",
-        ProcessorName = "Test CPU",
-        LogicalProcessorCount = 8,
-        TotalMemoryBytes = 16L * 1024 * 1024 * 1024,
-        AvailableMemoryBytes = 10L * 1024 * 1024 * 1024,
-        UptimeSeconds = 7200,
-        Disks =
-        {
-            new RemoteDiskInfo
-            {
-                Name = "C:\\",
-                VolumeLabel = "System",
-                DriveFormat = "NTFS",
-                DriveType = "Fixed",
-                TotalSizeBytes = 500L * 1024 * 1024 * 1024,
-                AvailableFreeSpaceBytes = 200L * 1024 * 1024 * 1024
-            }
-        },
-        NetworkInterfaces =
-        {
-            new RemoteNetworkInterfaceInfo
-            {
-                Name = "Ethernet",
-                Description = "Ethernet Adapter",
-                InterfaceType = "Ethernet",
-                OperationalStatus = "Up",
-                MacAddress = "00:11:22:33:44:55",
-                IPv4Addresses = { "192.168.1.10" }
-            }
-        }
-    };
-
-    public int CallCount { get; private set; }
-
-    public Task<RemoteSystemInfo> GetSystemInfoAsync(CancellationToken cancellationToken = default)
-    {
-        CallCount++;
-        return Task.FromResult(Snapshot);
-    }
-}
     public List<InputEvent> SentInputEvents
     {
         get { lock (_lock) { return new List<InputEvent>(_sentInputEvents); } }
@@ -312,6 +253,54 @@ internal sealed class FakeSystemPowerService : ISystemPowerService
     {
         RestartCallCount++;
         return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeRemoteSystemInfoProvider : IRemoteSystemInfoProvider
+{
+    public RemoteSystemInfo Snapshot { get; set; } = new()
+    {
+        MachineName = "TestHost",
+        OperatingSystem = "Windows 11",
+        OsArchitecture = "X64",
+        FrameworkDescription = ".NET 10.0",
+        ProcessorName = "Test CPU",
+        LogicalProcessorCount = 8,
+        TotalMemoryBytes = 16L * 1024 * 1024 * 1024,
+        AvailableMemoryBytes = 10L * 1024 * 1024 * 1024,
+        UptimeSeconds = 7200,
+        Disks =
+        {
+            new RemoteDiskInfo
+            {
+                Name = "C:\\",
+                VolumeLabel = "System",
+                DriveFormat = "NTFS",
+                DriveType = "Fixed",
+                TotalSizeBytes = 500L * 1024 * 1024 * 1024,
+                AvailableFreeSpaceBytes = 200L * 1024 * 1024 * 1024
+            }
+        },
+        NetworkInterfaces =
+        {
+            new RemoteNetworkInterfaceInfo
+            {
+                Name = "Ethernet",
+                Description = "Ethernet Adapter",
+                InterfaceType = "Ethernet",
+                OperationalStatus = "Up",
+                MacAddress = "00:11:22:33:44:55",
+                IPv4Addresses = { "192.168.1.10" }
+            }
+        }
+    };
+
+    public int CallCount { get; private set; }
+
+    public Task<RemoteSystemInfo> GetSystemInfoAsync(CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        return Task.FromResult(Snapshot);
     }
 }
 

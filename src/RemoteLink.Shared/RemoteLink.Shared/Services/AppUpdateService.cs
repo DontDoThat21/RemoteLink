@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
@@ -29,7 +30,7 @@ public sealed class AppUpdateService : IAppUpdateService
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, _options.LatestReleaseApiUrl);
-            request.Headers.Add("User-Agent", $"{_options.ProductName}/{_options.CurrentVersion}");
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue(GetUserAgentProductName(), NormalizeUserAgentVersion(_options.CurrentVersion)));
             request.Headers.Add("Accept", "application/vnd.github+json");
 
             using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -126,7 +127,7 @@ public sealed class AppUpdateService : IAppUpdateService
         if (!settings.Updates.LastCheckedUtc.HasValue)
             return true;
 
-        return utcNow - settings.Updates.LastCheckedUtc.Value >= TimeSpan.FromHours(intervalHours);
+        return utcNow - new DateTimeOffset(DateTime.SpecifyKind(settings.Updates.LastCheckedUtc.Value, DateTimeKind.Utc)) >= TimeSpan.FromHours(intervalHours);
     }
 
     public void MarkChecked(AppSettings settings, DateTimeOffset utcNow)
@@ -145,7 +146,8 @@ public sealed class AppUpdateService : IAppUpdateService
         var preferredAsset = _options.Platform switch
         {
             AppUpdatePlatform.DesktopWindows or AppUpdatePlatform.MobileWindows =>
-                assets.FirstOrDefault(asset => EndsWithAny(asset.Name, ".appinstaller", ".msixbundle", ".msix")),
+                assets.FirstOrDefault(asset => EndsWithAny(asset.Name, ".appinstaller"))
+                ?? assets.FirstOrDefault(asset => EndsWithAny(asset.Name, ".msixbundle", ".msix")),
             AppUpdatePlatform.MobileAndroid =>
                 assets.FirstOrDefault(asset => EndsWithAny(asset.Name, ".aab", ".apk")),
             _ => null
@@ -171,6 +173,21 @@ public sealed class AppUpdateService : IAppUpdateService
             return false;
 
         return suffixes.Any(suffix => value.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string GetUserAgentProductName()
+    {
+        var sanitized = new string(_options.ProductName.Where(char.IsLetterOrDigit).ToArray());
+        return string.IsNullOrWhiteSpace(sanitized) ? "RemoteLink" : sanitized;
+    }
+
+    private static string NormalizeUserAgentVersion(string version)
+    {
+        var normalized = NormalizeDisplayVersion(version);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return "0.0.0";
+
+        return normalized.Replace(' ', '-');
     }
 
     private static string NormalizeDisplayVersion(string version)
