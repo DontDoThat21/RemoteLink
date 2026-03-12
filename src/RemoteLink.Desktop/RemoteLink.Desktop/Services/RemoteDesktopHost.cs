@@ -173,8 +173,13 @@ public class RemoteDesktopHost : BackgroundService
             // Initialize messaging service with host device info
             _messagingService.Initialize(Environment.MachineName, $"{Environment.MachineName} Host");
 
-            // Generate a fresh PIN and display it — the remote user must enter this
-            var pin = _pairing.GeneratePin();
+            // Generate a fresh PIN only when there is not already a valid PIN available.
+            // The desktop UI may pre-generate one so the displayed value must stay in sync.
+            var pin = !string.IsNullOrWhiteSpace(_pairing.CurrentPin) &&
+                      !_pairing.IsPinExpired &&
+                      !_pairing.IsLockedOut
+                ? _pairing.CurrentPin
+                : _pairing.GeneratePin();
             _logger.LogInformation("════════════════════════════════════════");
             _logger.LogInformation("  RemoteLink PIN: {Pin}", pin);
             _logger.LogInformation("  Enter this PIN on your mobile device.");

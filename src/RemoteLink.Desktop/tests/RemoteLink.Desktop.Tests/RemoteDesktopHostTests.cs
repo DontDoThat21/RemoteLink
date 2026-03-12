@@ -415,15 +415,15 @@ internal sealed class FakeInputHandler : IInputHandler
 /// <summary>In-memory fake for <see cref="IPairingService"/>.</summary>
 internal sealed class FakePairingService : IPairingService
 {
-    private string _currentPin = "123456";
-
     /// <summary>Controls whether <see cref="ValidatePin"/> returns true.</summary>
     public bool ValidatePinResult { get; set; } = true;
     public int ValidatePinCallCount { get; private set; }
+    public int GeneratePinCallCount { get; private set; }
+    public string GeneratedPin { get; set; } = "654321";
 
     public bool IsLockedOut { get; set; }
-    public string? CurrentPin => _currentPin;
-    public bool IsPinExpired => false;
+    public string? CurrentPin { get; set; } = "123456";
+    public bool IsPinExpired { get; set; }
     public int AttemptsRemaining => IsLockedOut ? 0 : 5;
     public int MaxAttempts => 5;
 
@@ -432,9 +432,12 @@ internal sealed class FakePairingService : IPairingService
 
     public string GeneratePin()
     {
-        _currentPin = "123456";
-        PinGenerated?.Invoke(this, _currentPin);
-        return _currentPin;
+        GeneratePinCallCount++;
+        CurrentPin = GeneratedPin;
+        IsPinExpired = false;
+        IsLockedOut = false;
+        PinGenerated?.Invoke(this, CurrentPin);
+        return CurrentPin;
     }
 
     public void RefreshPin() => GeneratePin();
@@ -1152,6 +1155,20 @@ public class RemoteDesktopHostTests : IAsyncDisposable
 
         Assert.Equal(0, _screen.StartCallCount);
         Assert.False(_screen.IsCapturing);
+    }
+
+    [Fact]
+    public async Task StartHostAsync_ReusesExistingValidPin_InsteadOfGeneratingANewOne()
+    {
+        _pairing.CurrentPin = "111111";
+        _pairing.GeneratedPin = "222222";
+        _pairing.IsPinExpired = false;
+        _pairing.IsLockedOut = false;
+
+        await StartHostAsync();
+
+        Assert.Equal("111111", _pairing.CurrentPin);
+        Assert.Equal(0, _pairing.GeneratePinCallCount);
     }
 
     [Fact]
