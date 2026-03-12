@@ -14,6 +14,7 @@ public class RemoteViewerPage : ContentPage
 {
     private readonly RemoteDesktopClient _client;
     private readonly ILogger<RemoteViewerPage> _logger;
+    private readonly Func<Task>? _closeSessionAsync;
 
     // Viewer
     private readonly Image _remoteViewer;
@@ -40,9 +41,18 @@ public class RemoteViewerPage : ContentPage
     private bool _isDisconnecting;
 
     public RemoteViewerPage(RemoteDesktopClient client, ILogger<RemoteViewerPage> logger)
+        : this(client, logger, null)
+    {
+    }
+
+    public RemoteViewerPage(
+        RemoteDesktopClient client,
+        ILogger<RemoteViewerPage> logger,
+        Func<Task>? closeSessionAsync)
     {
         _client = client;
         _logger = logger;
+        _closeSessionAsync = closeSessionAsync;
 
         Title = $"Remote Desktop — {_client.ConnectedHost?.DeviceName ?? "Unknown"}";
         BackgroundColor = Colors.Black;
@@ -506,6 +516,9 @@ public class RemoteViewerPage : ContentPage
             if (_client.IsAutoReconnectPending)
                 return;
 
+            if (_closeSessionAsync is not null)
+                return;
+
             // Remote host dropped the connection — navigate back
             MainThread.BeginInvokeOnMainThread(async () =>
             {
@@ -521,6 +534,12 @@ public class RemoteViewerPage : ContentPage
 
         try
         {
+            if (_closeSessionAsync is not null)
+            {
+                await _closeSessionAsync();
+                return;
+            }
+
             await _client.DisconnectAsync();
         }
         catch (Exception ex)
@@ -528,7 +547,8 @@ public class RemoteViewerPage : ContentPage
             _logger.LogError(ex, "Error during disconnect");
         }
 
-        await Navigation.PopAsync();
+        if (_closeSessionAsync is null)
+            await Navigation.PopAsync();
     }
 
     private async void OnRemoteRebootClicked(object? sender, EventArgs e)

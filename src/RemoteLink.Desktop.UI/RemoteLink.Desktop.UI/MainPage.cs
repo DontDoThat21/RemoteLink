@@ -32,8 +32,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly ISessionRecorder _sessionRecorder;
     private readonly IScreenCapture _screenCapture;
     private readonly IMessagingService _messaging;
+    private readonly RemoteDesktopMultiSessionManager _multiSessionManager;
     private readonly Func<ChatPage> _chatPageFactory;
-    private readonly Func<RemoteViewerPage> _viewerPageFactory;
+    private readonly Func<SessionWorkspacePage> _sessionWorkspacePageFactory;
     private readonly DeviceInfo _localDevice;
 
     private CancellationTokenSource? _hostCts;
@@ -106,8 +107,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         ISessionRecorder sessionRecorder,
         IScreenCapture screenCapture,
         IMessagingService messaging,
+        RemoteDesktopMultiSessionManager multiSessionManager,
         Func<ChatPage> chatPageFactory,
-        Func<RemoteViewerPage> viewerPageFactory,
+        Func<SessionWorkspacePage> sessionWorkspacePageFactory,
         DeviceInfo localDevice)
     {
         _logger = logger;
@@ -126,8 +128,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _sessionRecorder = sessionRecorder;
         _screenCapture = screenCapture;
         _messaging = messaging;
+        _multiSessionManager = multiSessionManager;
         _chatPageFactory = chatPageFactory;
-        _viewerPageFactory = viewerPageFactory;
+        _sessionWorkspacePageFactory = sessionWorkspacePageFactory;
         _localDevice = localDevice;
 
         _deviceNumericId = DeviceIdentityManager.GetPreferredDisplayId(_localDevice);
@@ -181,8 +184,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             {
                 if (_connectButton != null)
                 {
-                    _connectButton.Text = "Connect";
+                    _connectButton.Text = "Open Session";
                     _connectButton.BackgroundColor = ThemeColors.Accent;
+                    _connectButton.IsEnabled = true;
                 }
             });
         }
@@ -556,7 +560,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         // ── Connect button ──
         _connectButton = new Button
         {
-            Text = "Connect",
+            Text = "Open Session",
             FontSize = 14,
             BackgroundColor = ThemeColors.Accent,
             TextColor = Colors.White,
@@ -1455,11 +1459,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private async void OnConnectToPartnerClicked(object? sender, EventArgs e)
     {
         if (_isConnecting)
-        {
-            // Disconnect
-            await DisconnectFromPartnerAsync();
             return;
-        }
 
         var partnerId = _partnerIdEntry?.Text?.Trim();
         var pin = _partnerPinEntry?.Text?.Trim();
@@ -1485,48 +1485,55 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         }
 
         _isConnecting = true;
-        SetPartnerStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", ThemeColors.Warning);
+        SetPartnerStatus($"Opening session to {targetDevice.IPAddress}:{targetDevice.Port}...", ThemeColors.Warning);
 
         MainThread.BeginInvokeOnMainThread(() =>
         {
             if (_connectButton != null)
             {
-                _connectButton.Text = "Cancel";
-                _connectButton.BackgroundColor = ThemeColors.Danger;
+                _connectButton.Text = "Opening...";
+                _connectButton.BackgroundColor = ThemeColors.SecondaryButtonBackground;
+                _connectButton.IsEnabled = false;
             }
         });
 
-        var success = await _client.ConnectToHostAsync(targetDevice, pin);
-
-        if (success)
+        try
         {
-            SetPartnerStatus($"Connected to {targetDevice.DeviceName}", ThemeColors.Success);
+            var session = await _multiSessionManager.ConnectAsync(targetDevice, pin);
+            SetPartnerStatus(
+                $"Session ready for {targetDevice.DeviceName} ({_multiSessionManager.GetSessions().Count} active tab(s))",
+                ThemeColors.Success);
+
             MainThread.BeginInvokeOnMainThread(async () =>
             {
                 if (_connectButton != null)
                 {
-                    _connectButton.Text = "Disconnect";
-                    _connectButton.BackgroundColor = ThemeColors.Danger;
+                    _connectButton.Text = "Open Session";
+                    _connectButton.BackgroundColor = ThemeColors.Accent;
+                    _connectButton.IsEnabled = true;
                 }
 
-                // Open the remote viewer page
-                var viewerPage = _viewerPageFactory();
-                await Navigation.PushAsync(viewerPage);
+                var workspacePage = _sessionWorkspacePageFactory();
+                workspacePage.FocusSession(session.SessionId);
+                await Navigation.PushAsync(workspacePage);
             });
         }
-        else
+        catch (Exception ex)
         {
-            _isConnecting = false;
+            _logger.LogWarning(ex, "Failed to open remote session to {Host}", targetDevice.DeviceName);
+            SetPartnerStatus(ex.Message, ThemeColors.Danger);
             MainThread.BeginInvokeOnMainThread(() =>
             {
                 if (_connectButton != null)
                 {
-                    _connectButton.Text = "Connect";
+                    _connectButton.Text = "Open Session";
                     _connectButton.BackgroundColor = ThemeColors.Accent;
+                    _connectButton.IsEnabled = true;
                 }
             });
-            // Status is set by PairingFailed event handler
         }
+
+        _isConnecting = false;
     }
 
     private async Task DisconnectFromPartnerAsync()
@@ -1539,8 +1546,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         {
             if (_connectButton != null)
             {
-                _connectButton.Text = "Connect";
+                _connectButton.Text = "Open Session";
                 _connectButton.BackgroundColor = ThemeColors.Accent;
+                _connectButton.IsEnabled = true;
             }
         });
     }
@@ -1573,8 +1581,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             {
                 if (_connectButton != null)
                 {
-                    _connectButton.Text = "Connect";
+                    _connectButton.Text = "Open Session";
                     _connectButton.BackgroundColor = ThemeColors.Accent;
+                    _connectButton.IsEnabled = true;
                 }
             });
         }

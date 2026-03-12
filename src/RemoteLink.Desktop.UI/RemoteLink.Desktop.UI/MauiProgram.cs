@@ -91,6 +91,24 @@ public static class MauiProgram
             Func<ICommunicationService> commFactory = () => ActivatorUtilities.CreateInstance<AdaptiveCommunicationService>(provider);
             return new RemoteDesktopClient(logger, discovery, commFactory, natTraversal, localDevice);
         });
+        builder.Services.AddSingleton<RemoteDesktopMultiSessionManager>(provider =>
+        {
+            var logger = provider.GetRequiredService<ILogger<RemoteDesktopMultiSessionManager>>();
+            var discovery = provider.GetRequiredService<INetworkDiscovery>();
+            var natTraversal = provider.GetRequiredService<INatTraversalService>();
+            var localDevice = provider.GetRequiredService<Shared.Models.DeviceInfo>();
+            var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+            return new RemoteDesktopMultiSessionManager(() =>
+            {
+                Func<ICommunicationService> commFactory = () => ActivatorUtilities.CreateInstance<AdaptiveCommunicationService>(provider);
+                return new RemoteDesktopClient(
+                    loggerFactory.CreateLogger<RemoteDesktopClient>(),
+                    discovery,
+                    commFactory,
+                    natTraversal,
+                    localDevice);
+            }, logger);
+        });
 
         // System tray service (minimize to tray, context menu)
         builder.Services.AddSingleton<WindowsSystemTrayService>();
@@ -109,6 +127,9 @@ public static class MauiProgram
         builder.Services.AddTransient<ChatPage>();
         builder.Services.AddSingleton<Func<ChatPage>>(provider =>
             () => provider.GetRequiredService<ChatPage>());
+        builder.Services.AddTransient<SessionWorkspacePage>();
+        builder.Services.AddSingleton<Func<SessionWorkspacePage>>(provider =>
+            () => provider.GetRequiredService<SessionWorkspacePage>());
         builder.Services.AddTransient<RemoteViewerPage>();
         builder.Services.AddSingleton<Func<RemoteViewerPage>>(provider =>
             () => provider.GetRequiredService<RemoteViewerPage>());

@@ -28,7 +28,7 @@ public enum ClientConnectionState
 /// Main service for the remote desktop mobile client.
 /// Handles network discovery, TCP connection, and PIN-based pairing with the desktop host.
 /// </summary>
-public class RemoteDesktopClient
+public class RemoteDesktopClient : IDisposable
 {
     private readonly ILogger<RemoteDesktopClient> _logger;
     private readonly INetworkDiscovery _networkDiscovery;
@@ -45,6 +45,7 @@ public class RemoteDesktopClient
     private DeviceInfo? _pendingAutoReconnectHost;
     private TimeSpan _pendingAutoReconnectDelay;
     private bool _isAutoReconnectPending;
+    private bool _disposed;
 
     private const int RemoteRebootReconnectAttempts = 10;
     private static readonly TimeSpan RemoteRebootReconnectRetryDelay = TimeSpan.FromSeconds(5);
@@ -134,6 +135,17 @@ public class RemoteDesktopClient
 
         _networkDiscovery.DeviceDiscovered += OnDeviceDiscovered;
         _networkDiscovery.DeviceLost += OnDeviceLost;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _networkDiscovery.DeviceDiscovered -= OnDeviceDiscovered;
+        _networkDiscovery.DeviceLost -= OnDeviceLost;
+        ResetAutoReconnectState(cancelPendingTask: true);
     }
 
     // ── Discovery ─────────────────────────────────────────────────────────────
