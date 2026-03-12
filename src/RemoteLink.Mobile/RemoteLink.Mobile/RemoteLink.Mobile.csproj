@@ -4,6 +4,7 @@
     <!-- MAUI Configuration -->
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
+    <OutputType>Exe</OutputType>
     <RootNamespace>RemoteLink.Mobile</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
