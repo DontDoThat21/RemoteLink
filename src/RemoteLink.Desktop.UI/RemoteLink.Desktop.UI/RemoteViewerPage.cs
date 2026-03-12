@@ -6,7 +6,9 @@ using RemoteLink.Shared.Services;
 using System.Collections.Concurrent;
 using System.Text;
 #if WINDOWS
-using Microsoft.UI.Xaml;
+using WinDragEventArgs = Microsoft.UI.Xaml.DragEventArgs;
+using WinFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
+using WinDataPackageOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 #endif
@@ -37,6 +39,7 @@ public class RemoteViewerPage : ContentPage
     private readonly Label _qualityLabel;
     private readonly Label _transferStatusLabel;
     private readonly Border _dropOverlay;
+    private RemoteFrameSnapshot? _latestSnapshot;
 
     // Keyboard capture
     private readonly Entry _keyCapture;
@@ -52,7 +55,7 @@ public class RemoteViewerPage : ContentPage
     private IFileTransferService? _fileTransferService;
     private readonly ConcurrentDictionary<string, string> _pendingTransferNames = new(StringComparer.OrdinalIgnoreCase);
 #if WINDOWS
-    private FrameworkElement? _nativeDropTarget;
+    private WinFrameworkElement? _nativeDropTarget;
 #endif
 
     public RemoteViewerPage(RemoteDesktopClient client, ILogger<RemoteViewerPage> logger)
@@ -122,6 +125,18 @@ public class RemoteViewerPage : ContentPage
         };
         systemInfoButton.Clicked += OnSystemInfoClicked;
 
+        var screenshotButton = new Button
+        {
+            Text = "Screenshot",
+            BackgroundColor = ThemeColors.Success,
+            TextColor = Colors.White,
+            CornerRadius = 4,
+            HeightRequest = 32,
+            FontSize = 12,
+            Padding = new Thickness(12, 0),
+        };
+        screenshotButton.Clicked += OnScreenshotClicked;
+
         var commandButton = new Button
         {
             Text = "Command",
@@ -156,6 +171,7 @@ public class RemoteViewerPage : ContentPage
                 new ColumnDefinition(GridLength.Auto),    // host name
                 new ColumnDefinition(GridLength.Auto),    // FPS
                 new ColumnDefinition(GridLength.Auto),    // latency
+                new ColumnDefinition(GridLength.Auto),    // screenshot
                 new ColumnDefinition(GridLength.Auto),    // system info
                 new ColumnDefinition(GridLength.Auto),    // command
                 new ColumnDefinition(GridLength.Auto),    // reboot
@@ -167,10 +183,11 @@ public class RemoteViewerPage : ContentPage
                 CreateGridChild(_hostNameLabel, column: 0),
                 CreateGridChild(_fpsLabel, column: 1),
                 CreateGridChild(_latencyLabel, column: 2),
-                CreateGridChild(systemInfoButton, column: 3),
-                CreateGridChild(commandButton, column: 4),
-                CreateGridChild(rebootButton, column: 5),
-                CreateGridChild(disconnectButton, column: 7),
+                CreateGridChild(screenshotButton, column: 3),
+                CreateGridChild(systemInfoButton, column: 4),
+                CreateGridChild(commandButton, column: 5),
+                CreateGridChild(rebootButton, column: 6),
+                CreateGridChild(disconnectButton, column: 8),
             }
         };
 
@@ -362,12 +379,14 @@ public class RemoteViewerPage : ContentPage
 
         try
         {
-            var stream = ScreenFrameConverter.ToImageStream(screenData);
-            if (stream is null)
+            var snapshot = RemoteFrameSnapshotService.CreateSnapshot(screenData);
+            if (snapshot is null)
             {
                 _frameRenderBusy = false;
                 return;
             }
+
+            _latestSnapshot = snapshot;
 
             if (screenData.Width > 0) _remoteWidth = screenData.Width;
             if (screenData.Height > 0) _remoteHeight = screenData.Height;
@@ -376,7 +395,7 @@ public class RemoteViewerPage : ContentPage
             {
                 try
                 {
-                    _remoteViewer.Source = ImageSource.FromStream(() => stream);
+                    _remoteViewer.Source = ImageSource.FromStream(() => new MemoryStream(snapshot.ImageBytes, writable: false));
 
                     // Update resolution label on change
                     if (_remoteWidth > 0 && _remoteHeight > 0)
@@ -391,6 +410,38 @@ public class RemoteViewerPage : ContentPage
         catch
         {
             _frameRenderBusy = false;
+        }
+    }
+
+    private async void OnScreenshotClicked(object? sender, EventArgs e)
+    {
+        var snapshot = _latestSnapshot;
+        if (snapshot is null)
+        {
+            await DisplayAlertAsync("Screenshot", "Wait for the remote desktop to render a frame, then try again.", "OK");
+            return;
+        }
+
+        try
+        {
+            var picturesDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+            if (string.IsNullOrWhiteSpace(picturesDirectory))
+                picturesDirectory = FileSystem.Current.AppDataDirectory;
+
+            var targetDirectory = Path.Combine(picturesDirectory, "RemoteLink", "Screenshots");
+            Directory.CreateDirectory(targetDirectory);
+
+            var fileName = RemoteFrameSnapshotService.BuildFileName(_client.ConnectedHost?.DeviceName, snapshot);
+            var path = GetUniquePath(Path.Combine(targetDirectory, fileName));
+            await File.WriteAllBytesAsync(path, snapshot.ImageBytes);
+
+            UpdateTransferStatus($"Saved screenshot: {Path.GetFileName(path)}", ThemeColors.Success);
+            await DisplayAlertAsync("Screenshot Saved", $"Saved to {path}", "OK");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save remote screenshot");
+            await DisplayAlertAsync("Screenshot", $"Failed to save screenshot: {ex.Message}", "OK");
         }
     }
 
@@ -753,7 +804,7 @@ public class RemoteViewerPage : ContentPage
             _nativeDropTarget.Drop -= OnNativeViewerDrop;
         }
 
-        _nativeDropTarget = _remoteViewer.Handler?.PlatformView as FrameworkElement;
+        _nativeDropTarget = _remoteViewer.Handler?.PlatformView as WinFrameworkElement;
         if (_nativeDropTarget is null)
             return;
 
@@ -763,27 +814,27 @@ public class RemoteViewerPage : ContentPage
         _nativeDropTarget.Drop += OnNativeViewerDrop;
     }
 
-    private void OnNativeViewerDragOver(object sender, DragEventArgs e)
+    private void OnNativeViewerDragOver(object sender, WinDragEventArgs e)
     {
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
-            e.AcceptedOperation = DataPackageOperation.Copy;
+            e.AcceptedOperation = WinDataPackageOperation.Copy;
             e.DragUIOverride.Caption = "Send files to the remote host";
             e.DragUIOverride.IsCaptionVisible = true;
             ShowDropOverlay();
             return;
         }
 
-        e.AcceptedOperation = DataPackageOperation.None;
+        e.AcceptedOperation = WinDataPackageOperation.None;
         HideDropOverlay();
     }
 
-    private void OnNativeViewerDragLeave(object sender, DragEventArgs e)
+    private void OnNativeViewerDragLeave(object sender, WinDragEventArgs e)
     {
         HideDropOverlay();
     }
 
-    private async void OnNativeViewerDrop(object sender, DragEventArgs e)
+    private async void OnNativeViewerDrop(object sender, WinDragEventArgs e)
     {
         HideDropOverlay();
 
@@ -808,6 +859,7 @@ public class RemoteViewerPage : ContentPage
     private async void OnDisconnectClicked(object? sender, EventArgs e)
     {
         _isDisconnecting = true;
+        _latestSnapshot = null;
 
         try
         {
@@ -955,6 +1007,25 @@ public class RemoteViewerPage : ContentPage
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string GetUniquePath(string fullPath)
+    {
+        if (!File.Exists(fullPath))
+            return fullPath;
+
+        var directory = Path.GetDirectoryName(fullPath) ?? FileSystem.Current.AppDataDirectory;
+        var fileName = Path.GetFileNameWithoutExtension(fullPath);
+        var extension = Path.GetExtension(fullPath);
+
+        for (var counter = 2; counter < 10_000; counter++)
+        {
+            var candidate = Path.Combine(directory, $"{fileName}_{counter}{extension}");
+            if (!File.Exists(candidate))
+                return candidate;
+        }
+
+        return Path.Combine(directory, $"{fileName}_{Guid.NewGuid():N}{extension}");
     }
 
     private static string FormatCommandResult(RemoteCommandExecutionResult result)

@@ -62,6 +62,7 @@ public static class MauiProgram
         // Shared application settings
         builder.Services.AddSingleton<IAppSettingsService, AppSettingsService>();
         builder.Services.AddSingleton<IAppLockService, AppLockService>();
+        builder.Services.AddSingleton<IDevicePhotoLibraryService, DevicePhotoLibraryService>();
         builder.Services.AddSingleton<IncomingConnectionNotificationListener>();
         builder.Services.AddSingleton<INatTraversalService, NatTraversalService>();
 

@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Web;
 using Microsoft.Extensions.Logging;
+using RemoteLink.Mobile.Services;
 using RemoteLink.Shared.Interfaces;
 using RemoteLink.Shared.Models;
 using RemoteLink.Shared.Services;
@@ -23,6 +24,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private readonly INetworkDiscovery _networkDiscovery;
     private readonly IConnectionHistoryService _connectionHistory;
     private readonly IAppSettingsService _settingsService;
+    private readonly IDevicePhotoLibraryService _photoLibraryService;
     private string _manualStatusText = string.Empty;
     private Color _manualStatusColor = Colors.Transparent;
     private bool _manualStatusVisible;
@@ -50,6 +52,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     // Throttle frame rendering
     private volatile bool _frameRenderBusy;
+    private RemoteFrameSnapshot? _latestSnapshot;
 
     // Track connection start time for duration calculation
     private DateTime? _connectionStartedAt;
@@ -125,13 +128,15 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         RemoteDesktopClient client,
         INetworkDiscovery networkDiscovery,
         IConnectionHistoryService connectionHistory,
-        IAppSettingsService settingsService)
+        IAppSettingsService settingsService,
+        IDevicePhotoLibraryService photoLibraryService)
     {
         _logger = logger;
         _client = client;
         _networkDiscovery = networkDiscovery;
         _connectionHistory = connectionHistory;
         _settingsService = settingsService;
+        _photoLibraryService = photoLibraryService;
 
         Title = "Connect";
         RefreshTheme();
@@ -433,6 +438,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         var qualityButton = BuildSessionActionButton("📊 Quality", OnQualityClicked);
         _monitorButton = BuildSessionActionButton("🖥 Monitor", OnMonitorClicked);
+        var screenshotButton = BuildSessionActionButton("📸 Shot", OnScreenshotClicked, ThemeColors.Success);
         var commandButton = BuildSessionActionButton("⌘ Command", OnRemoteCommandClicked, ThemeColors.Accent);
         var systemInfoButton = BuildSessionActionButton("ℹ Info", OnSystemInfoClicked, ThemeColors.Info);
         var rebootButton = BuildSessionActionButton("↻ Reboot", OnRemoteRebootClicked, ThemeColors.WarningText);
@@ -478,6 +484,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                                 _specialKeysToggleButton,
                                 qualityButton,
                                 _monitorButton,
+                                screenshotButton,
                                 commandButton,
                                 systemInfoButton,
                                 rebootButton,
@@ -1283,6 +1290,47 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         if (confirm)
             await DisconnectAsync();
+    }
+
+    private async void OnScreenshotClicked(object? sender, EventArgs e)
+    {
+        if (!_client.IsConnected)
+            return;
+
+        var snapshot = _latestSnapshot;
+        if (snapshot is null)
+        {
+            await DisplayAlertAsync("Screenshot", "Wait for the remote desktop to render a frame, then try again.", "OK");
+            return;
+        }
+
+        try
+        {
+            var fileName = RemoteFrameSnapshotService.BuildFileName(_client.ConnectedHost?.DeviceName, snapshot);
+            var location = await _photoLibraryService.SaveImageAsync(snapshot.ImageBytes, fileName, snapshot.MimeType);
+            StatusMessage = $"Screenshot saved: {fileName}";
+
+            var shareNow = await DisplayAlertAsync(
+                "Screenshot Saved",
+                $"Saved {fileName} to {location}.",
+                "Share",
+                "OK");
+
+            if (shareNow)
+            {
+                var sharePath = await SaveScreenshotShareCopyAsync(fileName, snapshot.ImageBytes);
+                await Share.Default.RequestAsync(new ShareFileRequest
+                {
+                    Title = "Share screenshot",
+                    File = new ShareFile(sharePath)
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save remote screenshot");
+            await DisplayAlertAsync("Screenshot", $"Failed to save screenshot: {ex.Message}", "OK");
+        }
     }
 
     private async void OnRemoteRebootClicked(object? sender, EventArgs e)
@@ -2280,6 +2328,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     OnManualEntryChanged(null, null!);
                     _selectedMonitorId = null;
                     _selectedQuality = 75;
+                    _latestSnapshot = null;
                     SetMonitorStatus("Loading remote monitors...", ThemeColors.TextSecondary);
                     ApplyConnectionQuality(null);
                     UpdateSessionOverlayVisibility();
@@ -2355,12 +2404,14 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         if (_frameRenderBusy) return;
         _frameRenderBusy = true;
 
-        var stream = ScreenFrameConverter.ToImageStream(screenData);
-        if (stream is null)
+        var snapshot = RemoteFrameSnapshotService.CreateSnapshot(screenData);
+        if (snapshot is null)
         {
             _frameRenderBusy = false;
             return;
         }
+
+        _latestSnapshot = snapshot;
 
         if (screenData.Width > 0) _desktopWidth = screenData.Width;
         if (screenData.Height > 0) _desktopHeight = screenData.Height;
@@ -2369,13 +2420,23 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         {
             try
             {
-                _remoteViewer.Source = ImageSource.FromStream(() => stream);
+                _remoteViewer.Source = ImageSource.FromStream(() => new MemoryStream(snapshot.ImageBytes, writable: false));
             }
             finally
             {
                 _frameRenderBusy = false;
             }
         });
+    }
+
+    private static async Task<string> SaveScreenshotShareCopyAsync(string fileName, byte[] imageBytes)
+    {
+        var shareDirectory = Path.Combine(FileSystem.Current.CacheDirectory, "Screenshots");
+        Directory.CreateDirectory(shareDirectory);
+
+        var sharePath = Path.Combine(shareDirectory, fileName);
+        await File.WriteAllBytesAsync(sharePath, imageBytes);
+        return sharePath;
     }
 
     // ── Gesture recognizers ────────────────────────────────────────────
