@@ -87,10 +87,18 @@ public static class NetworkAddressResolver
                 continue;
             }
 
-            var hasGateway = properties.GatewayAddresses.Any(gateway =>
-                gateway.Address.AddressFamily == AddressFamily.InterNetwork &&
-                !IPAddress.Any.Equals(gateway.Address) &&
-                !IPAddress.None.Equals(gateway.Address));
+            bool hasGateway;
+            try
+            {
+                hasGateway = properties.GatewayAddresses.Any(gateway =>
+                    gateway.Address.AddressFamily == AddressFamily.InterNetwork &&
+                    !IPAddress.Any.Equals(gateway.Address) &&
+                    !IPAddress.None.Equals(gateway.Address));
+            }
+            catch (PlatformNotSupportedException)
+            {
+                hasGateway = false;
+            }
             var isVirtual = IsProbablyVirtual(networkInterface);
             var priority = GetPriority(networkInterface, hasGateway);
 
