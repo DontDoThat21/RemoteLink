@@ -26,7 +26,7 @@ public class RemoteViewerPage : ContentPage
     private readonly Func<Task>? _closeSessionAsync;
 
     // Viewer
-    private readonly Image _remoteViewer;
+    private readonly GpuFrameView _gpuViewer;
     private volatile bool _frameRenderBusy;
     private int _remoteWidth;
     private int _remoteHeight;
@@ -192,26 +192,25 @@ public class RemoteViewerPage : ContentPage
         };
 
         // ── Remote viewer ────────────────────────────────────────────────────
-        _remoteViewer = new Image
+        _gpuViewer = new GpuFrameView
         {
             BackgroundColor = Colors.Black,
             HorizontalOptions = LayoutOptions.Fill,
             VerticalOptions = LayoutOptions.Fill,
-            Aspect = Aspect.AspectFit,
         };
-        _remoteViewer.HandlerChanged += OnRemoteViewerHandlerChanged;
+        _gpuViewer.HandlerChanged += OnRemoteViewerHandlerChanged;
 
         // Mouse input via pointer gestures on the viewer
         var pointerGesture = new PointerGestureRecognizer();
         pointerGesture.PointerMoved += OnPointerMoved;
         pointerGesture.PointerPressed += OnPointerPressed;
         pointerGesture.PointerReleased += OnPointerReleased;
-        _remoteViewer.GestureRecognizers.Add(pointerGesture);
+        _gpuViewer.GestureRecognizers.Add(pointerGesture);
 
         // Tap gesture as fallback for clicks
         var tapGesture = new TapGestureRecognizer { NumberOfTapsRequired = 1 };
         tapGesture.Tapped += OnViewerTapped;
-        _remoteViewer.GestureRecognizers.Add(tapGesture);
+        _gpuViewer.GestureRecognizers.Add(tapGesture);
 
         // ── Hidden entry for keyboard capture ────────────────────────────────
         _keyCapture = new Entry
@@ -291,7 +290,7 @@ public class RemoteViewerPage : ContentPage
         {
             Children =
             {
-                _remoteViewer,
+                _gpuViewer,
                 _dropOverlay
             }
         };
@@ -402,32 +401,22 @@ public class RemoteViewerPage : ContentPage
 
     private void RenderLatestSnapshot()
     {
-        RemoteFrameSnapshot? renderedSnapshot = null;
-
         try
         {
-            while (true)
-            {
-                var snapshot = _latestSnapshot;
-                if (snapshot is null)
-                    return;
+            var snapshot = _latestSnapshot;
+            if (snapshot is null)
+                return;
 
-                renderedSnapshot = snapshot;
-                _remoteViewer.Source = ImageSource.FromStream(() => new MemoryStream(snapshot.ImageBytes, writable: false));
+            // Hand the encoded bytes directly to the GPU handler.  The handler decodes
+            // asynchronously and presents to the swap chain — no XAML image pipeline.
+            _gpuViewer.RenderFrame(snapshot.ImageBytes);
 
-                if (_remoteWidth > 0 && _remoteHeight > 0)
-                    _resolutionLabel.Text = $"Resolution: {_remoteWidth}x{_remoteHeight}";
-
-                if (ReferenceEquals(snapshot, _latestSnapshot))
-                    return;
-            }
+            if (_remoteWidth > 0 && _remoteHeight > 0)
+                _resolutionLabel.Text = $"Resolution: {_remoteWidth}x{_remoteHeight}";
         }
         finally
         {
             _frameRenderBusy = false;
-
-            if (_latestSnapshot is not null && !ReferenceEquals(_latestSnapshot, renderedSnapshot))
-                TryRenderLatestSnapshot();
         }
     }
 
@@ -497,7 +486,7 @@ public class RemoteViewerPage : ContentPage
     {
         if (!_client.IsConnected || _remoteWidth <= 0 || _remoteHeight <= 0) return;
 
-        var position = e.GetPosition(_remoteViewer);
+        var position = e.GetPosition(_gpuViewer);
         if (position is null) return;
 
         var (remoteX, remoteY) = MapToRemoteCoordinates(position.Value.X, position.Value.Y);
@@ -517,7 +506,7 @@ public class RemoteViewerPage : ContentPage
         // Focus the key capture entry to ensure keyboard events are received
         _keyCapture.Focus();
 
-        var position = e.GetPosition(_remoteViewer);
+        var position = e.GetPosition(_gpuViewer);
         if (position is null) return;
 
         var (remoteX, remoteY) = MapToRemoteCoordinates(position.Value.X, position.Value.Y);
@@ -535,7 +524,7 @@ public class RemoteViewerPage : ContentPage
     {
         if (!_client.IsConnected || _remoteWidth <= 0 || _remoteHeight <= 0) return;
 
-        var position = e.GetPosition(_remoteViewer);
+        var position = e.GetPosition(_gpuViewer);
         if (position is null) return;
 
         var (remoteX, remoteY) = MapToRemoteCoordinates(position.Value.X, position.Value.Y);
@@ -557,8 +546,8 @@ public class RemoteViewerPage : ContentPage
 
     private (int x, int y) MapToRemoteCoordinates(double viewerX, double viewerY)
     {
-        double viewerWidth = _remoteViewer.Width;
-        double viewerHeight = _remoteViewer.Height;
+        double viewerWidth = _gpuViewer.Width;
+        double viewerHeight = _gpuViewer.Height;
 
         if (viewerWidth <= 0 || viewerHeight <= 0)
             return (0, 0);
@@ -825,7 +814,7 @@ public class RemoteViewerPage : ContentPage
             _nativeDropTarget.Drop -= OnNativeViewerDrop;
         }
 
-        _nativeDropTarget = _remoteViewer.Handler?.PlatformView as WinFrameworkElement;
+        _nativeDropTarget = _gpuViewer.Handler?.PlatformView as WinFrameworkElement;
         if (_nativeDropTarget is null)
             return;
 
