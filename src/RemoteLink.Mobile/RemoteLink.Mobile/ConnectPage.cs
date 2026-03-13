@@ -2270,7 +2270,6 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             switch (state)
             {
                 case ClientConnectionState.Connected:
-                    RemoteFrameSnapshotService.ResetFrameCache();
                     var hostName = _client.ConnectedHost?.DeviceName ?? "Unknown";
                     _hasConnectedSession = true;
                     _connectedHostLabel.Text = $"Connected to {hostName}";

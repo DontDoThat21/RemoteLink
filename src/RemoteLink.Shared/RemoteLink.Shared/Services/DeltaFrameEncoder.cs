@@ -13,7 +13,14 @@ public class DeltaFrameEncoder : IDeltaFrameEncoder
     private int _previousWidth;
     private int _previousHeight;
     private int _deltaThreshold = 5; // Default: 5% changed pixels triggers delta
+    private long _lastKeyframeUtcTicks;
     private readonly object _lock = new();
+
+    /// <summary>
+    /// Interval between forced keyframes (full frames). Ensures late-joining
+    /// viewers or viewers that lost their frame cache can recover quickly.
+    /// </summary>
+    private static readonly long KeyframeIntervalTicks = TimeSpan.FromSeconds(2).Ticks;
 
     /// <summary>
     /// Encode a frame as a delta (only changed regions) or full frame.
@@ -23,13 +30,18 @@ public class DeltaFrameEncoder : IDeltaFrameEncoder
     {
         lock (_lock)
         {
-            // First frame or dimensions changed: send full frame
+            var nowTicks = DateTime.UtcNow.Ticks;
+            bool forceKeyframe = (nowTicks - _lastKeyframeUtcTicks) >= KeyframeIntervalTicks;
+
+            // First frame, dimensions changed, or keyframe interval elapsed: send full frame
             if (_previousFrameData == null ||
                 _previousWidth != currentFrame.Width ||
                 _previousHeight != currentFrame.Height ||
-                currentFrame.Format != ScreenDataFormat.Raw) // Only delta-encode raw frames
+                currentFrame.Format != ScreenDataFormat.Raw || // Only delta-encode raw frames
+                forceKeyframe)
             {
                 StorePreviousFrame(currentFrame);
+                _lastKeyframeUtcTicks = nowTicks;
                 return Task.FromResult((currentFrame, false));
             }
 
@@ -48,6 +60,7 @@ public class DeltaFrameEncoder : IDeltaFrameEncoder
             if (changePercentage > _deltaThreshold)
             {
                 StorePreviousFrame(currentFrame);
+                _lastKeyframeUtcTicks = nowTicks;
                 return Task.FromResult((currentFrame, false));
             }
 
@@ -69,6 +82,7 @@ public class DeltaFrameEncoder : IDeltaFrameEncoder
             _previousFrameId = null;
             _previousWidth = 0;
             _previousHeight = 0;
+            _lastKeyframeUtcTicks = 0;
         }
     }
 
