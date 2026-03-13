@@ -175,6 +175,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     {
         base.OnAppearing();
 
+        await EnsureClientDiscoveryAsync();
+
         // When returning from the viewer page (after disconnect), reset connect UI
         if (!_client.IsConnected && _isConnecting)
         {
@@ -208,6 +210,21 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             {
                 _logger.LogWarning(ex, "Failed to auto-start host");
             }
+        }
+    }
+
+    private async Task EnsureClientDiscoveryAsync()
+    {
+        if (_client.IsStarted)
+            return;
+
+        try
+        {
+            await _client.StartListeningOnlyAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Client discovery start failed");
         }
     }
 
@@ -1196,13 +1213,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 }
             });
 
-            // Also start client-side discovery so we can find other hosts
-            _ = Task.Run(async () =>
-            {
-                try { await _client.StartAsync(); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Client discovery start failed"); }
-            });
-
             UpdateStatusBar("Running — Listening for connections", ThemeColors.Success);
             _trayService.UpdateStatus("Running", 0);
             StartMetricsTimer();
@@ -1237,7 +1247,6 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
             _hostCts?.Cancel();
             await _host.StopAsync(CancellationToken.None);
-            await _client.StopAsync();
 
             _isRunning = false;
             _currentPin = "------";

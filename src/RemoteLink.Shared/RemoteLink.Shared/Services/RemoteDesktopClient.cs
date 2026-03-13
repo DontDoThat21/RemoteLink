@@ -38,6 +38,7 @@ public class RemoteDesktopClient : IDisposable
     private ICommunicationService? _communicationService;
     private PresentationSessionClient? _presentationSessionClient;
     private bool _isStarted;
+    private bool _isBroadcastingPresence;
     private TaskCompletionSource<PairingResponse>? _pairingTcs;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<SessionControlResponse>> _pendingSessionControlRequests = new();
     private CancellationTokenSource? _autoReconnectCts;
@@ -154,6 +155,16 @@ public class RemoteDesktopClient : IDisposable
     /// Starts UDP discovery — broadcasting our presence and listening for desktop hosts.
     /// </summary>
     public async Task StartAsync()
+        => await StartDiscoveryCoreAsync(broadcastPresence: true);
+
+    /// <summary>
+    /// Starts UDP discovery in listen-only mode so the client can find hosts
+    /// without advertising itself as a connectable host.
+    /// </summary>
+    public async Task StartListeningOnlyAsync()
+        => await StartDiscoveryCoreAsync(broadcastPresence: false);
+
+    private async Task StartDiscoveryCoreAsync(bool broadcastPresence)
     {
         if (_isStarted) return;
 
@@ -161,20 +172,34 @@ public class RemoteDesktopClient : IDisposable
 
         try
         {
-            await _networkDiscovery.StartBroadcastingAsync();
+            if (broadcastPresence)
+                await _networkDiscovery.StartBroadcastingAsync();
+
             await _networkDiscovery.StartListeningAsync();
 
-            if (_natTraversalService is not null && _localDevice is not null)
+            if (broadcastPresence && _natTraversalService is not null && _localDevice is not null)
             {
                 var natDiscovery = await _natTraversalService.StartAsync(_localDevice.Port);
                 ApplyNatDiscoveryResult(_localDevice, natDiscovery);
             }
 
             _isStarted = true;
+            _isBroadcastingPresence = broadcastPresence;
             ServiceStatusChanged?.Invoke(this, "Searching for desktop hosts...");
         }
         catch (Exception ex)
         {
+            try
+            {
+                await _networkDiscovery.StopListeningAsync();
+                if (broadcastPresence)
+                    await _networkDiscovery.StopBroadcastingAsync();
+            }
+            catch
+            {
+                // Ignore cleanup errors after a failed start attempt.
+            }
+
             _logger.LogError(ex, "Error starting discovery");
             ServiceStatusChanged?.Invoke(this, $"Error: {ex.Message}");
             throw;
@@ -193,14 +218,17 @@ public class RemoteDesktopClient : IDisposable
 
         try
         {
-            await _networkDiscovery.StopBroadcastingAsync();
             await _networkDiscovery.StopListeningAsync();
+            if (_isBroadcastingPresence)
+                await _networkDiscovery.StopBroadcastingAsync();
+
             if (_natTraversalService is not null)
                 await _natTraversalService.StopAsync();
         }
         catch { /* ignore shutdown errors */ }
 
         _isStarted = false;
+        _isBroadcastingPresence = false;
         ServiceStatusChanged?.Invoke(this, "Stopped.");
     }
 

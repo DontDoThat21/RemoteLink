@@ -13,10 +13,35 @@ public class RemoteDesktopClientTests
         public event EventHandler<DeviceInfo>? DeviceDiscovered;
         public event EventHandler<DeviceInfo>? DeviceLost;
 
-        public Task StartBroadcastingAsync() => Task.CompletedTask;
-        public Task StopBroadcastingAsync() => Task.CompletedTask;
-        public Task StartListeningAsync() => Task.CompletedTask;
-        public Task StopListeningAsync() => Task.CompletedTask;
+        public int StartBroadcastingCalls { get; private set; }
+        public int StopBroadcastingCalls { get; private set; }
+        public int StartListeningCalls { get; private set; }
+        public int StopListeningCalls { get; private set; }
+
+        public Task StartBroadcastingAsync()
+        {
+            StartBroadcastingCalls++;
+            return Task.CompletedTask;
+        }
+
+        public Task StopBroadcastingAsync()
+        {
+            StopBroadcastingCalls++;
+            return Task.CompletedTask;
+        }
+
+        public Task StartListeningAsync()
+        {
+            StartListeningCalls++;
+            return Task.CompletedTask;
+        }
+
+        public Task StopListeningAsync()
+        {
+            StopListeningCalls++;
+            return Task.CompletedTask;
+        }
+
         public Task<IEnumerable<DeviceInfo>> GetDiscoveredDevicesAsync() => Task.FromResult(Enumerable.Empty<DeviceInfo>());
     }
 
@@ -437,6 +462,33 @@ public class RemoteDesktopClientTests
 
         Assert.Null(client.CurrentConnectionQuality);
         Assert.Equal(ClientConnectionState.Disconnected, client.ConnectionState);
+    }
+
+    [Fact]
+    public async Task StartListeningOnlyAsync_StartsListeningWithoutBroadcasting()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery);
+
+        await client.StartListeningOnlyAsync();
+
+        Assert.True(client.IsStarted);
+        Assert.Equal(0, discovery.StartBroadcastingCalls);
+        Assert.Equal(1, discovery.StartListeningCalls);
+    }
+
+    [Fact]
+    public async Task StopAsync_AfterListenOnlyStart_StopsListeningOnly()
+    {
+        var discovery = new FakeNetworkDiscovery();
+        var client = new RemoteDesktopClient(NullLogger<RemoteDesktopClient>.Instance, discovery);
+
+        await client.StartListeningOnlyAsync();
+        await client.StopAsync();
+
+        Assert.False(client.IsStarted);
+        Assert.Equal(0, discovery.StopBroadcastingCalls);
+        Assert.Equal(1, discovery.StopListeningCalls);
     }
 
     [Fact]

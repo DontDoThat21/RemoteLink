@@ -23,7 +23,9 @@ public class UdpNetworkDiscovery : INetworkDiscovery
     private readonly DeviceInfo _localDevice;
     private readonly Dictionary<string, DeviceInfo> _discoveredDevices = new();
     private readonly object _lockObject = new();
-    private bool _isRunning;
+    private int _broadcastReferenceCount;
+    private int _listenReferenceCount;
+    private bool _disposed;
 
     public event EventHandler<DeviceInfo>? DeviceDiscovered;
     public event EventHandler<DeviceInfo>? DeviceLost;
@@ -35,53 +37,85 @@ public class UdpNetworkDiscovery : INetworkDiscovery
 
     public async Task StartBroadcastingAsync()
     {
-        if (_isRunning) return;
+        lock (_lockObject)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
 
-        _broadcastClient = new UdpClient();
-        _broadcastClient.EnableBroadcast = true;
-        
-        _broadcastTimer = new Timer(BroadcastPresence, null, 0, BROADCAST_INTERVAL_MS);
-        _isRunning = true;
-        
+            _broadcastReferenceCount++;
+            if (_broadcastReferenceCount > 1)
+                return;
+
+            _broadcastClient = new UdpClient();
+            _broadcastClient.EnableBroadcast = true;
+            _broadcastTimer = new Timer(BroadcastPresence, null, 0, BROADCAST_INTERVAL_MS);
+        }
+
         await Task.CompletedTask;
     }
 
     public async Task StopBroadcastingAsync()
     {
-        _broadcastTimer?.Dispose();
-        _broadcastTimer = null;
-        
-        _broadcastClient?.Close();
-        _broadcastClient?.Dispose();
-        _broadcastClient = null;
-        
+        lock (_lockObject)
+        {
+            if (_broadcastReferenceCount == 0)
+                return;
+
+            _broadcastReferenceCount--;
+            if (_broadcastReferenceCount > 0)
+                return;
+
+            _broadcastTimer?.Dispose();
+            _broadcastTimer = null;
+
+            _broadcastClient?.Close();
+            _broadcastClient?.Dispose();
+            _broadcastClient = null;
+        }
+
         await Task.CompletedTask;
     }
 
     public async Task StartListeningAsync()
     {
-        if (_listenClient != null) return;
+        lock (_lockObject)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
 
-        _listenClient = new UdpClient(DISCOVERY_PORT);
-        
-        // Start cleanup timer
-        _cleanupTimer = new Timer(CleanupOfflineDevices, null, DEVICE_TIMEOUT_MS, DEVICE_TIMEOUT_MS);
-        
-        // Start listening for broadcasts
-        _ = Task.Run(ListenForBroadcasts);
-        
+            _listenReferenceCount++;
+            if (_listenReferenceCount > 1)
+                return;
+
+            _listenClient = new UdpClient(DISCOVERY_PORT);
+
+            // Start cleanup timer
+            _cleanupTimer = new Timer(CleanupOfflineDevices, null, DEVICE_TIMEOUT_MS, DEVICE_TIMEOUT_MS);
+
+            // Start listening for broadcasts
+            _ = Task.Run(ListenForBroadcasts);
+        }
+
         await Task.CompletedTask;
     }
 
     public async Task StopListeningAsync()
     {
-        _cleanupTimer?.Dispose();
-        _cleanupTimer = null;
-        
-        _listenClient?.Close();
-        _listenClient?.Dispose();
-        _listenClient = null;
-        
+        lock (_lockObject)
+        {
+            if (_listenReferenceCount == 0)
+                return;
+
+            _listenReferenceCount--;
+            if (_listenReferenceCount > 0)
+                return;
+
+            _cleanupTimer?.Dispose();
+            _cleanupTimer = null;
+
+            _listenClient?.Close();
+            _listenClient?.Dispose();
+            _listenClient = null;
+        }
+
         await Task.CompletedTask;
     }
 
@@ -195,8 +229,36 @@ public class UdpNetworkDiscovery : INetworkDiscovery
 
     public void Dispose()
     {
-        _isRunning = false;
-        StopBroadcastingAsync().Wait();
-        StopListeningAsync().Wait();
+        UdpClient? broadcastClient;
+        UdpClient? listenClient;
+        Timer? broadcastTimer;
+        Timer? cleanupTimer;
+
+        lock (_lockObject)
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _broadcastReferenceCount = 0;
+            _listenReferenceCount = 0;
+
+            broadcastClient = _broadcastClient;
+            listenClient = _listenClient;
+            broadcastTimer = _broadcastTimer;
+            cleanupTimer = _cleanupTimer;
+
+            _broadcastClient = null;
+            _listenClient = null;
+            _broadcastTimer = null;
+            _cleanupTimer = null;
+        }
+
+        broadcastTimer?.Dispose();
+        cleanupTimer?.Dispose();
+        broadcastClient?.Close();
+        broadcastClient?.Dispose();
+        listenClient?.Close();
+        listenClient?.Dispose();
     }
 }

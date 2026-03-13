@@ -458,7 +458,7 @@ public partial class MainPage : ContentPage, INotifyPropertyChanged
             _client.PairingFailed          += OnPairingFailed;
             _client.ScreenDataReceived     += OnScreenDataReceived;
 
-            await _client.StartAsync();
+            await _client.StartListeningOnlyAsync();
 
             StatusMessage = "Scanning for desktop hosts…";
             IsDiscovering = true;   // keep spinner visible while scanning
