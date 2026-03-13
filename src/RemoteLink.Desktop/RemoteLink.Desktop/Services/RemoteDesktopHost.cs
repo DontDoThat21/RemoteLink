@@ -62,7 +62,7 @@ public class RemoteDesktopHost : BackgroundService
     /// </summary>
     private RemoteSession? _currentSession;
 
-    private volatile ScreenDataFormat _preferredImageFormat = ScreenDataFormat.Raw;
+    private volatile ScreenDataFormat _preferredImageFormat = ScreenDataFormat.JPEG;
     private volatile bool _audioStreamingEnabled = true;
     private long _lastFrameSentAtUtcMs;
     private long _lastClientActivityUtcTicks;
@@ -1063,9 +1063,9 @@ public class RemoteDesktopHost : BackgroundService
             }
 
             // Reset performance optimization state
-            _deltaEncoder.Reset();
-            _perfMonitor.Reset();
-            _preferredImageFormat = ScreenDataFormat.Raw;
+                _deltaEncoder.Reset();
+                _perfMonitor.Reset();
+                _preferredImageFormat = ScreenDataFormat.JPEG;
             _audioStreamingEnabled = true;
             _currentPermissions = SessionPermissionSet.CreateFullAccess();
             Interlocked.Exchange(ref _lastFrameSentAtUtcMs, 0);

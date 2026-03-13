@@ -207,7 +207,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
         var message = new NetworkMessage
         {
             MessageType = messageType,
-            Payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(payload))
+            Payload = JsonSerializer.Serialize(payload)
         };
 
         var messagePayload = JsonSerializer.SerializeToUtf8Bytes(message);
@@ -426,7 +426,7 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
 
         try
         {
-            var decoded = JsonSerializer.Deserialize<T>(Convert.FromBase64String(payload));
+            var decoded = JsonSerializer.Deserialize<T>(payload);
             if (decoded is not null)
                 handler.Invoke(null, decoded);
         }

@@ -27,7 +27,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private sealed class NetworkMessage
     {
         public string MessageType { get; set; } = string.Empty;
-        /// <summary>Base-64-encoded JSON of the actual payload object.</summary>
+        /// <summary>JSON-serialized payload object.</summary>
         public string Payload { get; set; } = string.Empty;
     }
 
@@ -60,6 +60,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
     private Task? _acceptTask;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _disposed;
 
     // ── Constructor ──────────────────────────────────────────────────────────
@@ -676,19 +677,19 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     private async Task SendMessageAsync(NetworkMessage msg)
     {
         var writeStream = (_activeSslStream as Stream) ?? _activeStream;
-        
+
         if (writeStream == null)
         {
             Console.WriteLine("[TCP] SendMessage: not connected.");
             return;
         }
 
+        await _writeLock.WaitAsync();
         try
         {
             var json = JsonSerializer.SerializeToUtf8Bytes(msg);
             var lenBuf = BitConverter.GetBytes(json.Length);
 
-            // Lock-free for simplicity; in high-throughput code use a write semaphore
             await writeStream.WriteAsync(lenBuf);
             await writeStream.WriteAsync(json);
             await writeStream.FlushAsync();
@@ -697,6 +698,10 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         {
             Console.WriteLine($"[TCP] Send error: {ex.Message}");
             ConnectionStateChanged?.Invoke(this, false);
+        }
+        finally
+        {
+            _writeLock.Release();
         }
     }
 
@@ -777,14 +782,12 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     private static string Encode<T>(T obj)
     {
-        var json = JsonSerializer.SerializeToUtf8Bytes(obj);
-        return Convert.ToBase64String(json);
+        return JsonSerializer.Serialize(obj);
     }
 
     private static T? Decode<T>(string payload)
     {
-        var json = Convert.FromBase64String(payload);
-        return JsonSerializer.Deserialize<T>(json);
+        return JsonSerializer.Deserialize<T>(payload);
     }
 
     // ── IDisposable ───────────────────────────────────────────────────────────
@@ -796,5 +799,6 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         _disposed = true;
         StopAsync().GetAwaiter().GetResult();
         _cts?.Dispose();
+        _writeLock.Dispose();
     }
 }
