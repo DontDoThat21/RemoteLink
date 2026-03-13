@@ -74,10 +74,10 @@ public class RemoteDesktopHost : BackgroundService
 
     // TCP port on which this host listens for client connections.
     private const int HostPort = 12346;
-    private const int MaxAdaptiveStreamFps = 10;
-    private const int ModerateAdaptiveStreamFps = 6;
-    private const int LowBandwidthAdaptiveStreamFps = 4;
-    private const int CriticalAdaptiveStreamFps = 2;
+    private const int MaxAdaptiveStreamFps = 30;
+    private const int ModerateAdaptiveStreamFps = 15;
+    private const int LowBandwidthAdaptiveStreamFps = 8;
+    private const int CriticalAdaptiveStreamFps = 4;
     private const int MinimumAdaptiveQuality = 45;
     private const long ModerateLatencyThresholdMs = 75;
     private const long HighLatencyThresholdMs = 150;

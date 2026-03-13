@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -18,37 +19,34 @@ namespace RemoteLink.Shared.Services;
 /// <item><description>Call <see cref="StartAsync"/> to listen for incoming connections (host/server mode).</description></item>
 /// <item><description>Call <see cref="ConnectToDeviceAsync"/> to connect to a host (client mode).</description></item>
 /// </list>
-/// Wire format: 4-byte little-endian message length prefix followed by UTF-8 JSON payload.
+/// Wire format: 4-byte little-endian payload length, followed by 1-byte message-type tag,
+/// followed by the raw payload bytes.  Messages carrying binary blobs (ScreenData, AudioData,
+/// FileTransferChunk) are encoded with BinaryWriter so byte arrays are written verbatim —
+/// no Base64 overhead.  All other messages use direct UTF-8 JSON serialization with no
+/// envelope wrapper.
 /// </summary>
 public class TcpCommunicationService : ICommunicationService, IDisposable
 {
-    // ── Wire message envelope ────────────────────────────────────────────────
+    // ── Message type tags ────────────────────────────────────────────────────
 
-    private sealed class NetworkMessage
-    {
-        public string MessageType { get; set; } = string.Empty;
-        /// <summary>JSON-serialized payload object.</summary>
-        public string Payload { get; set; } = string.Empty;
-    }
-
-    private const string MsgTypeScreen = "ScreenData";
-    private const string MsgTypeInput = "InputEvent";
-    private const string MsgTypePairingRequest = "PairingRequest";
-    private const string MsgTypePairingResponse = "PairingResponse";
-    private const string MsgTypeConnectionQuality = "ConnectionQuality";
-    private const string MsgTypeSessionControlRequest = "SessionControlRequest";
-    private const string MsgTypeSessionControlResponse = "SessionControlResponse";
-    private const string MsgTypeClipboard = "ClipboardData";
-    private const string MsgTypeFileTransferRequest = "FileTransferRequest";
-    private const string MsgTypeFileTransferResponse = "FileTransferResponse";
-    private const string MsgTypeFileTransferChunk = "FileTransferChunk";
-    private const string MsgTypeFileTransferComplete = "FileTransferComplete";
-    private const string MsgTypeAudio = "AudioData";
-    private const string MsgTypeChatMessage = "ChatMessage";
-    private const string MsgTypeMessageRead = "MessageRead";
-    private const string MsgTypePrintJob = "PrintJob";
-    private const string MsgTypePrintJobResponse = "PrintJobResponse";
-    private const string MsgTypePrintJobStatus = "PrintJobStatus";
+    private const byte MsgTypeScreen                  = 0x01;
+    private const byte MsgTypeInput                   = 0x02;
+    private const byte MsgTypePairingRequest          = 0x03;
+    private const byte MsgTypePairingResponse         = 0x04;
+    private const byte MsgTypeConnectionQuality       = 0x05;
+    private const byte MsgTypeSessionControlRequest   = 0x06;
+    private const byte MsgTypeSessionControlResponse  = 0x07;
+    private const byte MsgTypeClipboard               = 0x08;
+    private const byte MsgTypeFileTransferRequest     = 0x09;
+    private const byte MsgTypeFileTransferResponse    = 0x0A;
+    private const byte MsgTypeFileTransferChunk       = 0x0B;
+    private const byte MsgTypeFileTransferComplete    = 0x0C;
+    private const byte MsgTypeAudio                   = 0x0D;
+    private const byte MsgTypeChatMessage             = 0x0E;
+    private const byte MsgTypeMessageRead             = 0x0F;
+    private const byte MsgTypePrintJob                = 0x10;
+    private const byte MsgTypePrintJobResponse        = 0x11;
+    private const byte MsgTypePrintJobStatus          = 0x12;
 
     // ── State ────────────────────────────────────────────────────────────────
 
@@ -179,7 +177,7 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
                 {
                     try
                     {
-                        var cert = _tlsConfig.ServerCertificate 
+                        var cert = _tlsConfig.ServerCertificate
                             ?? TlsConfiguration.GenerateSelfSignedCertificate("CN=RemoteLink Host");
 
                         var sslStream = new SslStream(
@@ -298,201 +296,75 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
 
     /// <inheritdoc/>
     public async Task SendScreenDataAsync(ScreenData screenData)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeScreen,
-            Payload = Encode(screenData)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeScreen, EncodeScreenData(screenData));
 
     /// <inheritdoc/>
     public async Task SendInputEventAsync(InputEvent inputEvent)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeInput,
-            Payload = Encode(inputEvent)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeInput, JsonSerializer.SerializeToUtf8Bytes(inputEvent));
 
     /// <inheritdoc/>
     public async Task SendPairingRequestAsync(PairingRequest request)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypePairingRequest,
-            Payload = Encode(request)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypePairingRequest, JsonSerializer.SerializeToUtf8Bytes(request));
 
     /// <inheritdoc/>
     public async Task SendPairingResponseAsync(PairingResponse response)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypePairingResponse,
-            Payload = Encode(response)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypePairingResponse, JsonSerializer.SerializeToUtf8Bytes(response));
 
     /// <inheritdoc/>
     public async Task SendConnectionQualityAsync(ConnectionQuality quality)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeConnectionQuality,
-            Payload = Encode(quality)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeConnectionQuality, JsonSerializer.SerializeToUtf8Bytes(quality));
 
     /// <inheritdoc/>
     public async Task SendSessionControlRequestAsync(SessionControlRequest request)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeSessionControlRequest,
-            Payload = Encode(request)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeSessionControlRequest, JsonSerializer.SerializeToUtf8Bytes(request));
 
     /// <inheritdoc/>
     public async Task SendSessionControlResponseAsync(SessionControlResponse response)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeSessionControlResponse,
-            Payload = Encode(response)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeSessionControlResponse, JsonSerializer.SerializeToUtf8Bytes(response));
 
     /// <inheritdoc/>
     public async Task SendClipboardDataAsync(ClipboardData clipboardData)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeClipboard,
-            Payload = Encode(clipboardData)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeClipboard, JsonSerializer.SerializeToUtf8Bytes(clipboardData));
 
     /// <inheritdoc/>
     public async Task SendFileTransferRequestAsync(FileTransferRequest request)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeFileTransferRequest,
-            Payload = Encode(request)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeFileTransferRequest, JsonSerializer.SerializeToUtf8Bytes(request));
 
     /// <inheritdoc/>
     public async Task SendFileTransferResponseAsync(FileTransferResponse response)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeFileTransferResponse,
-            Payload = Encode(response)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeFileTransferResponse, JsonSerializer.SerializeToUtf8Bytes(response));
 
     /// <inheritdoc/>
     public async Task SendFileTransferChunkAsync(FileTransferChunk chunk)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeFileTransferChunk,
-            Payload = Encode(chunk)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeFileTransferChunk, EncodeFileTransferChunk(chunk));
 
     /// <inheritdoc/>
     public async Task SendFileTransferCompleteAsync(FileTransferComplete complete)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeFileTransferComplete,
-            Payload = Encode(complete)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeFileTransferComplete, JsonSerializer.SerializeToUtf8Bytes(complete));
 
     /// <inheritdoc/>
     public async Task SendAudioDataAsync(AudioData audioData)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeAudio,
-            Payload = Encode(audioData)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeAudio, EncodeAudioData(audioData));
 
     /// <inheritdoc/>
     public async Task SendChatMessageAsync(ChatMessage message)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeChatMessage,
-            Payload = Encode(message)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeChatMessage, JsonSerializer.SerializeToUtf8Bytes(message));
 
     /// <inheritdoc/>
     public async Task SendMessageReadAsync(string messageId)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypeMessageRead,
-            Payload = Encode(messageId)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypeMessageRead, JsonSerializer.SerializeToUtf8Bytes(messageId));
 
     /// <inheritdoc/>
     public async Task SendPrintJobAsync(PrintJob printJob)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypePrintJob,
-            Payload = Encode(printJob)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypePrintJob, JsonSerializer.SerializeToUtf8Bytes(printJob));
 
     /// <inheritdoc/>
     public async Task SendPrintJobResponseAsync(PrintJobResponse response)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypePrintJobResponse,
-            Payload = Encode(response)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypePrintJobResponse, JsonSerializer.SerializeToUtf8Bytes(response));
 
     /// <inheritdoc/>
     public async Task SendPrintJobStatusAsync(PrintJobStatus status)
-    {
-        var msg = new NetworkMessage
-        {
-            MessageType = MsgTypePrintJobStatus,
-            Payload = Encode(status)
-        };
-        await SendMessageAsync(msg);
-    }
+        => await SendRawAsync(MsgTypePrintJobStatus, JsonSerializer.SerializeToUtf8Bytes(status));
 
     // ── Stop ─────────────────────────────────────────────────────────────────
 
@@ -522,35 +394,36 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
     {
         try
         {
-            var lenBuf = new byte[4];
+            // 5-byte frame header: [4-byte LE payload-length][1-byte msg-type]
+            var headerBuf = new byte[5];
 
             while (!ct.IsCancellationRequested)
             {
-                // Read length prefix
-                int read = await ReadExactAsync(stream, lenBuf, 0, 4, ct);
-                if (read < 4)
+                int read = await ReadExactAsync(stream, headerBuf, 0, 5, ct);
+                if (read < 5)
                 {
                     Console.WriteLine("[TCP] Connection closed by remote.");
                     break;
                 }
 
-                int length = BitConverter.ToInt32(lenBuf, 0);
+                int payloadLen = BinaryPrimitives.ReadInt32LittleEndian(headerBuf);
+                byte msgType = headerBuf[4];
 
-                if (length <= 0 || length > 64 * 1024 * 1024) // 64 MB guard
+                if (payloadLen < 0 || payloadLen > 64 * 1024 * 1024) // 64 MB guard
                 {
-                    Console.WriteLine($"[TCP] Invalid message length {length}; closing.");
+                    Console.WriteLine($"[TCP] Invalid payload length {payloadLen}; closing.");
                     break;
                 }
 
-                var buf = new byte[length];
-                read = await ReadExactAsync(stream, buf, 0, length, ct);
-                if (read < length)
+                byte[] payload = new byte[payloadLen];
+                read = await ReadExactAsync(stream, payload, 0, payloadLen, ct);
+                if (read < payloadLen)
                 {
                     Console.WriteLine("[TCP] Incomplete message; closing.");
                     break;
                 }
 
-                DispatchMessage(buf);
+                DispatchMessage(msgType, payload);
             }
         }
         catch (OperationCanceledException) { /* normal shutdown */ }
@@ -564,107 +437,101 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         }
     }
 
-    private void DispatchMessage(byte[] buf)
+    private void DispatchMessage(byte msgType, byte[] payload)
     {
         try
         {
-            var msg = JsonSerializer.Deserialize<NetworkMessage>(buf);
-            if (msg == null) return;
-
-            switch (msg.MessageType)
+            switch (msgType)
             {
                 case MsgTypeScreen:
-                    var sd = Decode<ScreenData>(msg.Payload);
-                    if (sd != null) ScreenDataReceived?.Invoke(this, sd);
+                    ScreenDataReceived?.Invoke(this, DecodeScreenData(payload));
                     break;
 
                 case MsgTypeInput:
-                    var ie = Decode<InputEvent>(msg.Payload);
+                    var ie = JsonSerializer.Deserialize<InputEvent>(payload);
                     if (ie != null) InputEventReceived?.Invoke(this, ie);
                     break;
 
                 case MsgTypePairingRequest:
-                    var pr = Decode<PairingRequest>(msg.Payload);
+                    var pr = JsonSerializer.Deserialize<PairingRequest>(payload);
                     if (pr != null) PairingRequestReceived?.Invoke(this, pr);
                     break;
 
                 case MsgTypePairingResponse:
-                    var prr = Decode<PairingResponse>(msg.Payload);
+                    var prr = JsonSerializer.Deserialize<PairingResponse>(payload);
                     if (prr != null) PairingResponseReceived?.Invoke(this, prr);
                     break;
 
                 case MsgTypeConnectionQuality:
-                    var cq = Decode<ConnectionQuality>(msg.Payload);
+                    var cq = JsonSerializer.Deserialize<ConnectionQuality>(payload);
                     if (cq != null) ConnectionQualityReceived?.Invoke(this, cq);
                     break;
 
                 case MsgTypeSessionControlRequest:
-                    var scr = Decode<SessionControlRequest>(msg.Payload);
+                    var scr = JsonSerializer.Deserialize<SessionControlRequest>(payload);
                     if (scr != null) SessionControlRequestReceived?.Invoke(this, scr);
                     break;
 
                 case MsgTypeSessionControlResponse:
-                    var scresp = Decode<SessionControlResponse>(msg.Payload);
+                    var scresp = JsonSerializer.Deserialize<SessionControlResponse>(payload);
                     if (scresp != null) SessionControlResponseReceived?.Invoke(this, scresp);
                     break;
 
                 case MsgTypeClipboard:
-                    var cd = Decode<ClipboardData>(msg.Payload);
+                    var cd = JsonSerializer.Deserialize<ClipboardData>(payload);
                     if (cd != null) ClipboardDataReceived?.Invoke(this, cd);
                     break;
 
                 case MsgTypeFileTransferRequest:
-                    var ftr = Decode<FileTransferRequest>(msg.Payload);
+                    var ftr = JsonSerializer.Deserialize<FileTransferRequest>(payload);
                     if (ftr != null) FileTransferRequestReceived?.Invoke(this, ftr);
                     break;
 
                 case MsgTypeFileTransferResponse:
-                    var ftresp = Decode<FileTransferResponse>(msg.Payload);
+                    var ftresp = JsonSerializer.Deserialize<FileTransferResponse>(payload);
                     if (ftresp != null) FileTransferResponseReceived?.Invoke(this, ftresp);
                     break;
 
                 case MsgTypeFileTransferChunk:
-                    var ftc = Decode<FileTransferChunk>(msg.Payload);
-                    if (ftc != null) FileTransferChunkReceived?.Invoke(this, ftc);
+                    FileTransferChunkReceived?.Invoke(this, DecodeFileTransferChunk(payload));
                     break;
 
                 case MsgTypeFileTransferComplete:
-                    var ftcomplete = Decode<FileTransferComplete>(msg.Payload);
+                    var ftcomplete = JsonSerializer.Deserialize<FileTransferComplete>(payload);
                     if (ftcomplete != null) FileTransferCompleteReceived?.Invoke(this, ftcomplete);
                     break;
 
                 case MsgTypeAudio:
-                    var ad = Decode<AudioData>(msg.Payload);
-                    if (ad != null) AudioDataReceived?.Invoke(this, ad);
+                    AudioDataReceived?.Invoke(this, DecodeAudioData(payload));
                     break;
 
                 case MsgTypeChatMessage:
-                    var cm = Decode<ChatMessage>(msg.Payload);
+                    var cm = JsonSerializer.Deserialize<ChatMessage>(payload);
                     if (cm != null) ChatMessageReceived?.Invoke(this, cm);
                     break;
 
                 case MsgTypeMessageRead:
-                    var mr = Decode<string>(msg.Payload);
+                    var mr = JsonSerializer.Deserialize<string>(payload);
                     if (mr != null) MessageReadReceived?.Invoke(this, mr);
                     break;
 
                 case MsgTypePrintJob:
-                    var pj = Decode<PrintJob>(msg.Payload);
+                    var pj = JsonSerializer.Deserialize<PrintJob>(payload);
                     if (pj != null) PrintJobReceived?.Invoke(this, pj);
                     break;
 
                 case MsgTypePrintJobResponse:
-                    var pjr = Decode<PrintJobResponse>(msg.Payload);
+                    var pjr = JsonSerializer.Deserialize<PrintJobResponse>(payload);
                     if (pjr != null) PrintJobResponseReceived?.Invoke(this, pjr);
                     break;
 
                 case MsgTypePrintJobStatus:
-                    var pjs = Decode<PrintJobStatus>(msg.Payload);
+                    var pjs = JsonSerializer.Deserialize<PrintJobStatus>(payload);
                     if (pjs != null) PrintJobStatusReceived?.Invoke(this, pjs);
                     break;
 
                 default:
-                    Console.WriteLine($"[TCP] Unknown message type: {msg.MessageType}");
+                    Console.WriteLine($"[TCP] Unknown message type: 0x{msgType:X2}");
                     break;
             }
         }
@@ -674,7 +541,10 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         }
     }
 
-    private async Task SendMessageAsync(NetworkMessage msg)
+    /// <summary>
+    /// Writes a framed message: [4-byte LE payload-length][1-byte type][payload].
+    /// </summary>
+    private async Task SendRawAsync(byte msgType, byte[] payload)
     {
         var writeStream = (_activeSslStream as Stream) ?? _activeStream;
 
@@ -687,11 +557,12 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
         await _writeLock.WaitAsync();
         try
         {
-            var json = JsonSerializer.SerializeToUtf8Bytes(msg);
-            var lenBuf = BitConverter.GetBytes(json.Length);
+            var header = new byte[5];
+            BinaryPrimitives.WriteInt32LittleEndian(header, payload.Length);
+            header[4] = msgType;
 
-            await writeStream.WriteAsync(lenBuf);
-            await writeStream.WriteAsync(json);
+            await writeStream.WriteAsync(header);
+            await writeStream.WriteAsync(payload);
             await writeStream.FlushAsync();
         }
         catch (Exception ex)
@@ -721,6 +592,167 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
             try { await _receiveTask; } catch { /* expected */ }
             _receiveTask = null;
         }
+    }
+
+    // ── Binary codec: ScreenData ─────────────────────────────────────────────
+
+    private static byte[] EncodeScreenData(ScreenData sd)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+
+        w.Write(sd.FrameId ?? string.Empty);
+        w.Write(sd.Timestamp.ToUniversalTime().Ticks);
+        w.Write(sd.Width);
+        w.Write(sd.Height);
+        w.Write((byte)sd.Format);
+        w.Write(sd.Quality);
+        w.Write(sd.IsDelta);
+        w.Write(sd.ReferenceFrameId ?? string.Empty);
+
+        var regions = sd.DeltaRegions;
+        w.Write(regions?.Count ?? 0);
+        if (regions != null)
+        {
+            foreach (var r in regions)
+            {
+                w.Write(r.X);
+                w.Write(r.Y);
+                w.Write(r.Width);
+                w.Write(r.Height);
+                w.Write(r.DataOffset);
+                w.Write(r.DataLength);
+            }
+        }
+
+        w.Write(sd.ImageData?.Length ?? 0);
+        if (sd.ImageData is { Length: > 0 })
+            w.Write(sd.ImageData);
+
+        return ms.ToArray();
+    }
+
+    private static ScreenData DecodeScreenData(byte[] data)
+    {
+        using var ms = new MemoryStream(data);
+        using var r = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
+
+        var sd = new ScreenData
+        {
+            FrameId    = r.ReadString(),
+            Timestamp  = new DateTime(r.ReadInt64(), DateTimeKind.Utc),
+            Width      = r.ReadInt32(),
+            Height     = r.ReadInt32(),
+            Format     = (ScreenDataFormat)r.ReadByte(),
+            Quality    = r.ReadInt32(),
+            IsDelta    = r.ReadBoolean()
+        };
+
+        var refId = r.ReadString();
+        sd.ReferenceFrameId = refId.Length > 0 ? refId : null;
+
+        int regionCount = r.ReadInt32();
+        if (regionCount > 0)
+        {
+            sd.DeltaRegions = new List<DeltaRegion>(regionCount);
+            for (int i = 0; i < regionCount; i++)
+            {
+                sd.DeltaRegions.Add(new DeltaRegion
+                {
+                    X          = r.ReadInt32(),
+                    Y          = r.ReadInt32(),
+                    Width      = r.ReadInt32(),
+                    Height     = r.ReadInt32(),
+                    DataOffset = r.ReadInt32(),
+                    DataLength = r.ReadInt32()
+                });
+            }
+        }
+
+        int imageLen = r.ReadInt32();
+        sd.ImageData = imageLen > 0 ? r.ReadBytes(imageLen) : Array.Empty<byte>();
+
+        return sd;
+    }
+
+    // ── Binary codec: AudioData ──────────────────────────────────────────────
+
+    private static byte[] EncodeAudioData(AudioData ad)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+
+        w.Write(ad.SampleRate);
+        w.Write(ad.Channels);
+        w.Write(ad.BitsPerSample);
+        w.Write(ad.Timestamp.ToUniversalTime().Ticks);
+        w.Write(ad.DurationMs);
+        w.Write(ad.Format ?? string.Empty);
+
+        w.Write(ad.Data?.Length ?? 0);
+        if (ad.Data is { Length: > 0 })
+            w.Write(ad.Data);
+
+        return ms.ToArray();
+    }
+
+    private static AudioData DecodeAudioData(byte[] data)
+    {
+        using var ms = new MemoryStream(data);
+        using var r = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
+
+        var ad = new AudioData
+        {
+            SampleRate    = r.ReadInt32(),
+            Channels      = r.ReadInt32(),
+            BitsPerSample = r.ReadInt32(),
+            Timestamp     = new DateTime(r.ReadInt64(), DateTimeKind.Utc),
+            DurationMs    = r.ReadInt32(),
+            Format        = r.ReadString()
+        };
+
+        int dataLen = r.ReadInt32();
+        ad.Data = dataLen > 0 ? r.ReadBytes(dataLen) : Array.Empty<byte>();
+
+        return ad;
+    }
+
+    // ── Binary codec: FileTransferChunk ──────────────────────────────────────
+
+    private static byte[] EncodeFileTransferChunk(FileTransferChunk chunk)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+
+        w.Write(chunk.TransferId ?? string.Empty);
+        w.Write(chunk.Offset);
+        w.Write(chunk.Length);
+        w.Write(chunk.IsLastChunk);
+
+        w.Write(chunk.Data?.Length ?? 0);
+        if (chunk.Data is { Length: > 0 })
+            w.Write(chunk.Data);
+
+        return ms.ToArray();
+    }
+
+    private static FileTransferChunk DecodeFileTransferChunk(byte[] data)
+    {
+        using var ms = new MemoryStream(data);
+        using var r = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
+
+        var chunk = new FileTransferChunk
+        {
+            TransferId  = r.ReadString(),
+            Offset      = r.ReadInt64(),
+            Length      = r.ReadInt32(),
+            IsLastChunk = r.ReadBoolean()
+        };
+
+        int dataLen = r.ReadInt32();
+        chunk.Data = dataLen > 0 ? r.ReadBytes(dataLen) : Array.Empty<byte>();
+
+        return chunk;
     }
 
     // ── Certificate validation ────────────────────────────────────────────────
@@ -778,16 +810,6 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
             totalRead += read;
         }
         return totalRead;
-    }
-
-    private static string Encode<T>(T obj)
-    {
-        return JsonSerializer.Serialize(obj);
-    }
-
-    private static T? Decode<T>(string payload)
-    {
-        return JsonSerializer.Deserialize<T>(payload);
     }
 
     // ── IDisposable ───────────────────────────────────────────────────────────

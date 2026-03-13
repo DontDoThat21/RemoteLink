@@ -26,9 +26,10 @@ class Program
 
         // Configure services
         builder.Services.AddLogging();
-        // Use real GDI screen capture on Windows; fall back to mock on Linux/macOS.
+        // Use DXGI Desktop Duplication capture on Windows (GPU-accelerated, falls back to GDI);
+        // fall back to mock on Linux/macOS.
         if (OperatingSystem.IsWindows())
-            builder.Services.AddSingleton<IScreenCapture, WindowsScreenCapture>();
+            builder.Services.AddSingleton<IScreenCapture, DxgiScreenCapture>();
         else
             builder.Services.AddSingleton<IScreenCapture, MockScreenCapture>();
 
