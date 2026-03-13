@@ -47,7 +47,7 @@ public sealed class SessionWorkspacePage : ContentPage
     /// </summary>
     public void FocusSession(string sessionId) => _preferredSessionId = sessionId;
 
-    protected override async void OnAppearing()
+    protected override void OnAppearing()
     {
         base.OnAppearing();
         _sessionManager.SessionsChanged += OnSessionsChanged;
@@ -64,8 +64,16 @@ public sealed class SessionWorkspacePage : ContentPage
         var targetId = _preferredSessionId ?? _viewerPages.Keys.FirstOrDefault();
         _preferredSessionId = null;
 
+        // Defer navigation so it runs after the current navigation cycle completes.
+        // Pushing a page during OnAppearing causes WinUI Frame.NavigationFailed
+        // because the frame is still processing the inbound navigation.
         if (targetId is not null && _viewerPages.TryGetValue(targetId, out var page))
-            await Navigation.PushAsync(page);
+        {
+            _ = Dispatcher.DispatchAsync(async () =>
+            {
+                await Navigation.PushAsync(page);
+            });
+        }
     }
 
     protected override void OnDisappearing()
