@@ -6,6 +6,11 @@ namespace RemoteLink.Shared.Tests.Services;
 
 public class RemoteFrameSnapshotServiceTests
 {
+    public RemoteFrameSnapshotServiceTests()
+    {
+        RemoteFrameSnapshotService.ResetFrameCache();
+    }
+
     [Fact]
     public void CreateSnapshot_RawFrame_ReturnsBmpSnapshot()
     {
@@ -45,6 +50,108 @@ public class RemoteFrameSnapshotServiceTests
         Assert.Equal("png", snapshot!.FileExtension);
         Assert.Equal("image/png", snapshot.MimeType);
         Assert.Same(bytes, snapshot.ImageBytes);
+    }
+
+    [Fact]
+    public void CreateSnapshot_DeltaFrameWithoutChanges_ReusesPreviousFrame()
+    {
+        var firstFrame = new ScreenData
+        {
+            FrameId = "frame-1",
+            Width = 2,
+            Height = 2,
+            Format = ScreenDataFormat.Raw,
+            ImageData =
+            [
+                1, 2, 3, 4,
+                5, 6, 7, 8,
+                9, 10, 11, 12,
+                13, 14, 15, 16
+            ]
+        };
+
+        var baselineSnapshot = RemoteFrameSnapshotService.CreateSnapshot(firstFrame);
+        Assert.NotNull(baselineSnapshot);
+
+        var deltaFrame = new ScreenData
+        {
+            FrameId = "frame-2",
+            ReferenceFrameId = firstFrame.FrameId,
+            Width = 2,
+            Height = 2,
+            Format = ScreenDataFormat.Raw,
+            IsDelta = true,
+            DeltaRegions = [],
+            ImageData = Array.Empty<byte>()
+        };
+
+        var deltaSnapshot = RemoteFrameSnapshotService.CreateSnapshot(deltaFrame);
+
+        Assert.NotNull(deltaSnapshot);
+        Assert.Equal(baselineSnapshot!.ImageBytes, deltaSnapshot!.ImageBytes);
+    }
+
+    [Fact]
+    public void CreateSnapshot_DeltaFrameWithChangedRegion_RebuildsFullFrame()
+    {
+        var firstFrame = new ScreenData
+        {
+            FrameId = "frame-1",
+            Width = 2,
+            Height = 2,
+            Format = ScreenDataFormat.Raw,
+            ImageData =
+            [
+                1, 2, 3, 4,
+                5, 6, 7, 8,
+                9, 10, 11, 12,
+                13, 14, 15, 16
+            ]
+        };
+
+        Assert.NotNull(RemoteFrameSnapshotService.CreateSnapshot(firstFrame));
+
+        var deltaFrame = new ScreenData
+        {
+            FrameId = "frame-2",
+            ReferenceFrameId = firstFrame.FrameId,
+            Width = 2,
+            Height = 2,
+            Format = ScreenDataFormat.Raw,
+            IsDelta = true,
+            DeltaRegions =
+            [
+                new DeltaRegion
+                {
+                    X = 1,
+                    Y = 0,
+                    Width = 1,
+                    Height = 1,
+                    DataOffset = 0,
+                    DataLength = 4
+                }
+            ],
+            ImageData = [21, 22, 23, 24]
+        };
+
+        var snapshot = RemoteFrameSnapshotService.CreateSnapshot(deltaFrame);
+
+        var expectedFrame = new ScreenData
+        {
+            Width = 2,
+            Height = 2,
+            Format = ScreenDataFormat.Raw,
+            ImageData =
+            [
+                1, 2, 3, 4,
+                21, 22, 23, 24,
+                9, 10, 11, 12,
+                13, 14, 15, 16
+            ]
+        };
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(ScreenFrameConverter.ToImageBytes(expectedFrame), snapshot!.ImageBytes);
     }
 
     [Fact]

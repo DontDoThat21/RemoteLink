@@ -2270,6 +2270,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             switch (state)
             {
                 case ClientConnectionState.Connected:
+                    RemoteFrameSnapshotService.ResetFrameCache();
                     var hostName = _client.ConnectedHost?.DeviceName ?? "Unknown";
                     _hasConnectedSession = true;
                     _connectedHostLabel.Text = $"Connected to {hostName}";
@@ -2287,6 +2288,7 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                     break;
 
                 case ClientConnectionState.Disconnected:
+                    RemoteFrameSnapshotService.ResetFrameCache();
                     if (_client.IsAutoReconnectPending)
                     {
                         _connectedBanner.IsVisible = true;
@@ -2401,32 +2403,53 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
     private void OnScreenDataReceived(object? sender, ScreenData screenData)
     {
-        if (_frameRenderBusy) return;
-        _frameRenderBusy = true;
-
         var snapshot = RemoteFrameSnapshotService.CreateSnapshot(screenData);
         if (snapshot is null)
-        {
-            _frameRenderBusy = false;
             return;
-        }
 
         _latestSnapshot = snapshot;
 
         if (screenData.Width > 0) _desktopWidth = screenData.Width;
         if (screenData.Height > 0) _desktopHeight = screenData.Height;
 
-        MainThread.BeginInvokeOnMainThread(() =>
+        TryRenderLatestSnapshot();
+    }
+
+    private void TryRenderLatestSnapshot()
+    {
+        if (_frameRenderBusy)
+            return;
+
+        _frameRenderBusy = true;
+        MainThread.BeginInvokeOnMainThread(RenderLatestSnapshot);
+    }
+
+    private void RenderLatestSnapshot()
+    {
+        RemoteFrameSnapshot? renderedSnapshot = null;
+
+        try
         {
-            try
+            while (true)
             {
+                var snapshot = _latestSnapshot;
+                if (snapshot is null)
+                    return;
+
+                renderedSnapshot = snapshot;
                 _remoteViewer.Source = ImageSource.FromStream(() => new MemoryStream(snapshot.ImageBytes, writable: false));
+
+                if (ReferenceEquals(snapshot, _latestSnapshot))
+                    return;
             }
-            finally
-            {
-                _frameRenderBusy = false;
-            }
-        });
+        }
+        finally
+        {
+            _frameRenderBusy = false;
+
+            if (_latestSnapshot is not null && !ReferenceEquals(_latestSnapshot, renderedSnapshot))
+                TryRenderLatestSnapshot();
+        }
     }
 
     private static async Task<string> SaveScreenshotShareCopyAsync(string fileName, byte[] imageBytes)

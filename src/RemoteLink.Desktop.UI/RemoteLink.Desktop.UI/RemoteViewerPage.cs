@@ -372,44 +372,62 @@ public class RemoteViewerPage : ContentPage
 
     private void OnScreenDataReceived(object? sender, ScreenData screenData)
     {
-        if (_frameRenderBusy) return;
-        _frameRenderBusy = true;
-
-        Interlocked.Increment(ref _frameCount);
-
         try
         {
             var snapshot = RemoteFrameSnapshotService.CreateSnapshot(screenData);
             if (snapshot is null)
-            {
-                _frameRenderBusy = false;
                 return;
-            }
 
             _latestSnapshot = snapshot;
 
             if (screenData.Width > 0) _remoteWidth = screenData.Width;
             if (screenData.Height > 0) _remoteHeight = screenData.Height;
 
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                try
-                {
-                    _remoteViewer.Source = ImageSource.FromStream(() => new MemoryStream(snapshot.ImageBytes, writable: false));
-
-                    // Update resolution label on change
-                    if (_remoteWidth > 0 && _remoteHeight > 0)
-                        _resolutionLabel.Text = $"Resolution: {_remoteWidth}x{_remoteHeight}";
-                }
-                finally
-                {
-                    _frameRenderBusy = false;
-                }
-            });
+            Interlocked.Increment(ref _frameCount);
+            TryRenderLatestSnapshot();
         }
         catch
         {
+        }
+    }
+
+    private void TryRenderLatestSnapshot()
+    {
+        if (_frameRenderBusy)
+            return;
+
+        _frameRenderBusy = true;
+        MainThread.BeginInvokeOnMainThread(RenderLatestSnapshot);
+    }
+
+    private void RenderLatestSnapshot()
+    {
+        RemoteFrameSnapshot? renderedSnapshot = null;
+
+        try
+        {
+            while (true)
+            {
+                var snapshot = _latestSnapshot;
+                if (snapshot is null)
+                    return;
+
+                renderedSnapshot = snapshot;
+                _remoteViewer.Source = ImageSource.FromStream(() => new MemoryStream(snapshot.ImageBytes, writable: false));
+
+                if (_remoteWidth > 0 && _remoteHeight > 0)
+                    _resolutionLabel.Text = $"Resolution: {_remoteWidth}x{_remoteHeight}";
+
+                if (ReferenceEquals(snapshot, _latestSnapshot))
+                    return;
+            }
+        }
+        finally
+        {
             _frameRenderBusy = false;
+
+            if (_latestSnapshot is not null && !ReferenceEquals(_latestSnapshot, renderedSnapshot))
+                TryRenderLatestSnapshot();
         }
     }
 
@@ -640,7 +658,10 @@ public class RemoteViewerPage : ContentPage
         if (state == ClientConnectionState.Connected)
             EnsureFileTransferService();
         else if (state == ClientConnectionState.Disconnected)
+        {
             DetachFileTransferService();
+            RemoteFrameSnapshotService.ResetFrameCache();
+        }
 
         if (state == ClientConnectionState.Disconnected && !_isDisconnecting)
         {
