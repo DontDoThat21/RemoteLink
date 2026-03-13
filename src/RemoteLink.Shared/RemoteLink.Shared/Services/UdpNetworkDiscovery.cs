@@ -131,7 +131,8 @@ public class UdpNetworkDiscovery : INetworkDiscovery
     {
         try
         {
-            if (_broadcastClient == null) return;
+            var client = _broadcastClient;
+            if (client == null) return;
 
             var preferredAddress = NetworkAddressResolver.GetPreferredIPv4Address();
             if (!string.IsNullOrWhiteSpace(preferredAddress))
@@ -141,7 +142,7 @@ public class UdpNetworkDiscovery : INetworkDiscovery
             var data = Encoding.UTF8.GetBytes(message);
 
             foreach (var endPoint in NetworkAddressResolver.GetBroadcastEndpoints(DISCOVERY_PORT))
-                _broadcastClient.Send(data, data.Length, endPoint);
+                client.Send(data, data.Length, endPoint);
         }
         catch (Exception)
         {
