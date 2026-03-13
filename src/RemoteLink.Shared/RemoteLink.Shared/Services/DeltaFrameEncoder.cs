@@ -40,7 +40,9 @@ public class DeltaFrameEncoder : IDeltaFrameEncoder
                 currentFrame.Format != ScreenDataFormat.Raw || // Only delta-encode raw frames
                 forceKeyframe)
             {
-                StorePreviousFrame(currentFrame);
+                // Only cache Raw frames; H264 access units must not pollute the raw reference buffer
+                if (currentFrame.Format == ScreenDataFormat.Raw)
+                    StorePreviousFrame(currentFrame);
                 _lastKeyframeUtcTicks = nowTicks;
                 return Task.FromResult((currentFrame, false));
             }

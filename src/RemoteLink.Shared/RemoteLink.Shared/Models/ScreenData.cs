@@ -27,6 +27,12 @@ public class ScreenData
     /// Changed regions in delta frames (x, y, width, height, offset in ImageData)
     /// </summary>
     public List<DeltaRegion>? DeltaRegions { get; set; }
+
+    /// <summary>
+    /// When Format is H264, indicates this Access Unit begins with an IDR (keyframe).
+    /// Clients can use this to detect stream synchronisation points.
+    /// </summary>
+    public bool IsH264Keyframe { get; set; }
 }
 
 /// <summary>
@@ -36,5 +42,11 @@ public enum ScreenDataFormat
 {
     JPEG,
     PNG,
-    Raw
+    Raw,
+
+    /// <summary>
+    /// H.264 Access Unit in Annex B format, encoded by Media Foundation.
+    /// The viewer decodes via hardware-accelerated Media Foundation MFT.
+    /// </summary>
+    H264
 }

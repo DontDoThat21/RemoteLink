@@ -17,6 +17,15 @@ public static class RemoteFrameSnapshotService
     private static int _previousWidth;
     private static int _previousHeight;
 
+    /// <summary>
+    /// Optional hardware H.264 decoder. When set, H264-format frames are decoded
+    /// to raw BGRA bytes before display. If null, H264 frames are silently skipped.
+    /// </summary>
+    public static Func<byte[], int, int, byte[]?>? H264Decoder { get; set; }
+
+    /// <summary>Called when the frame cache is reset so the decoder can flush its state.</summary>
+    public static Action? H264DecoderReset { get; set; }
+
     public static RemoteFrameSnapshot? CreateSnapshot(ScreenData? screenData)
     {
         if (screenData is null)
@@ -42,6 +51,7 @@ public static class RemoteFrameSnapshotService
         lock (FrameLock)
         {
             ClearFrameCache();
+            H264DecoderReset?.Invoke();
         }
     }
 
@@ -59,6 +69,7 @@ public static class RemoteFrameSnapshotService
             ScreenDataFormat.JPEG => "jpg",
             ScreenDataFormat.PNG => "png",
             ScreenDataFormat.Raw => "bmp",
+            ScreenDataFormat.H264 => "bmp",
             _ => "png"
         };
 
@@ -68,6 +79,7 @@ public static class RemoteFrameSnapshotService
             ScreenDataFormat.JPEG => "image/jpeg",
             ScreenDataFormat.PNG => "image/png",
             ScreenDataFormat.Raw => "image/bmp",
+            ScreenDataFormat.H264 => "image/bmp",
             _ => "image/png"
         };
 
@@ -75,6 +87,9 @@ public static class RemoteFrameSnapshotService
     {
         lock (FrameLock)
         {
+            if (screenData.Format == ScreenDataFormat.H264)
+                return DecodeH264Frame(screenData);
+
             if (!screenData.IsDelta)
             {
                 TrackFrame(screenData);
@@ -83,6 +98,30 @@ public static class RemoteFrameSnapshotService
 
             return RebuildDeltaFrame(screenData);
         }
+    }
+
+    private static ScreenData? DecodeH264Frame(ScreenData screenData)
+    {
+        if (H264Decoder is null || screenData.Width <= 0 || screenData.Height <= 0)
+            return null;
+
+        var bgraBytes = H264Decoder(screenData.ImageData, screenData.Width, screenData.Height);
+        if (bgraBytes is null)
+            return null;
+
+        var decoded = new ScreenData
+        {
+            FrameId = screenData.FrameId,
+            Timestamp = screenData.Timestamp,
+            ImageData = bgraBytes,
+            Width = screenData.Width,
+            Height = screenData.Height,
+            Format = ScreenDataFormat.Raw,
+            Quality = screenData.Quality
+        };
+
+        TrackFrame(decoded);
+        return decoded;
     }
 
     private static void TrackFrame(ScreenData screenData)

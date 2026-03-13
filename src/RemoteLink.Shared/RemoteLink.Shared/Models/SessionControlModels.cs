@@ -12,7 +12,13 @@ public enum SessionControlCommand
     SetQuality,
     SetImageFormat,
     SetAudioEnabled,
-    RebootDevice
+    RebootDevice,
+
+    /// <summary>
+    /// Ask the host to switch its encoder to H.264 (true) or back to JPEG (false).
+    /// Requires the host to have a Media Foundation H.264 MFT available.
+    /// </summary>
+    SetH264Enabled
 }
 
 /// <summary>
@@ -27,6 +33,7 @@ public class SessionControlRequest
     public int? Quality { get; set; }
     public ScreenDataFormat? ImageFormat { get; set; }
     public bool? AudioEnabled { get; set; }
+    public bool? H264Enabled { get; set; }
 }
 
 /// <summary>
@@ -45,6 +52,7 @@ public class SessionControlResponse
     public int? AppliedQuality { get; set; }
     public ScreenDataFormat? AppliedImageFormat { get; set; }
     public bool? AppliedAudioEnabled { get; set; }
+    public bool? AppliedH264Enabled { get; set; }
     public bool? AutoReconnectSupported { get; set; }
     public int? ReconnectDelaySeconds { get; set; }
 }
