@@ -95,6 +95,42 @@ internal sealed class GpuFrameViewHandler
         PlatformView.SwapChain = sc;
     }
 
+    // ── Device / swap chain recovery ──────────────────────────────────────
+
+    /// <summary>
+    /// Ensures both the <see cref="CanvasDevice"/> and <see cref="CanvasSwapChain"/>
+    /// are available.  Called before every frame so the pipeline self-heals after a
+    /// device-lost event without waiting for a <c>SizeChanged</c> that may never arrive.
+    /// </summary>
+    private void EnsureDeviceAndSwapChain()
+    {
+        if (_device is null)
+        {
+            try { _device = CanvasDevice.GetSharedDevice(); }
+            catch { return; }
+        }
+
+        if (_swapChain is null && _panelW > 0 && _panelH > 0)
+        {
+            _dpi = (float)(PlatformView?.XamlRoot?.RasterizationScale * 96.0 ?? 96.0);
+            RecreateSwapChain();
+        }
+    }
+
+    /// <summary>
+    /// Tears down the current device and swap chain, then attempts to reacquire them
+    /// so the very next frame can render.
+    /// </summary>
+    private void RecoverFromDeviceLost()
+    {
+        var old = _swapChain;
+        _swapChain = null;
+        old?.Dispose();
+        _device = null;
+
+        EnsureDeviceAndSwapChain();
+    }
+
     // ── Frame rendering ────────────────────────────────────────────────────
 
     private static void MapRenderFrame(
@@ -111,14 +147,17 @@ internal sealed class GpuFrameViewHandler
     /// </summary>
     private async Task RenderFrameAsync(byte[] imageBytes)
     {
-        if (_renderBusy || _device is null)
+        if (_renderBusy)
             return;
 
         _renderBusy = true;
         try
         {
+            EnsureDeviceAndSwapChain();
+
+            var device = _device;
             var swapChain = _swapChain;
-            if (swapChain is null)
+            if (device is null || swapChain is null)
                 return;
 
             // ── Decode encoded bytes (JPEG / PNG / BMP) ──────────────────
@@ -134,7 +173,7 @@ internal sealed class GpuFrameViewHandler
             CanvasBitmap bitmap;
             try
             {
-                bitmap = await CanvasBitmap.LoadAsync(_device, ras);
+                bitmap = await CanvasBitmap.LoadAsync(device, ras);
             }
             catch (ObjectDisposedException)
             {
@@ -143,6 +182,12 @@ internal sealed class GpuFrameViewHandler
 
             using (bitmap)
             {
+                // Re-read after the await — another thread may have disposed
+                // the swap chain while the bitmap was decoding.
+                swapChain = _swapChain;
+                if (swapChain is null)
+                    return;
+
                 var sw = (double)swapChain.Size.Width;
                 var sh = (double)swapChain.Size.Height;
 
@@ -195,10 +240,15 @@ internal sealed class GpuFrameViewHandler
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException
                                        or ObjectDisposedException)
         {
-            // Device lost or swap chain invalidated — drop this frame; the
-            // swap chain will be rebuilt on the next SizeChanged event.
-            _swapChain?.Dispose();
-            _swapChain = null;
+            // Device lost or swap chain invalidated — attempt immediate recovery
+            // so the next frame can render without waiting for SizeChanged.
+            RecoverFromDeviceLost();
+        }
+        catch (Exception)
+        {
+            // Bad image data or transient rendering error — drop this frame.
+            // Without this catch-all, the fire-and-forget task would surface as
+            // an unobserved exception and hit the WinUI UnhandledException handler.
         }
         finally
         {

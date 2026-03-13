@@ -414,6 +414,11 @@ public class RemoteViewerPage : ContentPage
             if (_remoteWidth > 0 && _remoteHeight > 0)
                 _resolutionLabel.Text = $"Resolution: {_remoteWidth}x{_remoteHeight}";
         }
+        catch (Exception)
+        {
+            // Prevent rendering failures from propagating to the UI dispatcher
+            // as unhandled exceptions.  The next frame will retry.
+        }
         finally
         {
             _frameRenderBusy = false;
