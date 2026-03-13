@@ -236,4 +236,117 @@ public static class ThemeColors
     public static Color ConnectionInfoText => IsDark
         ? Color.FromArgb("#A0A0B8")
         : Color.FromArgb("#666666");
+
+    // ── Main sidebar navigation ───────────────────────────────────────────
+
+    public static Color SidebarBackground => IsDark
+        ? Color.FromArgb("#12122A")
+        : Color.FromArgb("#F0EDF8");
+
+    public static Color SidebarBorder => IsDark
+        ? Color.FromArgb("#2A2A44")
+        : Color.FromArgb("#DDD8EE");
+
+    public static Color SidebarItemHover => IsDark
+        ? Color.FromArgb("#2A2A44")
+        : Color.FromArgb("#E8E0FF");
+
+    public static Color SidebarItemActive => IsDark
+        ? Color.FromArgb("#352F5C")
+        : Color.FromArgb("#D8D0F0");
+
+    public static Color SidebarIconInactive => IsDark
+        ? Color.FromArgb("#707088")
+        : Color.FromArgb("#888888");
+
+    public static Color SidebarLabelInactive => IsDark
+        ? Color.FromArgb("#707088")
+        : Color.FromArgb("#888888");
+
+    // ── Devices panel ─────────────────────────────────────────────────────
+
+    public static Color AddressBookBackground => IsDark
+        ? Color.FromArgb("#2A2844")
+        : Color.FromArgb("#FFFBF0");
+
+    public static Color AddressBookBorder => IsDark
+        ? Color.FromArgb("#3E3A5C")
+        : Color.FromArgb("#F0E0B0");
+
+    public static Color SelectedCardBackground => IsDark
+        ? Color.FromArgb("#2A3540")
+        : Color.FromArgb("#F0F8FF");
+
+    public static Color SelectedCardBorder => IsDark
+        ? Color.FromArgb("#4080A0")
+        : Color.FromArgb("#A0C8E0");
+
+    public static Color ShadowColor => IsDark
+        ? Color.FromArgb("#10000000")
+        : Color.FromArgb("#20000000");
+
+    // ── Files / Transfers ─────────────────────────────────────────────────
+
+    public static Color SurfaceBackground => IsDark
+        ? Color.FromArgb("#1E1E38")
+        : Color.FromArgb("#FAFAFA");
+
+    public static Color PlaceholderBackground => IsDark
+        ? Color.FromArgb("#1E1E38")
+        : Color.FromArgb("#FAFAFA");
+
+    public static Color NeutralButtonBackground => IsDark
+        ? Color.FromArgb("#4A4A64")
+        : Color.FromArgb("#CCCCCC");
+
+    // ── Status badges ─────────────────────────────────────────────────────
+
+    public static Color SuccessBackground => IsDark
+        ? Color.FromArgb("#1A3A1A")
+        : Color.FromArgb("#E8F5E8");
+
+    public static Color SuccessBorder => IsDark
+        ? Color.FromArgb("#2A5A2A")
+        : Color.FromArgb("#A8D8A8");
+
+    public static Color SuccessText => IsDark
+        ? Color.FromArgb("#6BCB6B")
+        : Color.FromArgb("#2E7D32");
+
+    public static Color DangerSoft => IsDark
+        ? Color.FromArgb("#3D1A1A")
+        : Color.FromArgb("#FFEAEA");
+
+    public static Color DangerText => IsDark
+        ? Color.FromArgb("#EF5350")
+        : Color.FromArgb("#D32F2F");
+
+    public static Color WarningSoft => IsDark
+        ? Color.FromArgb("#3D3A1A")
+        : Color.FromArgb("#FFF8E1");
+
+    public static Color WarningText => IsDark
+        ? Color.FromArgb("#FFB300")
+        : Color.FromArgb("#F57F17");
+
+    public static Color AccentSoft => IsDark
+        ? Color.FromArgb("#2A2850")
+        : Color.FromArgb("#EDE7FF");
+
+    public static Color InputBackground => IsDark
+        ? Color.FromArgb("#2E2E48")
+        : Colors.White;
+
+    public static Color CardBackgroundAlt => IsDark
+        ? Color.FromArgb("#2A2A44")
+        : Color.FromArgb("#F8F5FF");
+
+    public static Color InfoSoft => IsDark
+        ? Color.FromArgb("#1A2A3D")
+        : Color.FromArgb("#E3F2FD");
+
+    public static Color InfoText => IsDark
+        ? Color.FromArgb("#42A5F5")
+        : Color.FromArgb("#1565C0");
+
 }

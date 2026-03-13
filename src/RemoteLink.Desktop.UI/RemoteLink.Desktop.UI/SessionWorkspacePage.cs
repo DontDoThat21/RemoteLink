@@ -5,9 +5,10 @@ using RemoteLink.Shared.Services;
 namespace RemoteLink.Desktop.UI;
 
 /// <summary>
-/// Custom-tabbed workspace that hosts multiple simultaneous outgoing remote sessions.
-/// Uses a ContentPage with a manual tab bar instead of TabbedPage so it can be pushed
-/// onto the NavigationPage stack on Windows without causing NavigationFailed.
+/// Lists active outgoing remote sessions and navigates to their individual viewer pages
+/// using standard MAUI navigation (PushAsync).  This avoids the MAUI single-parent
+/// constraint that fires when embedding a ContentPage's Content view into another page,
+/// which was causing the WinUI Frame.NavigationFailed / COMException.
 /// </summary>
 public sealed class SessionWorkspacePage : ContentPage
 {
@@ -15,10 +16,9 @@ public sealed class SessionWorkspacePage : ContentPage
     private readonly ILoggerFactory _loggerFactory;
     private readonly Dictionary<string, RemoteViewerPage> _viewerPages = new(StringComparer.OrdinalIgnoreCase);
     private string? _preferredSessionId;
-    private string? _activeSessionId;
+    private bool _hasAutoNavigated;
 
-    private readonly HorizontalStackLayout _tabBar;
-    private readonly ContentView _contentArea;
+    private readonly VerticalStackLayout _sessionListLayout;
 
     public SessionWorkspacePage(
         RemoteDesktopMultiSessionManager sessionManager,
@@ -30,203 +30,174 @@ public sealed class SessionWorkspacePage : ContentPage
         Title = "Remote Sessions";
         BackgroundColor = ThemeColors.PageBackground;
 
-        _tabBar = new HorizontalStackLayout { Spacing = 0 };
-
-        var tabScroll = new ScrollView
+        _sessionListLayout = new VerticalStackLayout
         {
-            Orientation = ScrollOrientation.Horizontal,
-            Content = _tabBar,
-            BackgroundColor = ThemeColors.HeaderBackground,
-            HeightRequest = 42,
-            VerticalOptions = LayoutOptions.Start,
+            Spacing = 10,
+            Padding = new Thickness(20),
         };
 
-        _contentArea = new ContentView
-        {
-            BackgroundColor = Colors.Black,
-            HorizontalOptions = LayoutOptions.Fill,
-            VerticalOptions = LayoutOptions.Fill,
-        };
-
-        var layout = new Grid
-        {
-            RowDefinitions =
-            {
-                new RowDefinition(GridLength.Auto),
-                new RowDefinition(GridLength.Star),
-            }
-        };
-        layout.Add(tabScroll, 0, 0);
-        layout.Add(_contentArea, 0, 1);
-
-        Content = layout;
+        Content = new ScrollView { Content = _sessionListLayout };
 
         ToolbarItems.Add(new ToolbarItem("Dashboard", null, async () => await Navigation.PopAsync()));
     }
 
-    public void FocusSession(string sessionId)
-    {
-        _preferredSessionId = sessionId;
-        RefreshTabs();
-    }
+    /// <summary>
+    /// Stores the session ID to auto-navigate to when this page first appears.
+    /// Safe to call before the page is pushed onto the navigation stack.
+    /// </summary>
+    public void FocusSession(string sessionId) => _preferredSessionId = sessionId;
 
-    protected override void OnAppearing()
+    protected override async void OnAppearing()
     {
         base.OnAppearing();
         _sessionManager.SessionsChanged += OnSessionsChanged;
-        RefreshTabs();
-        if (_activeSessionId is not null && _viewerPages.TryGetValue(_activeSessionId, out var page))
-            page.StartViewing();
+        RefreshSessions();
+        RebuildSessionList();
+
+        // Auto-navigate to the target session the first time this page appears.
+        // On subsequent appearances (returning from a viewer) just show the list.
+        if (_hasAutoNavigated)
+            return;
+
+        _hasAutoNavigated = true;
+
+        var targetId = _preferredSessionId ?? _viewerPages.Keys.FirstOrDefault();
+        _preferredSessionId = null;
+
+        if (targetId is not null && _viewerPages.TryGetValue(targetId, out var page))
+            await Navigation.PushAsync(page);
     }
 
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
         _sessionManager.SessionsChanged -= OnSessionsChanged;
-        if (_activeSessionId is not null && _viewerPages.TryGetValue(_activeSessionId, out var page))
-            page.StopViewing();
     }
 
     private void OnSessionsChanged(object? sender, EventArgs e) =>
-        MainThread.BeginInvokeOnMainThread(RefreshTabs);
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshSessions();
+            RebuildSessionList();
+        });
 
-    private void RefreshTabs()
+    private void RefreshSessions()
     {
         var sessions = _sessionManager.GetSessions();
         var activeIds = sessions.Select(s => s.SessionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Remove stale viewer pages whose sessions have ended
         foreach (var staleId in _viewerPages.Keys.Where(id => !activeIds.Contains(id)).ToList())
-        {
-            if (staleId == _activeSessionId)
-            {
-                _viewerPages[staleId].StopViewing();
-                _activeSessionId = null;
-                _contentArea.Content = null;
-            }
             _viewerPages.Remove(staleId);
-        }
 
+        // Create viewer pages for newly connected sessions
         foreach (var session in sessions)
         {
             if (_viewerPages.ContainsKey(session.SessionId))
                 continue;
 
+            // closeSessionAsync is null: RemoteViewerPage handles its own disconnect
+            // by calling Navigation.PopAsync(), which is correct for stack-based navigation.
+            // The MultiSessionManager's own ConnectionStateChanged handler cleans up the session.
             var page = new RemoteViewerPage(
                 session.Client,
                 _loggerFactory.CreateLogger<RemoteViewerPage>(),
-                () => _sessionManager.CloseSessionAsync(session.SessionId))
+                closeSessionAsync: null)
             {
                 Title = session.DisplayName
             };
             _viewerPages[session.SessionId] = page;
         }
+    }
+
+    private void RebuildSessionList()
+    {
+        _sessionListLayout.Children.Clear();
 
         if (_viewerPages.Count == 0)
         {
-            _contentArea.Content = BuildEmptyStateView();
-            RebuildTabBar();
+            _sessionListLayout.Children.Add(new Label
+            {
+                Text = "No active remote sessions",
+                FontSize = 20,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = ThemeColors.TextPrimary,
+                HorizontalOptions = LayoutOptions.Center,
+                Margin = new Thickness(0, 48, 0, 12),
+            });
+            _sessionListLayout.Children.Add(new Label
+            {
+                Text = "All sessions have ended. Return to the dashboard to connect again.",
+                FontSize = 14,
+                TextColor = ThemeColors.TextSecondary,
+                HorizontalTextAlignment = TextAlignment.Center,
+                MaximumWidthRequest = 400,
+                HorizontalOptions = LayoutOptions.Center,
+            });
             return;
         }
 
-        string? targetId = null;
-        if (!string.IsNullOrWhiteSpace(_preferredSessionId) && _viewerPages.ContainsKey(_preferredSessionId))
+        _sessionListLayout.Children.Add(new Label
         {
-            targetId = _preferredSessionId;
-            _preferredSessionId = null;
-        }
-        else if (_activeSessionId is null || !_viewerPages.ContainsKey(_activeSessionId))
-        {
-            targetId = sessions.FirstOrDefault()?.SessionId;
-        }
+            Text = "Active Sessions",
+            FontSize = 16,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = ThemeColors.TextPrimary,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
 
-        RebuildTabBar();
-
-        if (targetId is not null)
-            ShowSession(targetId);
-    }
-
-    private void RebuildTabBar()
-    {
-        _tabBar.Children.Clear();
         foreach (var (sessionId, page) in _viewerPages)
         {
-            var isActive = sessionId == _activeSessionId;
-            var tabButton = new Button
+            var nameLabel = new Label
             {
                 Text = page.Title,
-                BackgroundColor = isActive ? ThemeColors.Accent : ThemeColors.SecondaryButtonBackground,
-                TextColor = isActive ? Colors.White : ThemeColors.TextPrimary,
-                FontSize = 13,
-                CornerRadius = 0,
-                Padding = new Thickness(16, 0),
-                HeightRequest = 42,
-                BorderWidth = 0,
-                Margin = new Thickness(0, 0, 1, 0),
+                FontSize = 15,
+                FontAttributes = FontAttributes.Bold,
+                TextColor = ThemeColors.TextPrimary,
+                VerticalOptions = LayoutOptions.Center,
             };
-            var capturedId = sessionId;
-            tabButton.Clicked += (_, _) => ShowSession(capturedId);
-            _tabBar.Children.Add(tabButton);
-        }
-    }
 
-    private void ShowSession(string sessionId)
-    {
-        if (sessionId == _activeSessionId)
-            return;
-
-        if (_activeSessionId is not null && _viewerPages.TryGetValue(_activeSessionId, out var oldPage))
-            oldPage.StopViewing();
-
-        _activeSessionId = sessionId;
-
-        if (_viewerPages.TryGetValue(sessionId, out var newPage))
-        {
-            _contentArea.Content = newPage.Content;
-            newPage.StartViewing();
-        }
-
-        RebuildTabBar();
-    }
-
-    private View BuildEmptyStateView()
-    {
-        var backButton = new Button
-        {
-            Text = "Return to Dashboard",
-            BackgroundColor = ThemeColors.Accent,
-            TextColor = Colors.White,
-            CornerRadius = 8,
-            HorizontalOptions = LayoutOptions.Center,
-            Padding = new Thickness(16, 10)
-        };
-        backButton.Clicked += async (_, _) => await Navigation.PopAsync();
-
-        return new VerticalStackLayout
-        {
-            Padding = new Thickness(24),
-            Spacing = 16,
-            VerticalOptions = LayoutOptions.Center,
-            HorizontalOptions = LayoutOptions.Center,
-            Children =
+            var openButton = new Button
             {
-                new Label
+                Text = "Open",
+                BackgroundColor = ThemeColors.Accent,
+                TextColor = Colors.White,
+                CornerRadius = 6,
+                Padding = new Thickness(18, 0),
+                HeightRequest = 36,
+                FontSize = 13,
+                VerticalOptions = LayoutOptions.Center,
+            };
+
+            var row = new Grid
+            {
+                ColumnDefinitions =
                 {
-                    Text = "No active remote sessions",
-                    FontSize = 22,
-                    FontAttributes = FontAttributes.Bold,
-                    TextColor = ThemeColors.TextPrimary,
-                    HorizontalOptions = LayoutOptions.Center
+                    new ColumnDefinition(GridLength.Star),
+                    new ColumnDefinition(GridLength.Auto),
                 },
-                new Label
-                {
-                    Text = "Open another partner connection from the dashboard to create a new tabbed session.",
-                    FontSize = 14,
-                    TextColor = ThemeColors.TextSecondary,
-                    HorizontalTextAlignment = TextAlignment.Center,
-                    MaximumWidthRequest = 380
-                },
-                backButton
-            }
-        };
+                ColumnSpacing = 12,
+            };
+            row.Add(nameLabel, 0, 0);
+            row.Add(openButton, 1, 0);
+
+            var card = new Border
+            {
+                BackgroundColor = ThemeColors.CardBackground,
+                StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
+                StrokeThickness = 0,
+                Padding = new Thickness(16, 14),
+                Content = row,
+            };
+
+            var capturedId = sessionId;
+            openButton.Clicked += async (_, _) =>
+            {
+                if (_viewerPages.TryGetValue(capturedId, out var viewerPage))
+                    await Navigation.PushAsync(viewerPage);
+            };
+
+            _sessionListLayout.Children.Add(card);
+        }
     }
 }

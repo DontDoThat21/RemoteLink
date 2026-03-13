@@ -62,6 +62,10 @@ public static class MauiProgram
         // File transfer (chunked streaming with progress tracking)
         builder.Services.AddSingleton<IFileTransferService, FileTransferService>();
 
+        // Saved devices and connection history (for Devices panel)
+        builder.Services.AddSingleton<ISavedDevicesService, SavedDevicesService>();
+        builder.Services.AddSingleton<IConnectionHistoryService, ConnectionHistoryService>();
+
         // Core shared services
         builder.Services.AddSingleton<ICommunicationService, AdaptiveCommunicationService>();
         builder.Services.AddSingleton<IConnectionRequestNotificationPublisher, LanConnectionRequestNotificationPublisher>();

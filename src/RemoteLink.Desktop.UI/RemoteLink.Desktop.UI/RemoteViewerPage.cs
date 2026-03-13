@@ -336,7 +336,6 @@ public class RemoteViewerPage : ContentPage
 
         /// <summary>
         /// Activates the viewer: subscribes to data events, starts the metrics timer, and focuses keyboard capture.
-        /// Call this when the viewer becomes the active visible tab.
         /// </summary>
         public void StartViewing()
         {
@@ -345,6 +344,8 @@ public class RemoteViewerPage : ContentPage
             _client.ConnectionStateChanged -= OnConnectionStateChanged;
             _client.ConnectionStateChanged += OnConnectionStateChanged;
             EnsureFileTransferService();
+
+            _metricsTimer?.Stop();
             var dispatcher = Application.Current?.Dispatcher ?? Dispatcher;
             _metricsTimer = dispatcher.CreateTimer();
             _metricsTimer.Interval = TimeSpan.FromSeconds(1);
@@ -355,7 +356,6 @@ public class RemoteViewerPage : ContentPage
 
         /// <summary>
         /// Deactivates the viewer: stops the metrics timer and unsubscribes from data events.
-        /// Call this when the viewer is hidden or the tab is switched away.
         /// </summary>
         public void StopViewing()
         {

@@ -36,6 +36,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private readonly Func<ChatPage> _chatPageFactory;
     private readonly Func<SessionWorkspacePage> _sessionWorkspacePageFactory;
     private readonly DeviceInfo _localDevice;
+    private readonly ISavedDevicesService _savedDevices;
+    private readonly IConnectionHistoryService _connectionHistory;
 
     private CancellationTokenSource? _hostCts;
     private IDispatcherTimer? _pinExpiryTimer;
@@ -54,6 +56,45 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private bool _isConnecting;
     private int _activeConnectionCount;
     private readonly List<DeviceInfo> _discoveredHosts = new();
+
+    // Sidebar navigation state
+    private enum NavItem { Home, Devices, Files, Chat }
+    private NavItem _currentNav = NavItem.Home;
+    private View? _contentArea;
+    private Button? _navHomeButton;
+    private Button? _navDevicesButton;
+    private Button? _navFilesButton;
+    private Button? _navChatButton;
+
+    // Devices panel references
+    private StackLayout? _savedDeviceListLayout;
+    private Label? _savedEmptyLabel;
+    private StackLayout? _devDiscoveredListLayout;
+    private Label? _devEmptyLabel;
+    private Label? _devCountLabel;
+    private Border? _devConnectionBanner;
+    private Label? _devConnectionBannerLabel;
+    private bool _devicesLoaded;
+
+    // Files panel references
+    private Label? _filesConnectionLabel;
+    private Button? _filesSendButton;
+    private StackLayout? _filesIncomingLayout;
+    private Label? _filesIncomingEmptyLabel;
+    private StackLayout? _filesTransfersLayout;
+    private Label? _filesTransfersEmptyLabel;
+    private ICommunicationService? _filesBoundComm;
+    private IFileTransferService? _filesTransferService;
+    private readonly Dictionary<string, FileTransferRequest> _filesPendingRequests = new();
+    private readonly Dictionary<string, FilesTransferItem> _filesTransferItems = new();
+
+    // Chat panel references
+    private ScrollView? _chatScrollView;
+    private StackLayout? _chatMessageList;
+    private Entry? _chatMessageEntry;
+    private Button? _chatSendButton;
+    private Label? _chatStatusLabel;
+    private Label? _chatEmptyState;
 
     // UI element references — host panel
     private Label? _pinLabel;
@@ -110,7 +151,9 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         RemoteDesktopMultiSessionManager multiSessionManager,
         Func<ChatPage> chatPageFactory,
         Func<SessionWorkspacePage> sessionWorkspacePageFactory,
-        DeviceInfo localDevice)
+        DeviceInfo localDevice,
+        ISavedDevicesService savedDevices,
+        IConnectionHistoryService connectionHistory)
     {
         _logger = logger;
         _host = host;
@@ -132,6 +175,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         _chatPageFactory = chatPageFactory;
         _sessionWorkspacePageFactory = sessionWorkspacePageFactory;
         _localDevice = localDevice;
+        _savedDevices = savedDevices;
+        _connectionHistory = connectionHistory;
 
         _deviceNumericId = DeviceIdentityManager.GetPreferredDisplayId(_localDevice);
 
@@ -232,27 +277,167 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private View BuildLayout()
     {
+        _contentArea = BuildNavContent(_currentNav);
+
         var root = new Grid
         {
             RowDefinitions =
             {
                 new RowDefinition(GridLength.Auto),   // Header
-                new RowDefinition(GridLength.Auto),   // Two-column: Allow Remote Control + Control Remote Computer
-                new RowDefinition(GridLength.Star),   // Connection status area
-                new RowDefinition(GridLength.Auto),   // Start/Stop button
+                new RowDefinition(GridLength.Star),   // Sidebar + Content
                 new RowDefinition(GridLength.Auto),   // Status bar
             },
             Padding = new Thickness(0),
             RowSpacing = 0
         };
 
+        var bodyGrid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(new GridLength(72)),   // Sidebar
+                new ColumnDefinition(GridLength.Star),       // Content area
+            },
+            ColumnSpacing = 0
+        };
+
+        bodyGrid.Add(BuildSidebar(), 0, 0);
+        bodyGrid.Add(_contentArea, 1, 0);
+
         root.Add(BuildHeader(), 0, 0);
-        root.Add(BuildDashboardPanels(), 0, 1);
-        root.Add(BuildConnectionPanel(), 0, 2);
-        root.Add(BuildControlPanel(), 0, 3);
-        root.Add(BuildStatusBar(), 0, 4);
+        root.Add(CreateGridChild(bodyGrid, row: 1), 0, 1);
+        root.Add(CreateGridChild(BuildStatusBar(), row: 2), 0, 2);
 
         return root;
+    }
+
+    private View BuildSidebar()
+    {
+        _navHomeButton = BuildSidebarButton("\ud83c\udfe0", "Home", NavItem.Home);
+        _navDevicesButton = BuildSidebarButton("\ud83d\udda5", "Devices", NavItem.Devices);
+        _navFilesButton = BuildSidebarButton("\ud83d\udcc1", "Files", NavItem.Files);
+        _navChatButton = BuildSidebarButton("\ud83d\udcac", "Chat", NavItem.Chat);
+
+        UpdateSidebarSelection();
+
+        var sidebarContent = new StackLayout
+        {
+            Spacing = 2,
+            Children = { _navHomeButton, _navDevicesButton, _navFilesButton, _navChatButton }
+        };
+
+        // Use a Grid with a 1px right border line
+        var sidebarGrid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(new GridLength(1)),
+            },
+            Children =
+            {
+                new ScrollView
+                {
+                    BackgroundColor = ThemeColors.SidebarBackground,
+                    Padding = new Thickness(0, 8),
+                    Content = sidebarContent
+                },
+                CreateGridChild(new BoxView { Color = ThemeColors.SidebarBorder, WidthRequest = 1 }, column: 1)
+            }
+        };
+
+        return sidebarGrid;
+    }
+
+    private Button BuildSidebarButton(string icon, string label, NavItem nav)
+    {
+        var button = new Button
+        {
+            Text = $"{icon}\n{label}",
+            FontSize = 11,
+            LineBreakMode = LineBreakMode.WordWrap,
+            BackgroundColor = Colors.Transparent,
+            TextColor = ThemeColors.SidebarIconInactive,
+            CornerRadius = 8,
+            Padding = new Thickness(4, 10),
+            Margin = new Thickness(6, 0),
+            HeightRequest = 60,
+            HorizontalOptions = LayoutOptions.Fill
+        };
+        button.Clicked += (_, _) => NavigateTo(nav);
+        return button;
+    }
+
+    private void NavigateTo(NavItem nav)
+    {
+        if (_currentNav == nav) return;
+        _currentNav = nav;
+
+        // Detach files events if leaving Files
+        DetachFilesTransferEvents();
+
+        UpdateSidebarSelection();
+
+        _contentArea = BuildNavContent(nav);
+        // Replace content area in the body grid
+        if (Content is Grid rootGrid && rootGrid.Children.Count > 1)
+        {
+            var bodyGrid = rootGrid.Children[1] as Grid;
+            if (bodyGrid != null && bodyGrid.Children.Count > 1)
+            {
+                bodyGrid.Children.RemoveAt(1);
+                bodyGrid.Add(_contentArea, 1, 0);
+            }
+        }
+    }
+
+    private void UpdateSidebarSelection()
+    {
+        SetSidebarButtonState(_navHomeButton, _currentNav == NavItem.Home);
+        SetSidebarButtonState(_navDevicesButton, _currentNav == NavItem.Devices);
+        SetSidebarButtonState(_navFilesButton, _currentNav == NavItem.Files);
+        SetSidebarButtonState(_navChatButton, _currentNav == NavItem.Chat);
+    }
+
+    private static void SetSidebarButtonState(Button? button, bool active)
+    {
+        if (button == null) return;
+        button.BackgroundColor = active ? ThemeColors.SidebarItemActive : Colors.Transparent;
+        button.TextColor = active ? ThemeColors.Accent : ThemeColors.SidebarIconInactive;
+        button.FontAttributes = active ? FontAttributes.Bold : FontAttributes.None;
+    }
+
+    private View BuildNavContent(NavItem nav)
+    {
+        return nav switch
+        {
+            NavItem.Home => BuildHomeContent(),
+            NavItem.Devices => BuildDevicesContent(),
+            NavItem.Files => BuildFilesContent(),
+            NavItem.Chat => BuildChatContent(),
+            _ => BuildHomeContent()
+        };
+    }
+
+    private View BuildHomeContent()
+    {
+        var homeGrid = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition(GridLength.Auto),   // Dashboard panels
+                new RowDefinition(GridLength.Star),   // Connection status
+                new RowDefinition(GridLength.Auto),   // Start/Stop button
+            },
+            Padding = new Thickness(0),
+            RowSpacing = 0
+        };
+
+        homeGrid.Add(BuildDashboardPanels(), 0, 0);
+        homeGrid.Add(CreateGridChild(BuildConnectionPanel(), row: 1), 0, 1);
+        homeGrid.Add(CreateGridChild(BuildControlPanel(), row: 2), 0, 2);
+
+        return homeGrid;
     }
 
     private View BuildHeader()
@@ -898,6 +1083,1239 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         };
     }
 
+    // ── Devices panel ───────────────────────────────────────────────────
+
+    private View BuildDevicesContent()
+    {
+        var root = new StackLayout { Padding = new Thickness(20), Spacing = 14 };
+
+        root.Add(new Label
+        {
+            Text = "Devices",
+            FontSize = 22,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = ThemeColors.Accent,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        // Connection banner
+        _devConnectionBannerLabel = new Label
+        {
+            FontSize = 13,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = ThemeColors.SuccessText,
+        };
+        _devConnectionBanner = new Border
+        {
+            BackgroundColor = ThemeColors.SuccessBackground,
+            Stroke = ThemeColors.SuccessBorder,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
+            Padding = new Thickness(12),
+            IsVisible = false,
+            Content = _devConnectionBannerLabel
+        };
+        root.Add(_devConnectionBanner);
+
+        // Address Book section
+        root.Add(new Label
+        {
+            Text = "Address Book",
+            FontSize = 16,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = ThemeColors.TextPrimary,
+            Margin = new Thickness(0, 4, 0, 0)
+        });
+        root.Add(new Label
+        {
+            Text = "Saved devices for quick reconnection",
+            FontSize = 12,
+            TextColor = ThemeColors.TextSecondary,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        _savedEmptyLabel = new Label
+        {
+            Text = "No saved devices yet.\nConnect to a host and save it from the Nearby section.",
+            FontSize = 13,
+            TextColor = ThemeColors.TextSecondary,
+            HorizontalTextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 8)
+        };
+        _savedDeviceListLayout = new StackLayout { Spacing = 8 };
+        _savedDeviceListLayout.Add(_savedEmptyLabel);
+        root.Add(_savedDeviceListLayout);
+
+        // Divider
+        root.Add(new BoxView
+        {
+            Color = ThemeColors.Divider,
+            HeightRequest = 1,
+            HorizontalOptions = LayoutOptions.Fill,
+            Margin = new Thickness(0, 4)
+        });
+
+        // Nearby Devices section
+        root.Add(new Label
+        {
+            Text = "Nearby Devices",
+            FontSize = 16,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = ThemeColors.TextPrimary
+        });
+
+        _devCountLabel = new Label
+        {
+            Text = "Scanning for devices on your network...",
+            FontSize = 12,
+            TextColor = ThemeColors.TextSecondary,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        root.Add(_devCountLabel);
+
+        _devEmptyLabel = new Label
+        {
+            Text = "No devices found yet.\nMake sure RemoteLink Desktop is running on the same network.",
+            FontSize = 13,
+            TextColor = ThemeColors.TextSecondary,
+            HorizontalTextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 12)
+        };
+        _devDiscoveredListLayout = new StackLayout { Spacing = 8 };
+        _devDiscoveredListLayout.Add(_devEmptyLabel);
+        root.Add(_devDiscoveredListLayout);
+
+        // Load data
+        _ = LoadDevicesPanelAsync();
+
+        return new ScrollView { Content = root };
+    }
+
+    private async Task LoadDevicesPanelAsync()
+    {
+        if (!_devicesLoaded)
+        {
+            await _savedDevices.LoadAsync();
+            _devicesLoaded = true;
+        }
+        RefreshSavedDeviceCards();
+        RefreshDiscoveredDeviceCards();
+        UpdateDevicesConnectionBanner();
+    }
+
+    private void UpdateDevicesConnectionBanner()
+    {
+        if (_devConnectionBanner == null || _devConnectionBannerLabel == null) return;
+
+        _devConnectionBanner.IsVisible = _client.IsConnected;
+        if (_client.IsConnected)
+        {
+            var host = _client.ConnectedHost;
+            var id = DeviceIdentityManager.FormatInternetDeviceId(host?.InternetDeviceId ?? host?.DeviceId);
+            _devConnectionBannerLabel.Text = string.IsNullOrWhiteSpace(id)
+                ? $"Connected to {host?.DeviceName ?? "Unknown"}"
+                : $"Connected to {host?.DeviceName ?? "Unknown"} ({id})";
+        }
+    }
+
+    private void RefreshSavedDeviceCards()
+    {
+        if (_savedDeviceListLayout == null) return;
+        _savedDeviceListLayout.Clear();
+
+        var saved = _savedDevices.GetAll();
+        if (saved.Count == 0)
+        {
+            _savedDeviceListLayout.Add(_savedEmptyLabel);
+            return;
+        }
+
+        foreach (var device in saved)
+            _savedDeviceListLayout.Add(BuildDesktopSavedDeviceCard(device));
+    }
+
+    private View BuildDesktopSavedDeviceCard(SavedDevice saved)
+    {
+        var isConnected = _client.IsConnected && DeviceIdentityManager.MatchesDevice(saved, _client.ConnectedHost);
+
+        var card = new Border
+        {
+            BackgroundColor = isConnected ? ThemeColors.SelectedCardBackground : ThemeColors.AddressBookBackground,
+            Stroke = isConnected ? ThemeColors.SelectedCardBorder : ThemeColors.AddressBookBorder,
+            StrokeThickness = isConnected ? 2 : 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+            Padding = new Thickness(14),
+            Shadow = new Shadow { Brush = new SolidColorBrush(ThemeColors.ShadowColor), Offset = new Point(0, 2), Radius = 6 }
+        };
+
+        var grid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Auto),
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+            ColumnSpacing = 12,
+            VerticalOptions = LayoutOptions.Center
+        };
+
+        var starIcon = new Label { Text = "\u2b50", FontSize = 22, VerticalOptions = LayoutOptions.Center };
+        Grid.SetColumn(starIcon, 0);
+
+        var infoStack = new StackLayout { Spacing = 2, VerticalOptions = LayoutOptions.Center };
+        var displayName = !string.IsNullOrWhiteSpace(saved.FriendlyName) ? saved.FriendlyName : saved.DeviceName;
+        infoStack.Add(new Label { Text = displayName, FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary });
+
+        if (!string.IsNullOrWhiteSpace(saved.FriendlyName) && saved.FriendlyName != saved.DeviceName)
+            infoStack.Add(new Label { Text = saved.DeviceName, FontSize = 11, TextColor = ThemeColors.TextSecondary, FontAttributes = FontAttributes.Italic });
+
+        infoStack.Add(new Label { Text = $"{saved.IPAddress}:{saved.Port}", FontSize = 12, TextColor = ThemeColors.TextSecondary });
+
+        var formattedId = DeviceIdentityManager.FormatInternetDeviceId(saved.InternetDeviceId);
+        if (!string.IsNullOrWhiteSpace(formattedId))
+            infoStack.Add(new Label { Text = $"ID: {formattedId}", FontSize = 11, TextColor = ThemeColors.Accent });
+
+        if (saved.LastConnected.HasValue)
+            infoStack.Add(new Label { Text = $"Last connected: {FormatRelativeTime(saved.LastConnected.Value)}", FontSize = 10, TextColor = ThemeColors.TextMuted });
+
+        if (isConnected)
+            infoStack.Add(new Label { Text = "Currently connected", FontSize = 11, TextColor = ThemeColors.Accent, FontAttributes = FontAttributes.Italic });
+
+        Grid.SetColumn(infoStack, 1);
+
+        var actionsStack = new HorizontalStackLayout { Spacing = 6, VerticalOptions = LayoutOptions.Center };
+
+        var connectBtn = new Button
+        {
+            Text = isConnected ? "Connected" : "Connect",
+            FontSize = 11,
+            BackgroundColor = isConnected ? ThemeColors.SuccessBackground : ThemeColors.Accent,
+            TextColor = isConnected ? ThemeColors.SuccessText : Colors.White,
+            CornerRadius = 6,
+            Padding = new Thickness(12, 4),
+            HeightRequest = 30,
+            IsEnabled = !isConnected
+        };
+        connectBtn.Clicked += async (_, _) => await OnSavedDeviceConnectAsync(saved);
+
+        var editBtn = new Button
+        {
+            Text = "\u270f",
+            FontSize = 12,
+            BackgroundColor = ThemeColors.SecondaryButtonBackground,
+            TextColor = ThemeColors.Accent,
+            CornerRadius = 4,
+            WidthRequest = 32,
+            HeightRequest = 30,
+            Padding = 0
+        };
+        editBtn.Clicked += async (_, _) => await OnEditSavedDeviceDesktop(saved);
+
+        var deleteBtn = new Button
+        {
+            Text = "\ud83d\uddd1",
+            FontSize = 12,
+            BackgroundColor = ThemeColors.DangerSoft,
+            TextColor = ThemeColors.Danger,
+            CornerRadius = 4,
+            WidthRequest = 32,
+            HeightRequest = 30,
+            Padding = 0
+        };
+        deleteBtn.Clicked += async (_, _) => await OnDeleteSavedDeviceDesktop(saved);
+
+        actionsStack.Add(connectBtn);
+        actionsStack.Add(editBtn);
+        actionsStack.Add(deleteBtn);
+        Grid.SetColumn(actionsStack, 2);
+
+        grid.Add(starIcon);
+        grid.Add(infoStack);
+        grid.Add(actionsStack);
+        card.Content = grid;
+
+        return card;
+    }
+
+    private void RefreshDiscoveredDeviceCards()
+    {
+        if (_devDiscoveredListLayout == null) return;
+        _devDiscoveredListLayout.Clear();
+
+        List<DeviceInfo> hosts;
+        lock (_discoveredHosts)
+        {
+            hosts = _discoveredHosts.ToList();
+        }
+
+        if (hosts.Count == 0)
+        {
+            _devDiscoveredListLayout.Add(_devEmptyLabel);
+            if (_devCountLabel != null) _devCountLabel.Text = "Scanning for devices on your network...";
+            return;
+        }
+
+        if (_devCountLabel != null) _devCountLabel.Text = $"{hosts.Count} device(s) found";
+
+        foreach (var device in hosts)
+            _devDiscoveredListLayout.Add(BuildDesktopDiscoveredCard(device));
+    }
+
+    private View BuildDesktopDiscoveredCard(DeviceInfo device)
+    {
+        var isConnected = _client.IsConnected && DeviceIdentityManager.MatchesDevice(device, _client.ConnectedHost);
+        var isSaved = _savedDevices.FindMatchingDevice(device) != null;
+
+        var card = new Border
+        {
+            BackgroundColor = isConnected ? ThemeColors.SelectedCardBackground : ThemeColors.CardBackground,
+            Stroke = isConnected ? ThemeColors.SelectedCardBorder : ThemeColors.CardBorder,
+            StrokeThickness = isConnected ? 2 : 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+            Padding = new Thickness(14),
+            Shadow = new Shadow { Brush = new SolidColorBrush(ThemeColors.ShadowColor), Offset = new Point(0, 2), Radius = 6 }
+        };
+
+        var grid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Auto),
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto),
+            },
+            ColumnSpacing = 12,
+            VerticalOptions = LayoutOptions.Center
+        };
+
+        var icon = new Label
+        {
+            Text = device.Type == DeviceType.Desktop ? "\ud83d\udda5" : "\ud83d\udcf1",
+            FontSize = 24,
+            VerticalOptions = LayoutOptions.Center
+        };
+        Grid.SetColumn(icon, 0);
+
+        var infoStack = new StackLayout { Spacing = 2, VerticalOptions = LayoutOptions.Center };
+        infoStack.Add(new Label { Text = device.DeviceName, FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary });
+        infoStack.Add(new Label { Text = $"{device.IPAddress}:{device.Port}", FontSize = 12, TextColor = ThemeColors.TextSecondary });
+
+        var fmtId = DeviceIdentityManager.FormatInternetDeviceId(device.InternetDeviceId);
+        if (!string.IsNullOrWhiteSpace(fmtId))
+            infoStack.Add(new Label { Text = $"ID: {fmtId}", FontSize = 11, TextColor = ThemeColors.Accent });
+
+        if (isConnected)
+            infoStack.Add(new Label { Text = "Currently connected", FontSize = 11, TextColor = ThemeColors.Accent, FontAttributes = FontAttributes.Italic });
+
+        Grid.SetColumn(infoStack, 1);
+
+        var rightStack = new HorizontalStackLayout { Spacing = 6, VerticalOptions = LayoutOptions.Center };
+
+        if (!isSaved)
+        {
+            var saveBtn = new Button
+            {
+                Text = "\u2b50 Save",
+                FontSize = 11,
+                BackgroundColor = ThemeColors.WarningSoft,
+                TextColor = ThemeColors.WarningText,
+                CornerRadius = 4,
+                HeightRequest = 28,
+                Padding = new Thickness(8, 0)
+            };
+            saveBtn.Clicked += async (_, _) => await OnSaveDiscoveredDeviceDesktop(device);
+            rightStack.Add(saveBtn);
+        }
+        else
+        {
+            rightStack.Add(new Label { Text = "\u2b50 Saved", FontSize = 11, TextColor = ThemeColors.WarningText, VerticalOptions = LayoutOptions.Center });
+        }
+
+        var connectBtn = new Button
+        {
+            Text = isConnected ? "Connected" : "Connect",
+            FontSize = 11,
+            BackgroundColor = isConnected ? ThemeColors.SuccessBackground : ThemeColors.Accent,
+            TextColor = isConnected ? ThemeColors.SuccessText : Colors.White,
+            CornerRadius = 6,
+            Padding = new Thickness(12, 4),
+            HeightRequest = 28,
+            IsEnabled = !isConnected
+        };
+        connectBtn.Clicked += async (_, _) => await OnDiscoveredDeviceConnectAsync(device);
+        rightStack.Add(connectBtn);
+
+        Grid.SetColumn(rightStack, 2);
+
+        grid.Add(icon);
+        grid.Add(infoStack);
+        grid.Add(rightStack);
+        card.Content = grid;
+
+        return card;
+    }
+
+    private async Task OnSavedDeviceConnectAsync(SavedDevice saved)
+    {
+        if (_client.IsConnected && DeviceIdentityManager.MatchesDevice(saved, _client.ConnectedHost))
+            return;
+
+        var pin = await DisplayPromptAsync(
+            title: $"Connect to {saved.FriendlyName ?? saved.DeviceName}",
+            message: "Enter the 6-digit PIN shown on the remote host:",
+            accept: "Connect",
+            cancel: "Cancel",
+            placeholder: "123456",
+            maxLength: 6,
+            keyboard: Keyboard.Numeric);
+
+        if (string.IsNullOrWhiteSpace(pin)) return;
+
+        var deviceInfo = new DeviceInfo
+        {
+            DeviceId = saved.DeviceId,
+            InternetDeviceId = saved.InternetDeviceId,
+            DeviceName = saved.DeviceName,
+            IPAddress = saved.IPAddress,
+            Port = saved.Port,
+            SupportsRelay = saved.SupportsRelay,
+            RelayServerHost = saved.RelayServerHost,
+            RelayServerPort = saved.RelayServerPort,
+            Type = saved.Type
+        };
+
+        try
+        {
+            var session = await _multiSessionManager.ConnectAsync(deviceInfo, pin);
+            await _savedDevices.TouchLastConnectedAsync(saved.DeviceId);
+
+            RefreshSavedDeviceCards();
+            RefreshDiscoveredDeviceCards();
+            UpdateDevicesConnectionBanner();
+
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                var workspacePage = _sessionWorkspacePageFactory();
+                workspacePage.FocusSession(session.SessionId);
+                await Navigation.PushAsync(workspacePage);
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to connect to saved device");
+            await DisplayAlertAsync("Connection Failed", "Could not connect. Check the PIN and try again.", "OK");
+        }
+    }
+
+    private async Task OnDiscoveredDeviceConnectAsync(DeviceInfo device)
+    {
+        if (_client.IsConnected && DeviceIdentityManager.MatchesDevice(device, _client.ConnectedHost))
+            return;
+
+        var pin = await DisplayPromptAsync(
+            title: $"Connect to {device.DeviceName}",
+            message: "Enter the 6-digit PIN shown on the remote host:",
+            accept: "Connect",
+            cancel: "Cancel",
+            placeholder: "123456",
+            maxLength: 6,
+            keyboard: Keyboard.Numeric);
+
+        if (string.IsNullOrWhiteSpace(pin)) return;
+
+        try
+        {
+            var session = await _multiSessionManager.ConnectAsync(device, pin);
+
+            // Auto-save device on success
+            var existing = _savedDevices.FindMatchingDevice(device);
+            if (existing != null)
+            {
+                existing.DeviceId = device.DeviceId;
+                existing.DeviceName = device.DeviceName;
+                existing.InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId);
+                existing.IPAddress = device.IPAddress;
+                existing.Port = device.Port;
+                existing.SupportsRelay = device.SupportsRelay;
+                existing.RelayServerHost = device.RelayServerHost;
+                existing.RelayServerPort = device.RelayServerPort;
+                existing.Type = device.Type;
+                existing.LastConnected = DateTime.UtcNow;
+                await _savedDevices.AddOrUpdateAsync(existing);
+            }
+            else
+            {
+                await _savedDevices.AddOrUpdateAsync(new SavedDevice
+                {
+                    FriendlyName = device.DeviceName,
+                    DeviceName = device.DeviceName,
+                    DeviceId = device.DeviceId,
+                    InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
+                    IPAddress = device.IPAddress,
+                    Port = device.Port,
+                    SupportsRelay = device.SupportsRelay,
+                    RelayServerHost = device.RelayServerHost,
+                    RelayServerPort = device.RelayServerPort,
+                    Type = device.Type,
+                    LastConnected = DateTime.UtcNow,
+                    DateAdded = DateTime.UtcNow
+                });
+            }
+
+            RefreshSavedDeviceCards();
+            RefreshDiscoveredDeviceCards();
+            UpdateDevicesConnectionBanner();
+
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                var workspacePage = _sessionWorkspacePageFactory();
+                workspacePage.FocusSession(session.SessionId);
+                await Navigation.PushAsync(workspacePage);
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to connect to discovered device");
+            await DisplayAlertAsync("Connection Failed", "Could not connect. Check the PIN and try again.", "OK");
+        }
+    }
+
+    private async Task OnEditSavedDeviceDesktop(SavedDevice saved)
+    {
+        var newName = await DisplayPromptAsync(
+            title: "Edit Device Name",
+            message: $"Enter a friendly name for {saved.DeviceName}:",
+            accept: "Save",
+            cancel: "Cancel",
+            placeholder: saved.FriendlyName ?? saved.DeviceName,
+            initialValue: saved.FriendlyName ?? saved.DeviceName,
+            maxLength: 50);
+
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        saved.FriendlyName = newName.Trim();
+        await _savedDevices.AddOrUpdateAsync(saved);
+        RefreshSavedDeviceCards();
+    }
+
+    private async Task OnDeleteSavedDeviceDesktop(SavedDevice saved)
+    {
+        var confirm = await DisplayAlertAsync(
+            "Remove Device",
+            $"Remove \"{saved.FriendlyName ?? saved.DeviceName}\" from your address book?",
+            "Remove", "Cancel");
+
+        if (!confirm) return;
+        await _savedDevices.RemoveAsync(saved.Id);
+        RefreshSavedDeviceCards();
+    }
+
+    private async Task OnSaveDiscoveredDeviceDesktop(DeviceInfo device)
+    {
+        var friendlyName = await DisplayPromptAsync(
+            title: "Save Device",
+            message: $"Enter a friendly name for {device.DeviceName}:",
+            accept: "Save",
+            cancel: "Cancel",
+            placeholder: device.DeviceName,
+            initialValue: device.DeviceName,
+            maxLength: 50);
+
+        if (string.IsNullOrWhiteSpace(friendlyName)) return;
+
+        await _savedDevices.AddOrUpdateAsync(new SavedDevice
+        {
+            FriendlyName = friendlyName.Trim(),
+            DeviceName = device.DeviceName,
+            DeviceId = device.DeviceId,
+            InternetDeviceId = DeviceIdentityManager.NormalizeInternetDeviceId(device.InternetDeviceId),
+            IPAddress = device.IPAddress,
+            Port = device.Port,
+            SupportsRelay = device.SupportsRelay,
+            RelayServerHost = device.RelayServerHost,
+            RelayServerPort = device.RelayServerPort,
+            Type = device.Type,
+            DateAdded = DateTime.UtcNow
+        });
+
+        RefreshSavedDeviceCards();
+        RefreshDiscoveredDeviceCards();
+    }
+
+    private static string FormatRelativeTime(DateTime utcTime)
+    {
+        var elapsed = DateTime.UtcNow - utcTime;
+        if (elapsed.TotalMinutes < 1) return "just now";
+        if (elapsed.TotalMinutes < 60) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalHours < 24) return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7) return $"{(int)elapsed.TotalDays}d ago";
+        return utcTime.ToLocalTime().ToString("MMM d, yyyy");
+    }
+
+    // ── Files panel ─────────────────────────────────────────────────────
+
+    private View BuildFilesContent()
+    {
+        var root = new StackLayout { Padding = new Thickness(20), Spacing = 14 };
+
+        root.Add(new Label
+        {
+            Text = "Files",
+            FontSize = 22,
+            FontAttributes = FontAttributes.Bold,
+            TextColor = ThemeColors.Accent,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+
+        root.Add(new Label
+        {
+            Text = "Send files to connected sessions or accept incoming transfers.",
+            FontSize = 13,
+            TextColor = ThemeColors.TextSecondary
+        });
+
+        // Connection status card
+        _filesConnectionLabel = new Label { FontSize = 13, TextColor = ThemeColors.Accent };
+        root.Add(new Border
+        {
+            BackgroundColor = ThemeColors.SurfaceBackground,
+            Stroke = ThemeColors.ToolbarBorder,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(14),
+            Content = new StackLayout
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new Label { Text = "Connection", FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary },
+                    _filesConnectionLabel
+                }
+            }
+        });
+
+        // Send card
+        _filesSendButton = new Button
+        {
+            Text = "Browse and Send File",
+            BackgroundColor = ThemeColors.Accent,
+            TextColor = Colors.White,
+            CornerRadius = 10,
+            HeightRequest = 44
+        };
+        _filesSendButton.Clicked += OnFilesSendClicked;
+
+        root.Add(new Border
+        {
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(14),
+            Content = new StackLayout
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new Label { Text = "Send File", FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary },
+                    new Label { Text = "Choose a file and send it to the connected remote session.", FontSize = 13, TextColor = ThemeColors.TextSecondary },
+                    _filesSendButton
+                }
+            }
+        });
+
+        // Incoming requests section
+        _filesIncomingLayout = new StackLayout { Spacing = 8 };
+        _filesIncomingEmptyLabel = new Label
+        {
+            Text = "No incoming file requests.",
+            FontSize = 13,
+            TextColor = ThemeColors.TextSecondary,
+            HorizontalTextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 8)
+        };
+
+        root.Add(new Border
+        {
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(14),
+            Content = new StackLayout
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new Label { Text = "Incoming Requests", FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary },
+                    _filesIncomingLayout
+                }
+            }
+        });
+
+        // Transfer activity section
+        _filesTransfersLayout = new StackLayout { Spacing = 8 };
+        _filesTransfersEmptyLabel = new Label
+        {
+            Text = "No transfers yet.",
+            FontSize = 13,
+            TextColor = ThemeColors.TextSecondary,
+            HorizontalTextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 8)
+        };
+
+        root.Add(new Border
+        {
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(14),
+            Content = new StackLayout
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new Label { Text = "Transfer Activity", FontSize = 15, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary },
+                    _filesTransfersLayout
+                }
+            }
+        });
+
+        EnsureFilesTransferService();
+        UpdateFilesConnectionUi();
+        RefreshFilesIncoming();
+        RefreshFilesTransfers();
+
+        return new ScrollView { Content = root };
+    }
+
+    private void EnsureFilesTransferService()
+    {
+        var commService = _client.CurrentCommunicationService;
+        if (!_client.IsConnected || commService is null)
+        {
+            if (_client.ConnectionState == ClientConnectionState.Disconnected)
+            {
+                DetachFilesTransferEvents();
+                _filesBoundComm = null;
+                _filesTransferService = null;
+            }
+            return;
+        }
+
+        if (ReferenceEquals(_filesBoundComm, commService) && _filesTransferService is not null)
+            return;
+
+        DetachFilesTransferEvents();
+        _filesBoundComm = commService;
+        _filesTransferService = new FileTransferService(
+            Handler?.MauiContext?.Services.GetRequiredService<ILogger<FileTransferService>>()
+                ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<FileTransferService>.Instance,
+            commService);
+        _filesTransferService.TransferRequested += OnFilesTransferRequested;
+        _filesTransferService.TransferResponseReceived += OnFilesTransferResponse;
+        _filesTransferService.ProgressUpdated += OnFilesProgress;
+        _filesTransferService.TransferCompleted += OnFilesTransferCompleted;
+    }
+
+    private void DetachFilesTransferEvents()
+    {
+        if (_filesTransferService is null) return;
+        _filesTransferService.TransferRequested -= OnFilesTransferRequested;
+        _filesTransferService.TransferResponseReceived -= OnFilesTransferResponse;
+        _filesTransferService.ProgressUpdated -= OnFilesProgress;
+        _filesTransferService.TransferCompleted -= OnFilesTransferCompleted;
+    }
+
+    private void UpdateFilesConnectionUi()
+    {
+        if (_filesConnectionLabel == null) return;
+        var connected = _activeConnectionCount > 0;
+        _filesConnectionLabel.Text = connected
+            ? $"{_activeConnectionCount} active connection(s). File transfer ready."
+            : "No active connections. Start a session to transfer files.";
+        if (_filesSendButton != null)
+        {
+            _filesSendButton.IsEnabled = connected;
+            _filesSendButton.BackgroundColor = connected ? ThemeColors.Accent : ThemeColors.NeutralButtonBackground;
+        }
+    }
+
+    private async void OnFilesSendClicked(object? sender, EventArgs e)
+    {
+        if (_activeConnectionCount == 0)
+        {
+            await DisplayAlertAsync("No Connection", "No active connections for file transfer.", "OK");
+            return;
+        }
+
+        try
+        {
+            var result = await FilePicker.Default.PickAsync();
+            if (result == null) return;
+
+            var transferId = await _fileTransfer.InitiateTransferAsync(result.FullPath, FileTransferDirection.Upload);
+
+            _filesTransferItems[transferId] = new FilesTransferItem
+            {
+                TransferId = transferId,
+                FileName = result.FileName,
+                DirectionLabel = "Outgoing",
+                Status = "Waiting for approval...",
+                TotalBytes = new FileInfo(result.FullPath).Length,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            RefreshFilesTransfers();
+            _logger.LogInformation("File transfer initiated: {Id} for {File}", transferId, result.FileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "File transfer failed");
+            await DisplayAlertAsync("Error", $"File transfer failed: {ex.Message}", "OK");
+        }
+    }
+
+    private void OnFilesTransferRequested(object? sender, FileTransferRequest request)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _filesPendingRequests[request.TransferId] = request;
+            _filesTransferItems[request.TransferId] = new FilesTransferItem
+            {
+                TransferId = request.TransferId,
+                FileName = request.FileName,
+                DirectionLabel = "Incoming",
+                Status = "Awaiting your approval",
+                TotalBytes = request.FileSize,
+                UpdatedAt = DateTime.UtcNow
+            };
+            RefreshFilesIncoming();
+            RefreshFilesTransfers();
+        });
+    }
+
+    private void OnFilesTransferResponse(object? sender, FileTransferResponse response)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (!_filesTransferItems.TryGetValue(response.TransferId, out var item)) return;
+            item.Status = response.Accepted ? "Transferring..." : $"Declined: {response.Message ?? "Rejected"}";
+            item.IsCompleted = !response.Accepted;
+            item.UpdatedAt = DateTime.UtcNow;
+            RefreshFilesTransfers();
+        });
+    }
+
+    private void OnFilesProgress(object? sender, FileTransferProgress progress)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (!_filesTransferItems.TryGetValue(progress.TransferId, out var item))
+            {
+                item = new FilesTransferItem { TransferId = progress.TransferId, FileName = "Transfer", DirectionLabel = "Transfer" };
+                _filesTransferItems[progress.TransferId] = item;
+            }
+            item.BytesTransferred = progress.BytesTransferred;
+            item.TotalBytes = progress.TotalBytes > 0 ? progress.TotalBytes : item.TotalBytes;
+            item.Status = item.IsCompleted ? item.Status : "Transferring...";
+            item.BytesPerSecond = progress.BytesPerSecond;
+            item.UpdatedAt = DateTime.UtcNow;
+            RefreshFilesTransfers();
+        });
+    }
+
+    private void OnFilesTransferCompleted(object? sender, FileTransferComplete complete)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _filesPendingRequests.Remove(complete.TransferId);
+            if (!_filesTransferItems.TryGetValue(complete.TransferId, out var item))
+            {
+                item = new FilesTransferItem { TransferId = complete.TransferId, FileName = "Transfer", DirectionLabel = "Transfer" };
+                _filesTransferItems[complete.TransferId] = item;
+            }
+            item.IsCompleted = true;
+            item.IsSuccessful = complete.Success;
+            item.Status = complete.Success ? "Completed" : (complete.ErrorMessage ?? "Transfer failed");
+            item.SavedPath = complete.SavedPath ?? item.SavedPath;
+            if (item.TotalBytes > 0 && complete.Success) item.BytesTransferred = item.TotalBytes;
+            item.UpdatedAt = DateTime.UtcNow;
+            RefreshFilesIncoming();
+            RefreshFilesTransfers();
+        });
+    }
+
+    private void RefreshFilesIncoming()
+    {
+        if (_filesIncomingLayout == null) return;
+        _filesIncomingLayout.Children.Clear();
+
+        if (_filesPendingRequests.Count == 0)
+        {
+            _filesIncomingLayout.Children.Add(_filesIncomingEmptyLabel);
+            return;
+        }
+
+        foreach (var request in _filesPendingRequests.Values)
+        {
+            var acceptBtn = new Button
+            {
+                Text = "Accept",
+                BackgroundColor = ThemeColors.Success,
+                TextColor = Colors.White,
+                CornerRadius = 8,
+                WidthRequest = 100,
+                HeightRequest = 32
+            };
+            var tid = request.TransferId;
+            acceptBtn.Clicked += async (_, _) =>
+            {
+                if (_filesTransferService != null && _filesPendingRequests.TryGetValue(tid, out var req))
+                {
+                    var savePath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                        "RemoteLink Transfers",
+                        SanitizeFileName(req.FileName));
+                    Directory.CreateDirectory(Path.GetDirectoryName(savePath)!);
+                    await _filesTransferService.AcceptTransferAsync(tid, savePath);
+                    _filesPendingRequests.Remove(tid);
+                    if (_filesTransferItems.TryGetValue(tid, out var item))
+                    {
+                        item.Status = "Receiving...";
+                        item.SavedPath = savePath;
+                    }
+                    RefreshFilesIncoming();
+                    RefreshFilesTransfers();
+                }
+            };
+
+            var rejectBtn = new Button
+            {
+                Text = "Decline",
+                BackgroundColor = ThemeColors.Danger,
+                TextColor = Colors.White,
+                CornerRadius = 8,
+                WidthRequest = 100,
+                HeightRequest = 32
+            };
+            rejectBtn.Clicked += async (_, _) =>
+            {
+                if (_filesTransferService != null)
+                {
+                    await _filesTransferService.RejectTransferAsync(tid, FileTransferRejectionReason.UserDeclined);
+                    _filesPendingRequests.Remove(tid);
+                    if (_filesTransferItems.TryGetValue(tid, out var item))
+                    {
+                        item.IsCompleted = true;
+                        item.Status = "Declined";
+                    }
+                    RefreshFilesIncoming();
+                    RefreshFilesTransfers();
+                }
+            };
+
+            _filesIncomingLayout.Children.Add(new Border
+            {
+                BackgroundColor = ThemeColors.PlaceholderBackground,
+                Stroke = ThemeColors.CardBorder,
+                StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+                Padding = new Thickness(12),
+                Content = new StackLayout
+                {
+                    Spacing = 8,
+                    Children =
+                    {
+                        new Label { Text = request.FileName, FontSize = 14, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary },
+                        new Label { Text = $"{FormatBytes(request.FileSize)} \u2022 {request.MimeType}", FontSize = 12, TextColor = ThemeColors.TextSecondary },
+                        new HorizontalStackLayout { Spacing = 8, Children = { acceptBtn, rejectBtn } }
+                    }
+                }
+            });
+        }
+    }
+
+    private void RefreshFilesTransfers()
+    {
+        if (_filesTransfersLayout == null) return;
+        _filesTransfersLayout.Children.Clear();
+
+        if (_filesTransferItems.Count == 0)
+        {
+            _filesTransfersLayout.Children.Add(_filesTransfersEmptyLabel);
+            return;
+        }
+
+        foreach (var item in _filesTransferItems.Values.OrderByDescending(i => i.UpdatedAt))
+        {
+            var progress = item.TotalBytes > 0 ? Math.Clamp(item.BytesTransferred / (double)item.TotalBytes, 0, 1) : 0;
+            var statusColor = item.IsCompleted ? (item.IsSuccessful ? ThemeColors.SuccessText : ThemeColors.DangerText) : ThemeColors.Accent;
+            var detailText = item.TotalBytes > 0
+                ? $"{FormatBytes(item.BytesTransferred)} / {FormatBytes(item.TotalBytes)}"
+                : "Waiting...";
+            if (item.BytesPerSecond > 0 && !item.IsCompleted)
+                detailText += $" \u2022 {FormatBytes(item.BytesPerSecond)}/s";
+
+            var cardStack = new StackLayout
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new Label { Text = item.FileName, FontSize = 14, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.TextPrimary },
+                    new Label { Text = item.DirectionLabel, FontSize = 12, TextColor = ThemeColors.TextSecondary },
+                    new Label { Text = item.Status, FontSize = 13, FontAttributes = FontAttributes.Bold, TextColor = statusColor },
+                    new ProgressBar { Progress = progress, ProgressColor = statusColor, BackgroundColor = ThemeColors.Divider, HeightRequest = 6 },
+                    new Label { Text = detailText, FontSize = 12, TextColor = ThemeColors.TextSecondary }
+                }
+            };
+
+            if (!string.IsNullOrWhiteSpace(item.SavedPath) && item.IsSuccessful)
+                cardStack.Children.Add(new Label { Text = $"Saved to: {item.SavedPath}", FontSize = 11, TextColor = ThemeColors.TextSecondary, LineBreakMode = LineBreakMode.CharacterWrap });
+
+            _filesTransfersLayout.Children.Add(new Border
+            {
+                BackgroundColor = ThemeColors.PlaceholderBackground,
+                Stroke = ThemeColors.CardBorder,
+                StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 10 },
+                Padding = new Thickness(12),
+                Content = cardStack
+            });
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB"];
+        double value = bytes;
+        int unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1) { value /= 1024; unitIndex++; }
+        return unitIndex == 0 ? $"{value:0} {units[unitIndex]}" : $"{value:0.0} {units[unitIndex]}";
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        return new string(fileName.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray());
+    }
+
+    private sealed class FilesTransferItem
+    {
+        public string TransferId { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public string DirectionLabel { get; set; } = "";
+        public string Status { get; set; } = "";
+        public long BytesTransferred { get; set; }
+        public long TotalBytes { get; set; }
+        public long BytesPerSecond { get; set; }
+        public string? SavedPath { get; set; }
+        public bool IsCompleted { get; set; }
+        public bool IsSuccessful { get; set; }
+        public DateTime UpdatedAt { get; set; }
+    }
+
+    // ── Chat panel ──────────────────────────────────────────────────────
+
+    private View BuildChatContent()
+    {
+        _chatMessageList = new StackLayout { Spacing = 8, Padding = new Thickness(0, 8) };
+        _chatEmptyState = new Label
+        {
+            Text = "No messages yet. Say hello to the connected host!",
+            FontSize = 14,
+            TextColor = ThemeColors.TextSecondary,
+            HorizontalTextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 24)
+        };
+
+        _chatScrollView = new ScrollView { Content = _chatMessageList, VerticalOptions = LayoutOptions.Fill };
+
+        _chatStatusLabel = new Label { FontSize = 13, TextColor = ThemeColors.TextSecondary };
+
+        _chatMessageEntry = new Entry
+        {
+            Placeholder = "Type a message...",
+            HorizontalOptions = LayoutOptions.Fill,
+            ReturnType = ReturnType.Send,
+            TextColor = ThemeColors.EntryText,
+            PlaceholderColor = ThemeColors.EntryPlaceholder,
+        };
+        _chatMessageEntry.Completed += OnChatSendClicked;
+        _chatMessageEntry.TextChanged += (_, _) => UpdateChatSendState();
+
+        _chatSendButton = new Button
+        {
+            Text = "Send",
+            BackgroundColor = ThemeColors.NeutralButtonBackground,
+            TextColor = Colors.White,
+            CornerRadius = 8,
+            WidthRequest = 80,
+            HeightRequest = 38,
+            IsEnabled = false
+        };
+        _chatSendButton.Clicked += OnChatSendClicked;
+
+        var composerGrid = new Grid
+        {
+            ColumnDefinitions =
+            {
+                new ColumnDefinition(GridLength.Star),
+                new ColumnDefinition(GridLength.Auto)
+            },
+            ColumnSpacing = 10,
+            Children = { _chatMessageEntry, CreateGridChild(_chatSendButton, column: 1) }
+        };
+
+        var composerBorder = new Border
+        {
+            BackgroundColor = ThemeColors.CardBackground,
+            Stroke = ThemeColors.CardBorder,
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(12),
+            Margin = new Thickness(0, 12, 0, 0),
+            Content = composerGrid
+        };
+
+        var headerBorder = new Border
+        {
+            BackgroundColor = ThemeColors.CardBackgroundAlt,
+            Stroke = ThemeColors.ToolbarBorder,
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(16, 14),
+            Margin = new Thickness(0, 0, 0, 12),
+            Content = new StackLayout
+            {
+                Spacing = 4,
+                Children =
+                {
+                    new Label { Text = "Chat", FontSize = 20, FontAttributes = FontAttributes.Bold, TextColor = ThemeColors.Accent },
+                    _chatStatusLabel
+                }
+            }
+        };
+
+        var messageAreaBorder = new Border
+        {
+            BackgroundColor = ThemeColors.PlaceholderBackground,
+            Stroke = ThemeColors.CardBorder,
+            StrokeThickness = 1,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Padding = new Thickness(14, 8),
+            Content = new Grid { Children = { _chatScrollView, _chatEmptyState } }
+        };
+
+        var chatGrid = new Grid
+        {
+            RowDefinitions =
+            {
+                new RowDefinition(GridLength.Auto),
+                new RowDefinition(GridLength.Star),
+                new RowDefinition(GridLength.Auto)
+            },
+            Padding = new Thickness(20),
+            Children =
+            {
+                headerBorder,
+                CreateGridChild(messageAreaBorder, row: 1),
+                CreateGridChild(composerBorder, row: 2)
+            }
+        };
+
+        RefreshChatMessages();
+        UpdateChatStatus();
+        UpdateChatSendState();
+
+        // Mark messages as read
+        foreach (var msg in _messaging.GetMessages().Where(m => !m.IsRead))
+            _ = _messaging.MarkAsReadAsync(msg.MessageId);
+        UpdateChatButton();
+
+        return chatGrid;
+    }
+
+    private void RefreshChatMessages()
+    {
+        if (_chatMessageList == null) return;
+        _chatMessageList.Children.Clear();
+
+        var messages = _messaging.GetMessages();
+        foreach (var msg in messages)
+            _chatMessageList.Children.Add(BuildChatBubble(msg));
+
+        if (_chatEmptyState != null)
+            _chatEmptyState.IsVisible = messages.Count == 0;
+
+        if (messages.Count > 0 && _chatScrollView != null)
+            _ = _chatScrollView.ScrollToAsync(0, double.MaxValue, false);
+    }
+
+    private View BuildChatBubble(ChatMessage message)
+    {
+        bool isLocal = message.SenderName == Environment.MachineName;
+
+        var bubble = new Border
+        {
+            Padding = new Thickness(12, 8),
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 14 },
+            BackgroundColor = isLocal ? ThemeColors.Accent : ThemeColors.ChatBubbleRemote,
+            Stroke = isLocal ? Colors.Transparent : ThemeColors.ChatBubbleRemoteBorder,
+            StrokeThickness = 1,
+            MaximumWidthRequest = 400,
+            Content = new StackLayout
+            {
+                Spacing = 3,
+                Children =
+                {
+                    new Label { Text = message.SenderName, FontSize = 10, FontAttributes = FontAttributes.Bold, TextColor = isLocal ? ThemeColors.AccentText : ThemeColors.TextSecondary },
+                    new Label { Text = message.Text, FontSize = 14, TextColor = isLocal ? Colors.White : ThemeColors.TextPrimary },
+                    new Label { Text = message.Timestamp.ToLocalTime().ToString("HH:mm"), FontSize = 9, HorizontalOptions = LayoutOptions.End, TextColor = isLocal ? Color.FromArgb("#C0B0FF") : ThemeColors.TextMuted }
+                }
+            }
+        };
+
+        return new StackLayout
+        {
+            HorizontalOptions = isLocal ? LayoutOptions.End : LayoutOptions.Start,
+            Children = { bubble }
+        };
+    }
+
+    private async void OnChatSendClicked(object? sender, EventArgs e)
+    {
+        var text = _chatMessageEntry?.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        if (_chatMessageEntry != null) _chatMessageEntry.Text = "";
+
+        try
+        {
+            await _messaging.SendMessageAsync(text);
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                RefreshChatMessages();
+                UpdateChatSendState();
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send chat message");
+            await DisplayAlertAsync("Error", $"Failed to send: {ex.Message}", "OK");
+        }
+    }
+
+    private void UpdateChatStatus()
+    {
+        if (_chatStatusLabel == null) return;
+        _chatStatusLabel.Text = _activeConnectionCount > 0
+            ? $"{_activeConnectionCount} active connection(s)"
+            : "Connect to a remote host to start chatting.";
+        if (_chatMessageEntry != null) _chatMessageEntry.IsEnabled = _activeConnectionCount > 0;
+    }
+
+    private void UpdateChatSendState()
+    {
+        if (_chatSendButton == null) return;
+        _chatSendButton.IsEnabled = _activeConnectionCount > 0 && !string.IsNullOrWhiteSpace(_chatMessageEntry?.Text);
+        _chatSendButton.BackgroundColor = _chatSendButton.IsEnabled ? ThemeColors.Accent : ThemeColors.NeutralButtonBackground;
+    }
+
     // ── PIN display helpers ────────────────────────────────────────────
 
     private string FormatPinDisplay()
@@ -1357,6 +2775,11 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 UpdatePinMetadata();
             }
             UpdateToolbarVisibility();
+
+            // Refresh active nav panel when connection changes
+            if (_currentNav == NavItem.Devices) { RefreshSavedDeviceCards(); RefreshDiscoveredDeviceCards(); UpdateDevicesConnectionBanner(); }
+            if (_currentNav == NavItem.Files) { UpdateFilesConnectionUi(); }
+            if (_currentNav == NavItem.Chat) { UpdateChatStatus(); UpdateChatSendState(); }
         });
     }
 
@@ -1406,6 +2829,10 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
         _logger.LogInformation("Discovered remote host: {Name} at {IP}:{Port}",
             host.DeviceName, host.IPAddress, host.Port);
+
+        // Refresh devices panel if active
+        if (_currentNav == NavItem.Devices)
+            MainThread.BeginInvokeOnMainThread(RefreshDiscoveredDeviceCards);
     }
 
     private void OnRemoteHostLost(object? sender, DeviceInfo host)
@@ -1424,6 +2851,10 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             {
                 if (_discoveredHostsPicker != null && removedIndex < _discoveredHostsPicker.Items.Count)
                     _discoveredHostsPicker.Items.RemoveAt(removedIndex);
+
+                // Refresh devices panel if active
+                if (_currentNav == NavItem.Devices)
+                    RefreshDiscoveredDeviceCards();
             });
         }
     }
@@ -1820,7 +3251,18 @@ public class MainPage : ContentPage, INotifyPropertyChanged
 
     private void OnChatMessageReceived(object? sender, ChatMessage message)
     {
-        MainThread.BeginInvokeOnMainThread(UpdateChatButton);
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            UpdateChatButton();
+            // If on chat panel, refresh inline and mark as read
+            if (_currentNav == NavItem.Chat)
+            {
+                RefreshChatMessages();
+                foreach (var msg in _messaging.GetMessages().Where(m => !m.IsRead))
+                    _ = _messaging.MarkAsReadAsync(msg.MessageId);
+                UpdateChatButton();
+            }
+        });
     }
 
     private async void OnFileTransferClicked(object? sender, EventArgs e)
