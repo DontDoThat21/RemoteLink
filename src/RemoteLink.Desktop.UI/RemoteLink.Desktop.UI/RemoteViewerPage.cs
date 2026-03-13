@@ -332,40 +332,52 @@ public class RemoteViewerPage : ContentPage
             }
         };
 
-        // ── Event subscriptions ──────────────────────────────────────────────
-        _client.ScreenDataReceived += OnScreenDataReceived;
-        _client.ConnectionStateChanged += OnConnectionStateChanged;
-    }
+        }
 
-    protected override void OnAppearing()
-    {
-        base.OnAppearing();
+        /// <summary>
+        /// Activates the viewer: subscribes to data events, starts the metrics timer, and focuses keyboard capture.
+        /// Call this when the viewer becomes the active visible tab.
+        /// </summary>
+        public void StartViewing()
+        {
+            _client.ScreenDataReceived -= OnScreenDataReceived;
+            _client.ScreenDataReceived += OnScreenDataReceived;
+            _client.ConnectionStateChanged -= OnConnectionStateChanged;
+            _client.ConnectionStateChanged += OnConnectionStateChanged;
+            EnsureFileTransferService();
+            var dispatcher = Application.Current?.Dispatcher ?? Dispatcher;
+            _metricsTimer = dispatcher.CreateTimer();
+            _metricsTimer.Interval = TimeSpan.FromSeconds(1);
+            _metricsTimer.Tick += OnMetricsTick;
+            _metricsTimer.Start();
+            _keyCapture.Focus();
+        }
 
-        // Focus the hidden entry to capture keyboard input
-        _keyCapture.Focus();
-        EnsureFileTransferService();
+        /// <summary>
+        /// Deactivates the viewer: stops the metrics timer and unsubscribes from data events.
+        /// Call this when the viewer is hidden or the tab is switched away.
+        /// </summary>
+        public void StopViewing()
+        {
+            _metricsTimer?.Stop();
+            _metricsTimer = null;
+            DetachFileTransferService();
+            HideDropOverlay();
+            _client.ScreenDataReceived -= OnScreenDataReceived;
+            _client.ConnectionStateChanged -= OnConnectionStateChanged;
+        }
 
-        // Start metrics timer
-        _metricsTimer = Dispatcher.CreateTimer();
-        _metricsTimer.Interval = TimeSpan.FromSeconds(1);
-        _metricsTimer.Tick += OnMetricsTick;
-        _metricsTimer.Start();
-    }
+        protected override void OnAppearing()
+        {
+            base.OnAppearing();
+            StartViewing();
+        }
 
-    protected override void OnDisappearing()
-    {
-        base.OnDisappearing();
-
-        // Stop metrics
-        _metricsTimer?.Stop();
-        _metricsTimer = null;
-        DetachFileTransferService();
-        HideDropOverlay();
-
-        // Unsubscribe events
-        _client.ScreenDataReceived -= OnScreenDataReceived;
-        _client.ConnectionStateChanged -= OnConnectionStateChanged;
-    }
+        protected override void OnDisappearing()
+        {
+            base.OnDisappearing();
+            StopViewing();
+        }
 
     // ── Frame rendering ──────────────────────────────────────────────────────
 
