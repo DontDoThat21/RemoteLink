@@ -1503,7 +1503,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                 $"Session ready for {targetDevice.DeviceName} ({_multiSessionManager.GetSessions().Count} active tab(s))",
                 ThemeColors.Success);
 
-            MainThread.BeginInvokeOnMainThread(async () =>
+            await MainThread.InvokeOnMainThreadAsync(async () =>
             {
                 if (_connectButton != null)
                 {
