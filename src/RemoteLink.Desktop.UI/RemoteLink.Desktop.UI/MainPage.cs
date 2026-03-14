@@ -61,10 +61,10 @@ public class MainPage : ContentPage, INotifyPropertyChanged
     private enum NavItem { Home, Devices, Files, Chat }
     private NavItem _currentNav = NavItem.Home;
     private View? _contentArea;
-    private Button? _navHomeButton;
-    private Button? _navDevicesButton;
-    private Button? _navFilesButton;
-    private Button? _navChatButton;
+    private Border? _navHomeButton;
+    private Border? _navDevicesButton;
+    private Border? _navFilesButton;
+    private Border? _navChatButton;
 
     // Devices panel references
     private StackLayout? _savedDeviceListLayout;
@@ -349,23 +349,48 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         return sidebarGrid;
     }
 
-    private Button BuildSidebarButton(string icon, string label, NavItem nav)
+    private Border BuildSidebarButton(string icon, string label, NavItem nav)
     {
-        var button = new Button
+        var iconLabel = new Label
         {
-            Text = $"{icon}\n{label}",
-            FontSize = 11,
-            LineBreakMode = LineBreakMode.WordWrap,
-            BackgroundColor = Colors.Transparent,
-            TextColor = ThemeColors.SidebarIconInactive,
-            CornerRadius = 8,
-            Padding = new Thickness(4, 10),
-            Margin = new Thickness(6, 0),
-            HeightRequest = 60,
-            HorizontalOptions = LayoutOptions.Fill
+            Text = icon,
+            FontSize = 20,
+            HorizontalOptions = LayoutOptions.Center,
+            HorizontalTextAlignment = TextAlignment.Center,
+            VerticalOptions = LayoutOptions.Center,
+            TextColor = ThemeColors.SidebarIconInactive
         };
-        button.Clicked += (_, _) => NavigateTo(nav);
-        return button;
+        var textLabel = new Label
+        {
+            Text = label,
+            FontSize = 10,
+            HorizontalOptions = LayoutOptions.Center,
+            HorizontalTextAlignment = TextAlignment.Center,
+            TextColor = ThemeColors.SidebarIconInactive
+        };
+        var stack = new VerticalStackLayout
+        {
+            Spacing = 2,
+            HorizontalOptions = LayoutOptions.Center,
+            VerticalOptions = LayoutOptions.Center,
+            Children = { iconLabel, textLabel }
+        };
+        var border = new Border
+        {
+            Content = stack,
+            HeightRequest = 60,
+            HorizontalOptions = LayoutOptions.Fill,
+            Margin = new Thickness(6, 0),
+            BackgroundColor = Colors.Transparent,
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 8 },
+            Stroke = Colors.Transparent,
+            Padding = new Thickness(4, 8)
+        };
+        border.GestureRecognizers.Add(new TapGestureRecognizer
+        {
+            Command = new Command(() => NavigateTo(nav))
+        });
+        return border;
     }
 
     private void NavigateTo(NavItem nav)
@@ -399,12 +424,21 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         SetSidebarButtonState(_navChatButton, _currentNav == NavItem.Chat);
     }
 
-    private static void SetSidebarButtonState(Button? button, bool active)
+    private static void SetSidebarButtonState(Border? border, bool active)
     {
-        if (button == null) return;
-        button.BackgroundColor = active ? ThemeColors.SidebarItemActive : Colors.Transparent;
-        button.TextColor = active ? ThemeColors.Accent : ThemeColors.SidebarIconInactive;
-        button.FontAttributes = active ? FontAttributes.Bold : FontAttributes.None;
+        if (border == null) return;
+        border.BackgroundColor = active ? ThemeColors.SidebarItemActive : Colors.Transparent;
+        if (border.Content is VerticalStackLayout stack)
+        {
+            foreach (var child in stack.Children)
+            {
+                if (child is Label lbl)
+                {
+                    lbl.TextColor = active ? ThemeColors.Accent : ThemeColors.SidebarIconInactive;
+                    lbl.FontAttributes = active ? FontAttributes.Bold : FontAttributes.None;
+                }
+            }
+        }
     }
 
     private View BuildNavContent(NavItem nav)
@@ -2612,7 +2646,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             UpdateStatusBar("Starting...", ThemeColors.Warning);
 
             _currentPin = _pairing.GeneratePin();
-            _pinVisible = false;
+            _pinVisible = true;
             RefreshPinDisplay();
             StartPinExpiryTimer();
 

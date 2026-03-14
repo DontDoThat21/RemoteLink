@@ -46,7 +46,7 @@ public static class ThemeColors
 
     // ── Brand / Accent ───────────────────────────────────────────────────
 
-    public static Color Accent => Color.FromArgb("#512BD4");
+    public static Color Accent => IsDark ? Color.FromArgb("#A78BFA") : Color.FromArgb("#512BD4");
     public static Color AccentLight => Color.FromArgb("#E8E0FF");
     public static Color AccentText => Color.FromArgb("#D0C0FF");
     public static Color Danger => Color.FromArgb("#D32F2F");
