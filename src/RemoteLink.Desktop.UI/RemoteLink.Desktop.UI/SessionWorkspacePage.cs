@@ -71,7 +71,14 @@ public sealed class SessionWorkspacePage : ContentPage
         {
             _ = Dispatcher.DispatchAsync(async () =>
             {
-                await Navigation.PushAsync(page);
+                try
+                {
+                    await Navigation.PushAsync(page);
+                }
+                catch (Exception)
+                {
+                    // Navigation failed — the user can still tap "Open" from the session list.
+                }
             });
         }
     }

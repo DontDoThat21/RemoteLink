@@ -1,20 +1,22 @@
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.Maui.Handlers;
-using Microsoft.UI.Xaml;
 using Windows.Storage.Streams;
 
 namespace RemoteLink.Desktop.UI;
 
 /// <summary>
 /// Windows platform handler for <see cref="GpuFrameView"/>.
-/// Uses a Win2D <see cref="CanvasSwapChainPanel"/> as the native view so that each
-/// decoded frame is presented directly to the GPU swap chain, completely bypassing the
-/// XAML image pipeline and CPU-side compositing that
-/// <c>ImageSource.FromStream</c> / <c>WriteableBitmap</c> would require.
+/// Uses a Win2D <see cref="CanvasControl"/> as the native view so that each decoded
+/// frame is rendered via Direct2D through a <c>SurfaceImageSource</c>, which integrates
+/// with the WinUI XAML compositor.  Unlike <c>CanvasSwapChainPanel</c>, this approach
+/// works correctly inside WinUI <c>Frame</c> navigation (which MAUI's
+/// <c>NavigationPage</c> uses internally) and avoids the <c>COMException</c> /
+/// <c>Frame.NavigationFailed</c> that <c>SwapChainPanel</c>-derived controls can
+/// trigger during page transitions.
 /// </summary>
 internal sealed class GpuFrameViewHandler
-    : ViewHandler<GpuFrameView, CanvasSwapChainPanel>
+    : ViewHandler<GpuFrameView, CanvasControl>
 {
     public static readonly IPropertyMapper<GpuFrameView, GpuFrameViewHandler> GpuMapper =
         new PropertyMapper<GpuFrameView, GpuFrameViewHandler>(ViewMapper);
@@ -27,11 +29,7 @@ internal sealed class GpuFrameViewHandler
 
     // ── State ──────────────────────────────────────────────────────────────
 
-    private CanvasDevice? _device;
-    private CanvasSwapChain? _swapChain;
-    private float _panelW;
-    private float _panelH;
-    private float _dpi = 96f;
+    private CanvasBitmap? _currentFrame;
     private volatile bool _renderBusy;
 
     // ── Construction ───────────────────────────────────────────────────────
@@ -40,95 +38,79 @@ internal sealed class GpuFrameViewHandler
 
     // ── Native view lifecycle ──────────────────────────────────────────────
 
-    protected override CanvasSwapChainPanel CreatePlatformView()
+    protected override CanvasControl CreatePlatformView()
     {
-        _device = CanvasDevice.GetSharedDevice();
-        var panel = new CanvasSwapChainPanel();
-        panel.SizeChanged += OnPanelSizeChanged;
-        return panel;
+        var control = new CanvasControl();
+        control.Draw += OnDraw;
+        return control;
     }
 
-    protected override void DisconnectHandler(CanvasSwapChainPanel platformView)
+    protected override void DisconnectHandler(CanvasControl platformView)
     {
-        platformView.SizeChanged -= OnPanelSizeChanged;
+        platformView.Draw -= OnDraw;
 
-        var sc = _swapChain;
-        _swapChain = null;
-        sc?.Dispose();
-        _device = null;
+        var frame = _currentFrame;
+        _currentFrame = null;
+        frame?.Dispose();
 
         base.DisconnectHandler(platformView);
     }
 
-    // ── Size change → swap chain (re)creation ─────────────────────────────
+    // ── Draw handler ──────────────────────────────────────────────────────
 
-    private void OnPanelSizeChanged(object sender, SizeChangedEventArgs e)
+    private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        var w = (float)Math.Max(1, e.NewSize.Width);
-        var h = (float)Math.Max(1, e.NewSize.Height);
+        args.DrawingSession.Clear(Microsoft.UI.Colors.Black);
 
-        // Only rebuild when the dimensions actually changed.
-        if (w == _panelW && h == _panelH)
+        var bitmap = _currentFrame;
+        if (bitmap is null)
             return;
 
-        _panelW = w;
-        _panelH = h;
-        _dpi = (float)(PlatformView.XamlRoot?.RasterizationScale * 96.0 ?? 96.0);
+        var sw = sender.ActualWidth;
+        var sh = sender.ActualHeight;
 
-        RecreateSwapChain();
-    }
-
-    private void RecreateSwapChain()
-    {
-        if (_device is null || _panelW <= 0 || _panelH <= 0)
+        if (sw <= 0 || sh <= 0)
             return;
 
-        // Dispose the old swap chain before replacing it so the GPU resource is freed.
-        var old = _swapChain;
-        _swapChain = null;
-        old?.Dispose();
+        // Use pixel dimensions for a precise aspect ratio (DIPs can be
+        // fractional on high-DPI displays).
+        var px = bitmap.SizeInPixels;
+        var bw = (double)px.Width;
+        var bh = (double)px.Height;
 
-        var sc = new CanvasSwapChain(_device, _panelW, _panelH, _dpi);
-        _swapChain = sc;
-
-        // Attach to the WinUI SwapChainPanel via Win2D's managed property.
-        PlatformView.SwapChain = sc;
-    }
-
-    // ── Device / swap chain recovery ──────────────────────────────────────
-
-    /// <summary>
-    /// Ensures both the <see cref="CanvasDevice"/> and <see cref="CanvasSwapChain"/>
-    /// are available.  Called before every frame so the pipeline self-heals after a
-    /// device-lost event without waiting for a <c>SizeChanged</c> that may never arrive.
-    /// </summary>
-    private void EnsureDeviceAndSwapChain()
-    {
-        if (_device is null)
+        // ── Compute aspect-fit (letterbox / pillarbox) rect ───────────
+        Windows.Foundation.Rect destRect;
+        if (bw <= 0 || bh <= 0)
         {
-            try { _device = CanvasDevice.GetSharedDevice(); }
-            catch { return; }
+            destRect = new Windows.Foundation.Rect(0, 0, sw, sh);
+        }
+        else
+        {
+            var bitmapAspect = bw / bh;
+            var surfaceAspect = sw / sh;
+            double renderW, renderH, offsetX, offsetY;
+
+            if (bitmapAspect > surfaceAspect)
+            {
+                // Wider than surface → fit width, letterbox top/bottom.
+                renderW = sw;
+                renderH = sw / bitmapAspect;
+                offsetX = 0;
+                offsetY = (sh - renderH) / 2;
+            }
+            else
+            {
+                // Taller than surface → fit height, pillarbox left/right.
+                renderH = sh;
+                renderW = sh * bitmapAspect;
+                offsetX = (sw - renderW) / 2;
+                offsetY = 0;
+            }
+
+            destRect = new Windows.Foundation.Rect(offsetX, offsetY, renderW, renderH);
         }
 
-        if (_swapChain is null && _panelW > 0 && _panelH > 0)
-        {
-            _dpi = (float)(PlatformView?.XamlRoot?.RasterizationScale * 96.0 ?? 96.0);
-            RecreateSwapChain();
-        }
-    }
-
-    /// <summary>
-    /// Tears down the current device and swap chain, then attempts to reacquire them
-    /// so the very next frame can render.
-    /// </summary>
-    private void RecoverFromDeviceLost()
-    {
-        var old = _swapChain;
-        _swapChain = null;
-        old?.Dispose();
-        _device = null;
-
-        EnsureDeviceAndSwapChain();
+        args.DrawingSession.DrawImage(bitmap, destRect);
     }
 
     // ── Frame rendering ────────────────────────────────────────────────────
@@ -141,9 +123,10 @@ internal sealed class GpuFrameViewHandler
     }
 
     /// <summary>
-    /// Decodes <paramref name="imageBytes"/> and presents them to the swap chain.
-    /// The <c>_renderBusy</c> gate drops incoming frames while a present is in
-    /// progress, so no render tasks queue up.
+    /// Decodes <paramref name="imageBytes"/> and stores the result as the current frame,
+    /// then invalidates the <see cref="CanvasControl"/> so its <c>Draw</c> event fires.
+    /// The <c>_renderBusy</c> gate drops incoming frames while a decode is in progress,
+    /// so no render tasks queue up.
     /// </summary>
     private async Task RenderFrameAsync(byte[] imageBytes)
     {
@@ -153,12 +136,7 @@ internal sealed class GpuFrameViewHandler
         _renderBusy = true;
         try
         {
-            EnsureDeviceAndSwapChain();
-
-            var device = _device;
-            var swapChain = _swapChain;
-            if (device is null || swapChain is null)
-                return;
+            var device = CanvasDevice.GetSharedDevice();
 
             // ── Decode encoded bytes (JPEG / PNG / BMP) ──────────────────
             // Use an InMemoryRandomAccessStream so WIC can read the format header.
@@ -177,72 +155,20 @@ internal sealed class GpuFrameViewHandler
             }
             catch (ObjectDisposedException)
             {
-                return; // Device or swap chain was torn down mid-render.
+                return; // Device or control was torn down mid-render.
             }
 
-            using (bitmap)
-            {
-                // Re-read after the await — another thread may have disposed
-                // the swap chain while the bitmap was decoding.
-                swapChain = _swapChain;
-                if (swapChain is null)
-                    return;
+            var oldFrame = _currentFrame;
+            _currentFrame = bitmap;
+            oldFrame?.Dispose();
 
-                var sw = (double)swapChain.Size.Width;
-                var sh = (double)swapChain.Size.Height;
-
-                // Use pixel dimensions for a precise aspect ratio (DIPs can be
-                // fractional on high-DPI displays).
-                var px = bitmap.SizeInPixels;
-                var bw = (double)px.Width;
-                var bh = (double)px.Height;
-
-                // ── Compute aspect-fit (letterbox / pillarbox) rect ───────
-                Windows.Foundation.Rect destRect;
-                if (bw <= 0 || bh <= 0)
-                {
-                    destRect = new Windows.Foundation.Rect(0, 0, sw, sh);
-                }
-                else
-                {
-                    var bitmapAspect = bw / bh;
-                    var surfaceAspect = sw / sh;
-                    double renderW, renderH, offsetX, offsetY;
-
-                    if (bitmapAspect > surfaceAspect)
-                    {
-                        // Wider than surface → fit width, letterbox top/bottom.
-                        renderW = sw;
-                        renderH = sw / bitmapAspect;
-                        offsetX = 0;
-                        offsetY = (sh - renderH) / 2;
-                    }
-                    else
-                    {
-                        // Taller than surface → fit height, pillarbox left/right.
-                        renderH = sh;
-                        renderW = sh * bitmapAspect;
-                        offsetX = (sw - renderW) / 2;
-                        offsetY = 0;
-                    }
-
-                    destRect = new Windows.Foundation.Rect(offsetX, offsetY, renderW, renderH);
-                }
-
-                // ── Draw and present ──────────────────────────────────────
-                // CreateDrawingSession clears to the supplied color (black bars).
-                using var ds = swapChain.CreateDrawingSession(Microsoft.UI.Colors.Black);
-                ds.DrawImage(bitmap, destRect);
-            }
-
-            swapChain.Present();
+            // Trigger a redraw — the Draw handler will paint the new frame.
+            PlatformView?.Invalidate();
         }
         catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException
                                        or ObjectDisposedException)
         {
-            // Device lost or swap chain invalidated — attempt immediate recovery
-            // so the next frame can render without waiting for SizeChanged.
-            RecoverFromDeviceLost();
+            // Device lost — next frame will retry with a fresh shared device.
         }
         catch (Exception)
         {
