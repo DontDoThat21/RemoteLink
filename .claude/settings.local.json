@@ -9,7 +9,8 @@
       "Bash(powershell:*)",
       "Bash(dotnet add:*)",
       "Bash(taskkill:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(dotnet restore:*)"
     ]
   }
 }

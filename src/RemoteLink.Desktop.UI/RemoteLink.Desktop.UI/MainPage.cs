@@ -191,6 +191,7 @@ public class MainPage : ContentPage, INotifyPropertyChanged
         // Host-side events
         _communication.ConnectionStateChanged += OnConnectionStateChanged;
         _communication.PairingRequestReceived += OnPairingRequestReceivedUI;
+        _pairing.PinGenerated += OnPinGenerated;
 
         // Client-side events
         _client.DeviceDiscovered += OnRemoteHostDiscovered;
@@ -2831,6 +2832,16 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             if (_currentNav == NavItem.Devices) { RefreshSavedDeviceCards(); RefreshDiscoveredDeviceCards(); UpdateDevicesConnectionBanner(); }
             if (_currentNav == NavItem.Files) { UpdateFilesConnectionUi(); }
             if (_currentNav == NavItem.Chat) { UpdateChatStatus(); UpdateChatSendState(); }
+        });
+    }
+
+    private void OnPinGenerated(object? sender, string pin)
+    {
+        _currentPin = pin;
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            RefreshPinDisplay();
+            UpdatePinMetadata();
         });
     }
 

@@ -1735,11 +1735,19 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
 
         _isManualConnecting = true;
         SetManualConnectButtonState("Connecting...", ThemeColors.NeutralButtonBackground, false);
-        SetManualStatus($"Connecting to {targetDevice.IPAddress}:{targetDevice.Port}...", ThemeColors.WarningText);
+
+        var statusTarget = !string.IsNullOrWhiteSpace(targetDevice.IPAddress)
+            ? $"{targetDevice.IPAddress}:{targetDevice.Port}"
+            : targetDevice.DeviceName;
+        SetManualStatus($"Connecting to {statusTarget}...", ThemeColors.WarningText);
         StatusMessage = $"Connecting to {targetDevice.DeviceName}...";
         IsDiscovering = true;
 
         var success = await _client.ConnectToHostAsync(targetDevice, pin);
+
+        // Clear scanned relay info regardless of outcome (it was a one-shot use).
+        _scannedRelayHost = null;
+        _scannedRelayPort = null;
 
         IsDiscovering = false;
 
@@ -1945,31 +1953,46 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             var parts = partnerId.Split(':', 2);
             if (parts.Length == 2 && int.TryParse(parts[1], out int port) && port is > 0 and <= 65535)
             {
-                return new DeviceInfo
+                return ApplyScannedRelay(new DeviceInfo
                 {
                     DeviceId = $"manual_{parts[0]}_{port}",
                     DeviceName = parts[0],
                     IPAddress = parts[0],
                     Port = port,
                     Type = DeviceType.Desktop
-                };
+                });
             }
         }
 
         // Try plain IP (use default port 12346)
         if (System.Net.IPAddress.TryParse(partnerId, out _))
         {
-            return new DeviceInfo
+            return ApplyScannedRelay(new DeviceInfo
             {
                 DeviceId = $"manual_{partnerId}_12346",
                 DeviceName = partnerId,
                 IPAddress = partnerId,
                 Port = 12346,
                 Type = DeviceType.Desktop
-            };
+            });
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Applies relay server info captured from a QR scan to <paramref name="device"/>,
+    /// enabling cross-network relay connections when the user scanned the desktop's QR code.
+    /// </summary>
+    private DeviceInfo ApplyScannedRelay(DeviceInfo device)
+    {
+        if (!string.IsNullOrWhiteSpace(_scannedRelayHost) && _scannedRelayPort is > 0)
+        {
+            device.RelayServerHost = _scannedRelayHost;
+            device.RelayServerPort = _scannedRelayPort;
+            device.SupportsRelay = true;
+        }
+        return device;
     }
 
     // ── QR code scanner ────────────────────────────────────────────────
