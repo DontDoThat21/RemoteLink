@@ -517,7 +517,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     FontSize = 14,
                     TextColor = ThemeColors.AccentText,
                     VerticalOptions = LayoutOptions.Center,
-                    HorizontalOptions = LayoutOptions.End
+                    HorizontalOptions = LayoutOptions.End,
+                    Margin = new Thickness(0, 0, 8, 0)
                 }, column: 1),
                 CreateGridChild(settingsButton, column: 2)
             }
