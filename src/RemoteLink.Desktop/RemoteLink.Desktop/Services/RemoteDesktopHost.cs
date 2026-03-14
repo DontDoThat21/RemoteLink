@@ -556,6 +556,17 @@ public class RemoteDesktopHost : BackgroundService
                 Source = candidate.Source
             })
             .ToList();
+
+        // When the embedded relay is active (RelayServerHost points to localhost),
+        // update it to the public IP so QR codes and UDP broadcasts advertise the
+        // externally reachable relay address.
+        if (device.SupportsRelay &&
+            result.PublicIPAddress is not null &&
+            (string.Equals(device.RelayServerHost, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(device.RelayServerHost, "localhost", StringComparison.OrdinalIgnoreCase)))
+        {
+            device.RelayServerHost = result.PublicIPAddress;
+        }
     }
 
     private void InitializeCurrentAuditLogEntry(PairingRequest request, bool usedTrustedDevice, SessionPermissionSet permissions, string sessionId)

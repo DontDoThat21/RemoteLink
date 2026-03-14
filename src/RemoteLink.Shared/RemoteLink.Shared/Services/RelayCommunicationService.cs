@@ -224,13 +224,15 @@ public sealed class RelayCommunicationService : ICommunicationService, IDisposab
 
     private async Task EnsureRelayConnectionAsync(DeviceInfo? remoteDevice = null)
     {
-        if (!IsRelayConfigured)
-            throw new InvalidOperationException("Relay configuration is not enabled.");
-
         var targetHost = remoteDevice?.RelayServerHost;
         var targetPort = remoteDevice?.RelayServerPort;
-        var relayHost = string.IsNullOrWhiteSpace(targetHost) ? _configuration.ServerHost : targetHost!;
+        var relayHost = !string.IsNullOrWhiteSpace(targetHost)
+            ? targetHost!
+            : (_configuration.IsConfigured ? _configuration.ServerHost : null);
         var relayPort = targetPort is > 0 ? targetPort.Value : _configuration.ServerPort;
+
+        if (string.IsNullOrWhiteSpace(relayHost))
+            throw new InvalidOperationException("No relay server is configured or available for this device.");
 
         if (_relayClient?.Connected == true &&
             string.Equals(_connectedRelayHost, relayHost, StringComparison.OrdinalIgnoreCase) &&

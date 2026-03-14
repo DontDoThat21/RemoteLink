@@ -38,8 +38,8 @@ public sealed class AdaptiveCommunicationService : ICommunicationService, IDispo
             _secureTunnelConfiguration.ApplyTo(_localDevice);
         _tcpService = new TcpCommunicationService();
         _udpService = new UdpNatCommunicationService(natTraversalService);
-        _relayService = localDevice is not null && relayConfiguration?.IsConfigured == true
-            ? new RelayCommunicationService(localDevice, relayConfiguration, secureTunnelConfiguration, _proxyConfiguration)
+        _relayService = localDevice is not null
+            ? new RelayCommunicationService(localDevice, relayConfiguration ?? new RelayConfiguration(), secureTunnelConfiguration, _proxyConfiguration)
             : null;
         _signalingService = signalingService;
 

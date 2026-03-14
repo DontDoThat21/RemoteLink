@@ -534,6 +534,8 @@ public class RemoteViewerPage : ContentPage
     {
         if (!_client.IsConnected || _remoteWidth <= 0 || _remoteHeight <= 0) return;
 
+        HideViewerCursor();
+
         var position = e.GetPosition(_gpuViewer);
         if (position is null) return;
 

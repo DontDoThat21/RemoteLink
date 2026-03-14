@@ -65,7 +65,39 @@ class Program
             Environment.MachineName,
             DeviceType.Desktop,
             12346);
-        relayConfiguration.ApplyTo(localDevice);
+
+        RelayServer? embeddedRelayServer = null;
+        const int EmbeddedRelayPort = 12400;
+
+        if (!relayConfiguration.IsConfigured)
+        {
+            // No external relay configured — start an embedded relay server so
+            // mobile clients on other networks can reach this desktop via its
+            // public IP (with port 12400 forwarded on the router).
+            embeddedRelayServer = new RelayServer();
+            await embeddedRelayServer.StartAsync(EmbeddedRelayPort);
+
+            relayConfiguration = new RelayConfiguration
+            {
+                Enabled = true,
+                ServerHost = "127.0.0.1",
+                ServerPort = EmbeddedRelayPort
+            };
+
+            // Advertise the local LAN IP as the relay server so nearby LAN
+            // clients can reach it. After STUN discovery (in RemoteDesktopHost)
+            // the public IP will be set on localDevice.PublicIPAddress and
+            // UpdateRelayHostAfterNatDiscovery will surface it in broadcasts/QR.
+            var lanIp = NetworkAddressResolver.GetPreferredIPv4Address();
+            localDevice.SupportsRelay = true;
+            localDevice.RelayServerHost = lanIp ?? "127.0.0.1";
+            localDevice.RelayServerPort = EmbeddedRelayPort;
+        }
+        else
+        {
+            relayConfiguration.ApplyTo(localDevice);
+        }
+
         secureTunnelConfiguration.ApplyTo(localDevice);
 
         builder.Services.AddSingleton(relayConfiguration);
@@ -133,6 +165,11 @@ class Program
             {
                 Console.WriteLine("Service stopped.");
             }
+        }
+        finally
+        {
+            if (embeddedRelayServer is not null)
+                await embeddedRelayServer.DisposeAsync();
         }
     }
 }

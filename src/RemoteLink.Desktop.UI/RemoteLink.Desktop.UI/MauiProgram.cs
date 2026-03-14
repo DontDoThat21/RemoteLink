@@ -50,8 +50,38 @@ public static class MauiProgram
             Environment.MachineName,
             Shared.Models.DeviceType.Desktop,
             12346);
-        relayConfiguration.ApplyTo(localDevice);
+
+        const int EmbeddedRelayPort = 12400;
+        RelayServer? embeddedRelayServer = null;
+
+        if (!relayConfiguration.IsConfigured)
+        {
+            // Start an embedded relay server so mobile clients on other networks
+            // can reach this desktop via its public IP (with port 12400 forwarded).
+            embeddedRelayServer = new RelayServer();
+            _ = embeddedRelayServer.StartAsync(EmbeddedRelayPort);
+
+            relayConfiguration = new RelayConfiguration
+            {
+                Enabled = true,
+                ServerHost = "127.0.0.1",
+                ServerPort = EmbeddedRelayPort
+            };
+
+            var lanIp = NetworkAddressResolver.GetPreferredIPv4Address();
+            localDevice.SupportsRelay = true;
+            localDevice.RelayServerHost = lanIp ?? "127.0.0.1";
+            localDevice.RelayServerPort = EmbeddedRelayPort;
+        }
+        else
+        {
+            relayConfiguration.ApplyTo(localDevice);
+        }
+
         secureTunnelConfiguration.ApplyTo(localDevice);
+
+        if (embeddedRelayServer is not null)
+            builder.Services.AddSingleton(embeddedRelayServer);
 
         builder.Services.AddSingleton(relayConfiguration);
         builder.Services.AddSingleton(signalingConfiguration);

@@ -43,6 +43,10 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
     private string _statusMessage = "Initializing...";
     private readonly List<DeviceInfo> _availableHosts = new();
     private bool _isManualConnecting;
+
+    // Relay info captured from the last QR code scan — applied when connecting
+    private string? _scannedRelayHost;
+    private int? _scannedRelayPort;
     private bool _showConnectionNotifications = true;
     private bool _adaptiveQualityEnabled = true;
     private float _gestureSensitivity = 1.0f;
@@ -1922,17 +1926,17 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
                 var hostNumericId = DeviceIdentityManager.NormalizeInternetDeviceId(host.InternetDeviceId)
                     ?? DeviceIdentityManager.NormalizeInternetDeviceId(DeviceIdentityManager.GenerateLegacyNumericId(host.DeviceName));
                 if (hostNumericId == stripped)
-                    return host;
+                    return ApplyScannedRelay(host);
             }
 
-            return new DeviceInfo
+            return ApplyScannedRelay(new DeviceInfo
             {
                 DeviceId = stripped,
                 InternetDeviceId = stripped,
                 DeviceName = DeviceIdentityManager.FormatInternetDeviceId(stripped),
                 Type = DeviceType.Desktop,
                 SupportsRelay = true
-            };
+            });
         }
 
         // Try IP:Port format
@@ -2001,11 +2005,32 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             // Close the scanner
             await Navigation.PopModalAsync();
 
-            // Parse: remotelink://connect?host=IP:PORT&pin=PIN
-            if (TryParseQrPayload(qrData, out var host, out var pin))
+            // Parse: remotelink://connect?host=IP:PORT&pin=PIN[&relay=HOST:PORT][&id=PARTNERID]
+            if (TryParseQrPayload(qrData, out var host, out var pin, out var relay, out var id))
             {
-                _partnerIdEntry.Text = host;
+                // Prefer the partner ID over the raw IP:port if the QR includes one,
+                // because the relay connection uses the partner ID to find the device.
+                _partnerIdEntry.Text = !string.IsNullOrWhiteSpace(id) ? id : host;
                 _pinEntry.Text = pin;
+
+                // Capture relay info so ResolvePartner can apply it to the DeviceInfo.
+                _scannedRelayHost = null;
+                _scannedRelayPort = null;
+                if (!string.IsNullOrWhiteSpace(relay))
+                {
+                    var parts = relay.Split(':', 2);
+                    if (parts.Length == 2 && int.TryParse(parts[1], out var rPort) && rPort > 0)
+                    {
+                        _scannedRelayHost = parts[0];
+                        _scannedRelayPort = rPort;
+                    }
+                    else if (parts.Length == 1)
+                    {
+                        _scannedRelayHost = parts[0];
+                        _scannedRelayPort = 12400;
+                    }
+                }
+
                 SetManualStatus("QR code scanned — tap Connect", ThemeColors.SuccessText);
             }
             else
@@ -2015,10 +2040,12 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
         });
     }
 
-    private static bool TryParseQrPayload(string data, out string host, out string pin)
+    private static bool TryParseQrPayload(string data, out string host, out string pin, out string relay, out string id)
     {
         host = "";
         pin = "";
+        relay = "";
+        id = "";
 
         try
         {
@@ -2029,6 +2056,8 @@ public class ConnectPage : ContentPage, INotifyPropertyChanged
             var query = HttpUtility.ParseQueryString(uri.Query);
             host = query["host"] ?? "";
             pin = query["pin"] ?? "";
+            relay = query["relay"] ?? "";
+            id = query["id"] ?? "";
 
             return !string.IsNullOrWhiteSpace(host) && pin.Length == 6;
         }

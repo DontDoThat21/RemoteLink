@@ -237,7 +237,9 @@ public class TcpCommunicationService : ICommunicationService, IDisposable
             await DropConnectionAsync();
 
             var client = new TcpClient();
-            await client.ConnectAsync(device.IPAddress, device.Port, _cts.Token);
+            using var connectTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            connectTimeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+            await client.ConnectAsync(device.IPAddress, device.Port, connectTimeoutCts.Token);
 
             _activeClient = client;
             _activeStream = client.GetStream();

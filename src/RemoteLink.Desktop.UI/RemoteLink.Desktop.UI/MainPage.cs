@@ -732,12 +732,8 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     },
                     new Label { Text = "Your ID", FontSize = 11, TextColor = ThemeColors.TextSecondary, HorizontalOptions = LayoutOptions.Center },
                     _deviceIdLabel,
-                    new HorizontalStackLayout
-                    {
-                        Spacing = 4,
-                        HorizontalOptions = LayoutOptions.Center,
-                        Children = { copyIdButton, _copyIdFeedback }
-                    },
+                    copyIdButton,
+                    _copyIdFeedback,
                     divider,
                     new Label { Text = "Password", FontSize = 11, TextColor = ThemeColors.TextSecondary, HorizontalOptions = LayoutOptions.Center },
                     _pinLabel,
@@ -767,6 +763,13 @@ public class MainPage : ContentPage, INotifyPropertyChanged
             TitleColor = ThemeColors.EntryPlaceholder,
         };
         _discoveredHostsPicker.SelectedIndexChanged += OnDiscoveredHostSelected;
+
+        // Populate from any hosts already discovered before this panel was (re)built
+        lock (_discoveredHosts)
+        {
+            foreach (var host in _discoveredHosts)
+                _discoveredHostsPicker.Items.Add(BuildDiscoveredHostDisplayName(host));
+        }
 
         // ── Partner ID entry ──
         _partnerIdEntry = new Entry
@@ -2397,7 +2400,20 @@ public class MainPage : ContentPage, INotifyPropertyChanged
                     ? _localDevice.IPAddress
                     : NetworkAddressResolver.GetPreferredIPv4Address() ?? IPAddress.Loopback.ToString();
                 _localDevice.IPAddress = localIp;
-                var payload = $"remotelink://connect?host={localIp}:12346&pin={_currentPin}";
+
+                // Include relay: prefer public IP (works from internet), fall back to LAN relay host.
+                var relayHost = _localDevice.PublicIPAddress ?? _localDevice.RelayServerHost;
+                var relayPort = _localDevice.RelayServerPort ?? 12400;
+                var relayParam = !string.IsNullOrWhiteSpace(relayHost)
+                    ? $"&relay={relayHost}:{relayPort}"
+                    : string.Empty;
+
+                // Include the partner ID so mobile doesn't need a signaling server.
+                var idParam = !string.IsNullOrWhiteSpace(_localDevice.InternetDeviceId)
+                    ? $"&id={_localDevice.InternetDeviceId.Replace(" ", "")}"
+                    : string.Empty;
+
+                var payload = $"remotelink://connect?host={localIp}:12346&pin={_currentPin}{relayParam}{idParam}";
 
                 using var qrGenerator = new QRCodeGenerator();
                 using var qrCodeData = qrGenerator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M);
