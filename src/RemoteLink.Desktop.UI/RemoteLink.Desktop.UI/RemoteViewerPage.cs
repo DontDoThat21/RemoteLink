@@ -1014,7 +1014,7 @@ public class RemoteViewerPage : ContentPage
             var formatted = FormatSystemInfo(systemInfo);
             var copy = await DisplayAlertAsync("Remote System Info", formatted, "Copy", "Close");
             if (copy)
-                await Clipboard.SetTextAsync(formatted);
+                await Microsoft.Maui.ApplicationModel.DataTransfer.Clipboard.SetTextAsync(formatted);
         }
         catch (Exception ex)
         {
@@ -1060,7 +1060,7 @@ public class RemoteViewerPage : ContentPage
             var formatted = FormatCommandResult(result);
             var copy = await DisplayAlertAsync("Remote Command", formatted, "Copy", "Close");
             if (copy)
-                await Clipboard.SetTextAsync(formatted);
+                await Microsoft.Maui.ApplicationModel.DataTransfer.Clipboard.SetTextAsync(formatted);
         }
         catch (Exception ex)
         {
