@@ -181,8 +181,8 @@ public sealed class WindowsScreenCapture : IScreenCapture, IDisposable
     }
 
     /// <summary>
-    /// Uses BitBlt to blit the desktop (or a specific monitor) to an off-screen DC, 
-    /// then GetDIBits to extract raw 32-bit BGRA pixel data. Returns an empty array 
+    /// Uses BitBlt to blit the desktop (or a specific monitor) to an off-screen DC,
+    /// then GetDIBits to extract raw 32-bit BGRA pixel data. Returns an empty array
     /// on failure or when running on a non-Windows platform.
     /// </summary>
     private byte[] CaptureScreenBits(int width, int height)
@@ -235,6 +235,10 @@ public sealed class WindowsScreenCapture : IScreenCapture, IDisposable
                     Marshal.GetLastWin32Error());
                 return Array.Empty<byte>();
             }
+
+            // Composite the host cursor onto the captured frame so the viewer
+            // sees the correct cursor shape (resize arrows, hand, etc.).
+            DrawCursorOnDC(hMemDC, srcX, srcY);
 
             // Build a top-down DIB header (negative biHeight = top-down)
             var bmi = new NativeMethods.BITMAPINFO
@@ -294,6 +298,28 @@ public sealed class WindowsScreenCapture : IScreenCapture, IDisposable
 
     public void Dispose() => StopCaptureAsync().Wait();
 
+    // ── Cursor compositing ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws the current cursor onto <paramref name="hMemDC"/> so it appears in
+    /// the captured frame. <paramref name="srcX"/>/<paramref name="srcY"/> are the
+    /// top-left corner of the captured region in screen coordinates.
+    /// </summary>
+    private static void DrawCursorOnDC(IntPtr hMemDC, int srcX, int srcY)
+    {
+        var ci = new NativeMethods.CURSORINFO { cbSize = (uint)Marshal.SizeOf<NativeMethods.CURSORINFO>() };
+        if (!NativeMethods.GetCursorInfo(ref ci) || (ci.flags & NativeMethods.CURSOR_SHOWING) == 0)
+            return;
+
+        NativeMethods.DrawIconEx(
+            hMemDC,
+            ci.ptScreenPos.x - srcX,
+            ci.ptScreenPos.y - srcY,
+            ci.hCursor,
+            0, 0, 0, IntPtr.Zero,
+            NativeMethods.DI_NORMAL);
+    }
+
     // ── P/Invoke declarations ──────────────────────────────────────────────────
 
     private static class NativeMethods
@@ -302,6 +328,29 @@ public sealed class WindowsScreenCapture : IScreenCapture, IDisposable
         public const int  SM_CYSCREEN = 1;
         public const uint SRCCOPY     = 0x00CC0020;
         public const uint MONITORINFOF_PRIMARY = 1;
+        public const uint CURSOR_SHOWING = 0x00000001;
+        public const uint DI_NORMAL = 0x0003;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int x; public int y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CURSORINFO
+        {
+            public uint cbSize;
+            public uint flags;
+            public IntPtr hCursor;
+            public POINT ptScreenPos;
+        }
+
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorInfo(ref CURSORINFO pci);
+
+        [DllImport("user32.dll")]
+        public static extern bool DrawIconEx(
+            IntPtr hdc, int xLeft, int yTop, IntPtr hIcon,
+            int cxWidth, int cyHeight, uint istepIfAniCur,
+            IntPtr hbrFlickerFreeDraw, uint diFlags);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr GetDesktopWindow();

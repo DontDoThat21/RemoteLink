@@ -38,6 +38,18 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
     // Reusable pixel buffer to avoid per-frame allocation
     private byte[]? _pixelBuffer;
 
+    // GDI resources used to composite the host cursor onto DXGI frames
+    private IntPtr _cursorDC;
+    private IntPtr _cursorBitmap;
+    private IntPtr _cursorOldBitmap;
+    private IntPtr _cursorDibBits;
+    private int _cursorDibWidth;
+    private int _cursorDibHeight;
+
+    // Monitor origin for the active DXGI output (screen-space offset for cursor mapping)
+    private int _dxgiSrcX;
+    private int _dxgiSrcY;
+
     public bool IsCapturing => _isCapturing;
 
     public event EventHandler<ScreenData>? FrameCaptured;
@@ -66,6 +78,7 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
         _captureTimer?.Dispose();
         _captureTimer = null;
         ReleaseDxgi();
+        ReleaseCursorDib();
         _logger.LogInformation("DxgiScreenCapture: stopped");
         return Task.CompletedTask;
     }
@@ -152,6 +165,13 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
             _selectedMonitorId = monitorId;
             // Reset DXGI so it re-initializes for the new output
             ReleaseDxgi();
+
+            // Track the monitor's screen-space origin so cursor coordinates can be
+            // mapped correctly when compositing onto the captured frame.
+            var mon = _cachedMonitors.FirstOrDefault(m => m.Id == monitorId);
+            _dxgiSrcX = mon?.Left ?? 0;
+            _dxgiSrcY = mon?.Top ?? 0;
+
             _logger.LogInformation("DxgiScreenCapture: selected monitor {MonitorId}", monitorId);
             return Task.FromResult(true);
         }
@@ -245,6 +265,10 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
                                     y * rowBytes,
                                     rowBytes);
                             }
+
+                            // Composite the host cursor so viewers see the
+                            // correct cursor shape (resize arrows, hand, etc.).
+                            DrawCursorOnPixelBuffer(_pixelBuffer, width, height, _dxgiSrcX, _dxgiSrcY);
 
                             return _pixelBuffer;
                         }
@@ -459,6 +483,9 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
             if (!blitOk)
                 return Array.Empty<byte>();
 
+            // Composite the host cursor so viewers see the correct cursor shape.
+            DrawCursorOnDC(hMemDC, srcX, srcY);
+
             var bmi = new GdiNativeMethods.BITMAPINFO
             {
                 bmiHeader = new GdiNativeMethods.BITMAPINFOHEADER
@@ -538,6 +565,123 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
     {
         StopCaptureAsync().Wait();
         ReleaseDxgi();
+        ReleaseCursorDib();
+    }
+
+    // ── Cursor compositing ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws the current host cursor into <paramref name="hMemDC"/> using GDI.
+    /// Used by the GDI BitBlt fallback path.
+    /// </summary>
+    private static void DrawCursorOnDC(IntPtr hMemDC, int srcX, int srcY)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var ci = new GdiNativeMethods.CURSORINFO { cbSize = (uint)Marshal.SizeOf<GdiNativeMethods.CURSORINFO>() };
+        if (!GdiNativeMethods.GetCursorInfo(ref ci) || (ci.flags & GdiNativeMethods.CURSOR_SHOWING) == 0)
+            return;
+
+        GdiNativeMethods.DrawIconEx(
+            hMemDC,
+            ci.ptScreenPos.x - srcX,
+            ci.ptScreenPos.y - srcY,
+            ci.hCursor,
+            0, 0, 0, IntPtr.Zero,
+            GdiNativeMethods.DI_NORMAL);
+    }
+
+    /// <summary>
+    /// Composites the current host cursor directly into the raw BGRA pixel buffer
+    /// returned by DXGI. Creates and caches a GDI DIB section for the compositing.
+    /// </summary>
+    private void DrawCursorOnPixelBuffer(byte[] pixels, int width, int height, int srcX, int srcY)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var ci = new GdiNativeMethods.CURSORINFO { cbSize = (uint)Marshal.SizeOf<GdiNativeMethods.CURSORINFO>() };
+        if (!GdiNativeMethods.GetCursorInfo(ref ci) || (ci.flags & GdiNativeMethods.CURSOR_SHOWING) == 0)
+            return;
+
+        EnsureCursorDib(width, height);
+        if (_cursorDibBits == IntPtr.Zero)
+            return;
+
+        // Copy DXGI pixels into the DIB section memory.
+        Marshal.Copy(pixels, 0, _cursorDibBits, pixels.Length);
+
+        // Draw cursor onto the DIB.
+        GdiNativeMethods.DrawIconEx(
+            _cursorDC,
+            ci.ptScreenPos.x - srcX,
+            ci.ptScreenPos.y - srcY,
+            ci.hCursor,
+            0, 0, 0, IntPtr.Zero,
+            GdiNativeMethods.DI_NORMAL);
+
+        // Copy the composited pixels back into the pixel buffer.
+        Marshal.Copy(_cursorDibBits, pixels, 0, pixels.Length);
+    }
+
+    /// <summary>
+    /// Lazily creates (or re-creates) the cursor compositing DIB section when
+    /// the frame dimensions change.
+    /// </summary>
+    private void EnsureCursorDib(int width, int height)
+    {
+        if (_cursorDC != IntPtr.Zero && _cursorDibWidth == width && _cursorDibHeight == height)
+            return;
+
+        ReleaseCursorDib();
+
+        IntPtr screenDC = GdiNativeMethods.GetDC(IntPtr.Zero);
+        _cursorDC = GdiNativeMethods.CreateCompatibleDC(screenDC);
+
+        var bmi = new GdiNativeMethods.BITMAPINFO
+        {
+            bmiHeader = new GdiNativeMethods.BITMAPINFOHEADER
+            {
+                biSize        = (uint)Marshal.SizeOf<GdiNativeMethods.BITMAPINFOHEADER>(),
+                biWidth       = width,
+                biHeight      = -height, // negative = top-down, matches DXGI layout
+                biPlanes      = 1,
+                biBitCount    = 32,
+                biCompression = 0,       // BI_RGB
+            }
+        };
+
+        _cursorBitmap = GdiNativeMethods.CreateDIBSection(
+            screenDC, ref bmi, 0 /* DIB_RGB_COLORS */, out _cursorDibBits, IntPtr.Zero, 0);
+
+        GdiNativeMethods.ReleaseDC(IntPtr.Zero, screenDC);
+
+        if (_cursorBitmap != IntPtr.Zero)
+            _cursorOldBitmap = GdiNativeMethods.SelectObject(_cursorDC, _cursorBitmap);
+
+        _cursorDibWidth  = width;
+        _cursorDibHeight = height;
+    }
+
+    private void ReleaseCursorDib()
+    {
+        if (_cursorDC != IntPtr.Zero)
+        {
+            if (_cursorOldBitmap != IntPtr.Zero)
+            {
+                GdiNativeMethods.SelectObject(_cursorDC, _cursorOldBitmap);
+                _cursorOldBitmap = IntPtr.Zero;
+            }
+            GdiNativeMethods.DeleteDC(_cursorDC);
+            _cursorDC = IntPtr.Zero;
+        }
+        if (_cursorBitmap != IntPtr.Zero)
+        {
+            GdiNativeMethods.DeleteObject(_cursorBitmap);
+            _cursorBitmap    = IntPtr.Zero;
+            _cursorDibBits   = IntPtr.Zero;
+        }
+        _cursorDibWidth  = 0;
+        _cursorDibHeight = 0;
     }
 
     // ── DXGI COM interop ─────────────────────────────────────────────────────
@@ -733,6 +877,34 @@ public sealed class DxgiScreenCapture : IScreenCapture, IDisposable
         public const int SM_CYSCREEN = 1;
         public const uint SRCCOPY = 0x00CC0020;
         public const uint MONITORINFOF_PRIMARY = 1;
+        public const uint CURSOR_SHOWING = 0x00000001;
+        public const uint DI_NORMAL = 0x0003;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int x; public int y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CURSORINFO
+        {
+            public uint cbSize;
+            public uint flags;
+            public IntPtr hCursor;
+            public POINT ptScreenPos;
+        }
+
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorInfo(ref CURSORINFO pci);
+
+        [DllImport("user32.dll")]
+        public static extern bool DrawIconEx(
+            IntPtr hdc, int xLeft, int yTop, IntPtr hIcon,
+            int cxWidth, int cyHeight, uint istepIfAniCur,
+            IntPtr hbrFlickerFreeDraw, uint diFlags);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateDIBSection(
+            IntPtr hdc, ref BITMAPINFO pbmi, uint iUsage,
+            out IntPtr ppvBits, IntPtr hSection, uint dwOffset);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr GetDesktopWindow();

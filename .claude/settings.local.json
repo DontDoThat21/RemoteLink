@@ -8,7 +8,8 @@
       "Bash(xargs grep:*)",
       "Bash(powershell:*)",
       "Bash(dotnet add:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(find:*)"
     ]
   }
 }

@@ -6,9 +6,11 @@ using RemoteLink.Shared.Services;
 using System.Collections.Concurrent;
 using System.Text;
 #if WINDOWS
+using System.Runtime.InteropServices;
 using WinDragEventArgs = Microsoft.UI.Xaml.DragEventArgs;
 using WinFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
 using WinDataPackageOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation;
+using WinPointerRoutedEventArgs = Microsoft.UI.Xaml.Input.PointerRoutedEventArgs;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 #endif
@@ -54,6 +56,7 @@ public class RemoteViewerPage : ContentPage
     private ICommunicationService? _boundCommunicationService;
     private IFileTransferService? _fileTransferService;
     private readonly ConcurrentDictionary<string, string> _pendingTransferNames = new(StringComparer.OrdinalIgnoreCase);
+    private bool _viewerCursorHidden;
 #if WINDOWS
     private WinFrameworkElement? _nativeDropTarget;
 #endif
@@ -365,6 +368,7 @@ public class RemoteViewerPage : ContentPage
             _metricsTimer = null;
             DetachFileTransferService();
             HideDropOverlay();
+            RestoreViewerCursor();
             _client.ScreenDataReceived -= OnScreenDataReceived;
             _client.ConnectionStateChanged -= OnConnectionStateChanged;
             _client.ConnectionQualityUpdated -= OnConnectionQualityUpdated;
@@ -856,6 +860,8 @@ public class RemoteViewerPage : ContentPage
             _nativeDropTarget.DragOver -= OnNativeViewerDragOver;
             _nativeDropTarget.DragLeave -= OnNativeViewerDragLeave;
             _nativeDropTarget.Drop -= OnNativeViewerDrop;
+            _nativeDropTarget.PointerEntered -= OnNativeViewerPointerEntered;
+            _nativeDropTarget.PointerExited -= OnNativeViewerPointerExited;
         }
 
         _nativeDropTarget = _gpuViewer.Handler?.PlatformView as WinFrameworkElement;
@@ -866,7 +872,18 @@ public class RemoteViewerPage : ContentPage
         _nativeDropTarget.DragOver += OnNativeViewerDragOver;
         _nativeDropTarget.DragLeave += OnNativeViewerDragLeave;
         _nativeDropTarget.Drop += OnNativeViewerDrop;
+        _nativeDropTarget.PointerEntered += OnNativeViewerPointerEntered;
+        _nativeDropTarget.PointerExited += OnNativeViewerPointerExited;
     }
+
+    private void OnNativeViewerPointerEntered(object sender, WinPointerRoutedEventArgs e)
+        => HideViewerCursor();
+
+    private void OnNativeViewerPointerExited(object sender, WinPointerRoutedEventArgs e)
+        => RestoreViewerCursor();
+
+    [DllImport("user32.dll")]
+    private static extern int ShowCursor(bool bShow);
 
     private void OnNativeViewerDragOver(object sender, WinDragEventArgs e)
     {
@@ -904,10 +921,30 @@ public class RemoteViewerPage : ContentPage
 
         await StartDroppedFilesTransferAsync(filePaths);
     }
+    private void HideViewerCursor()
+    {
+        if (!_viewerCursorHidden)
+        {
+            ShowCursor(false);
+            _viewerCursorHidden = true;
+        }
+    }
+
+    private void RestoreViewerCursor()
+    {
+        if (_viewerCursorHidden)
+        {
+            ShowCursor(true);
+            _viewerCursorHidden = false;
+        }
+    }
 #else
     private void OnRemoteViewerHandlerChanged(object? sender, EventArgs e)
     {
     }
+
+    private void HideViewerCursor() { }
+    private void RestoreViewerCursor() { }
 #endif
 
     private async void OnDisconnectClicked(object? sender, EventArgs e)
