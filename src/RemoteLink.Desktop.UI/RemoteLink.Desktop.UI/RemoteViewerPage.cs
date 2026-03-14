@@ -343,6 +343,8 @@ public class RemoteViewerPage : ContentPage
             _client.ScreenDataReceived += OnScreenDataReceived;
             _client.ConnectionStateChanged -= OnConnectionStateChanged;
             _client.ConnectionStateChanged += OnConnectionStateChanged;
+            _client.ConnectionQualityUpdated -= OnConnectionQualityUpdated;
+            _client.ConnectionQualityUpdated += OnConnectionQualityUpdated;
             EnsureFileTransferService();
 
             _metricsTimer?.Stop();
@@ -365,6 +367,7 @@ public class RemoteViewerPage : ContentPage
             HideDropOverlay();
             _client.ScreenDataReceived -= OnScreenDataReceived;
             _client.ConnectionStateChanged -= OnConnectionStateChanged;
+            _client.ConnectionQualityUpdated -= OnConnectionQualityUpdated;
         }
 
         protected override void OnAppearing()
@@ -460,7 +463,23 @@ public class RemoteViewerPage : ContentPage
             await File.WriteAllBytesAsync(path, snapshot.ImageBytes);
 
             UpdateTransferStatus($"Saved screenshot: {Path.GetFileName(path)}", ThemeColors.Success);
-            await DisplayAlertAsync("Screenshot Saved", $"Saved to {path}", "OK");
+
+            var choice = await DisplayActionSheetAsync(
+                "Screenshot Saved",
+                "OK",
+                null,
+                "Open File",
+                "Open Directory");
+
+            if (choice == "Open File")
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            else if (choice == "Open Directory")
+            {
+                var directory = Path.GetDirectoryName(path) ?? targetDirectory;
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(directory) { UseShellExecute = true });
+            }
         }
         catch (Exception ex)
         {
@@ -494,6 +513,14 @@ public class RemoteViewerPage : ContentPage
             _qualityLabel.TextColor = _client.IsConnected
                 ? ThemeColors.Success
                 : ThemeColors.Danger;
+        });
+    }
+
+    private void OnConnectionQualityUpdated(object? sender, ConnectionQuality quality)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            _latencyLabel.Text = $"Latency: {quality.Latency} ms";
         });
     }
 
