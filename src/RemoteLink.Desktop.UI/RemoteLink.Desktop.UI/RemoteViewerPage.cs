@@ -974,7 +974,10 @@ public class RemoteViewerPage : ContentPage
         try
         {
             var systemInfo = await _client.GetRemoteSystemInfoAsync();
-            await DisplayAlertAsync("Remote System Info", FormatSystemInfo(systemInfo), "OK");
+            var formatted = FormatSystemInfo(systemInfo);
+            var copy = await DisplayAlertAsync("Remote System Info", formatted, "Copy", "Close");
+            if (copy)
+                await Clipboard.SetTextAsync(formatted);
         }
         catch (Exception ex)
         {
@@ -1017,7 +1020,10 @@ public class RemoteViewerPage : ContentPage
         try
         {
             var result = await _client.ExecuteRemoteCommandAsync(commandText, shell);
-            await DisplayAlertAsync("Remote Command", FormatCommandResult(result), "OK");
+            var formatted = FormatCommandResult(result);
+            var copy = await DisplayAlertAsync("Remote Command", formatted, "Copy", "Close");
+            if (copy)
+                await Clipboard.SetTextAsync(formatted);
         }
         catch (Exception ex)
         {
